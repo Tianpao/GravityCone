@@ -216,33 +216,54 @@ func (m *EasyTierManager) getSelfVirtualIP() (string, error) {
 
 func (m *EasyTierManager) Stop() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if !m.running || m.cmd == nil || m.cmd.Process == nil {
+		m.mu.Unlock()
 		return nil
 	}
+	pid := m.cmd.Process.Pid
+	m.mu.Unlock()
 
+	// Kill the process tree outside of the lock to avoid holding it during I/O.
 	if runtime.GOOS == "windows" {
-		exec.Command("taskkill", "/PID", fmt.Sprintf("%d", m.cmd.Process.Pid), "/T", "/F").Run()
+		killCmd := exec.Command("taskkill", "/PID", fmt.Sprintf("%d", pid), "/T", "/F")
+		if out, err := killCmd.CombinedOutput(); err != nil {
+			log.Printf("taskkill failed (pid=%d): %v, output: %s", pid, err, string(out))
+		}
 	} else {
-		m.cmd.Process.Signal(os.Interrupt)
+		m.mu.Lock()
+		_ = m.cmd.Process.Signal(os.Interrupt)
+		m.mu.Unlock()
 	}
 
-	done := make(chan error, 1)
+	// Wait for the process to actually exit.
+	done := make(chan struct{})
 	go func() {
-		done <- m.cmd.Wait()
+		m.mu.Lock()
+		if m.cmd != nil {
+			m.cmd.Wait()
+		}
+		m.mu.Unlock()
+		close(done)
 	}()
 
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		m.cmd.Process.Kill()
+		m.mu.Lock()
+		if m.cmd != nil && m.cmd.Process != nil {
+			log.Printf("easytier-core (pid=%d) did not exit after 5s, force-killing", pid)
+			m.cmd.Process.Kill()
+		}
+		m.mu.Unlock()
+		<-done
 	}
 
+	m.mu.Lock()
 	m.cmd = nil
 	m.running = false
 	m.virtualIP = ""
 	m.rpcPortal = ""
+	m.mu.Unlock()
 	return nil
 }
 
@@ -325,6 +346,25 @@ func (m *EasyTierManager) AddPortForward(proto string, localAddr string, remoteA
 				continue
 			}
 			return fmt.Errorf("添加端口转发失败 (%s %s -> %s): %w, output: %s", proto, localAddr, remoteAddr, err, out)
+		}
+		return nil
+	}
+	return nil
+}
+
+func (m *EasyTierManager) RemovePortForward(proto string, localAddr string, remoteAddr string) error {
+	for attempt := 0; attempt < 3; attempt++ {
+		out, err := m.runCli(
+			"-p", m.rpcPortal,
+			"port-forward", "remove",
+			proto, localAddr, remoteAddr,
+		)
+		if err != nil {
+			if attempt < 2 {
+				time.Sleep(time.Duration(attempt+1) * time.Second)
+				continue
+			}
+			return fmt.Errorf("删除端口转发失败 (%s %s -> %s): %w, output: %s", proto, localAddr, remoteAddr, err, out)
 		}
 		return nil
 	}
