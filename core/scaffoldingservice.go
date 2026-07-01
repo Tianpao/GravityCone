@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -69,6 +70,8 @@ type ScaffoldingService struct {
 	guestDisconnectReason       string // set when connection is lost (e.g. host closed room)
 	guestMCListener             net.Listener // local listener for MC proxy connections
 	guestDirectLocal            bool // true when guest and host are on the same machine
+
+	joinCancelled atomic.Bool // set to true to abort a running JoinRoom
 }
 
 // --- HOST methods ---
@@ -374,7 +377,13 @@ func (s *ScaffoldingService) handlePlayerProfilesList(conn net.Conn) {
 
 // --- GUEST methods ---
 
+// CancelJoin aborts a running JoinRoom call. Safe to call even if no join is in progress.
+func (s *ScaffoldingService) CancelJoin() {
+	s.joinCancelled.Store(true)
+}
+
 func (s *ScaffoldingService) JoinRoom(code string, playerName string) (*ConnectionStatus, error) {
+	s.joinCancelled.Store(false)
 	s.guestMu.Lock()
 	if s.guestRunning {
 		s.guestMu.Unlock()
@@ -408,6 +417,10 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string) (*Connecti
 	// 3. Discover HOST and wait for P2P connection
 	// The hostname format is scaffolding-mc-server-{port}, scan peers for matching hostname.
 	// Retry until we can actually connect via TCP (P2P may take time to establish).
+	if s.joinCancelled.Load() {
+		manager.Stop()
+		return nil, fmt.Errorf("加入已取消")
+	}
 	hostIP, _, err := s.discoverHostAndConnect(manager, 60*time.Second)
 	if err != nil {
 		manager.Stop()
@@ -528,6 +541,10 @@ func (s *ScaffoldingService) discoverHostAndConnect(manager *EasyTierManager, ti
 	var prevForwardRemote string
 
 	for time.Now().Before(deadline) {
+		// Check if cancelled
+		if s.joinCancelled.Load() {
+			return "", 0, fmt.Errorf("加入已取消")
+		}
 		// Check if process exited
 		if !manager.IsRunning() {
 			return "", 0, fmt.Errorf("easytier-core 进程已退出")

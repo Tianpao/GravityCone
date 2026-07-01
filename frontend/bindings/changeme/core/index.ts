@@ -6,12 +6,14 @@ import * as LanService from "./lanservice.js";
 import * as NatayarkService from "./natayarkservice.js";
 import * as ScaffoldingService from "./scaffoldingservice.js";
 import * as StunService from "./stunservice.js";
+import * as WatermarkService from "./watermarkservice.js";
 export {
     GreetService,
     LanService,
     NatayarkService,
     ScaffoldingService,
-    StunService
+    StunService,
+    WatermarkService
 };
 
 export type {
@@ -20,5 +22,6 @@ export type {
     NatayarkUser,
     PlayerInfo,
     RoomStatus,
-    StunResult
+    StunResult,
+    WatermarkResult
 } from "./models.js";

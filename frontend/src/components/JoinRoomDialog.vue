@@ -26,18 +26,14 @@ const inputRef = ref<HTMLInputElement | null>(null)
 // Allowed charset: 0-9, A-H, J-N, P-Z (no I, O)
 const DATA_CHARS = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ'
 
-// Strip everything that isn't a valid data char, also accept U/ prefix and dashes (for paste)
 function extractDataChars(val: string): string {
   let s = val.toUpperCase()
-  // Remove U/ prefix if present
   if (s.startsWith('U/') || s.startsWith('U：')) {
     s = s.slice(2)
   }
-  // Keep only valid data chars
   return s.replace(/[^0-9A-HJ-NP-Z]/g, '').slice(0, 16)
 }
 
-// Format data chars as NNNN-NNNN-SSSS-SSSS
 function formatDisplay(data: string): string {
   let result = ''
   if (data.length > 0) result += data.slice(0, 4)
@@ -54,7 +50,6 @@ function handleInput(e: Event) {
   const target = e.target as HTMLInputElement
   const data = extractDataChars(target.value)
   rawInput.value = data
-  // Sync cursor position after reformat
   nextTick(() => {
     if (inputRef.value) {
       const formatted = formatDisplay(data)
@@ -63,12 +58,10 @@ function handleInput(e: Event) {
   })
 }
 
-// Handle paste: extract data chars from pasted content (may include U/ prefix)
 function handlePaste(e: ClipboardEvent) {
   e.preventDefault()
   const pasted = e.clipboardData?.getData('text') || ''
   const existing = rawInput.value
-  // Merge: if pasted content has U/ it's a full code, replace; otherwise append
   const pastedData = extractDataChars(pasted)
   const combined = existing + pastedData
   rawInput.value = combined.slice(0, 16)
@@ -92,6 +85,10 @@ async function handleJoin() {
   } catch {
     // error displayed in store
   }
+}
+
+function handleCancelJoin() {
+  scaffold.cancelJoin()
 }
 
 watch(() => props.open, (val) => {
@@ -123,9 +120,14 @@ watch(() => props.open, (val) => {
             :disabled="scaffold.joining"
           />
         </div>
-        <p v-if="!isComplete && rawInput.length > 0" class="text-xs text-muted-foreground text-center">
+        <p v-if="!isComplete && rawInput.length > 0 && !scaffold.joining" class="text-xs text-muted-foreground text-center">
           还需输入 {{ 16 - rawInput.length }} 个字符
         </p>
+        <!-- Joining progress -->
+        <div v-if="scaffold.joining" class="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+          <div class="size-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <span>正在连接房间...</span>
+        </div>
       </div>
 
       <!-- Error -->
@@ -134,11 +136,17 @@ watch(() => props.open, (val) => {
       </div>
 
       <DialogFooter>
-        <Button variant="outline" @click="emit('update:open', false)" :disabled="scaffold.joining">取消</Button>
-        <Button @click="handleJoin" :disabled="!isComplete || scaffold.joining">
-          <template v-if="scaffold.joining">连接中...</template>
-          <template v-else>加入</template>
-        </Button>
+        <template v-if="scaffold.joining">
+          <Button variant="outline" @click="handleCancelJoin">
+            取消加入
+          </Button>
+        </template>
+        <template v-else>
+          <Button variant="outline" @click="emit('update:open', false)">取消</Button>
+          <Button @click="handleJoin" :disabled="!isComplete">
+            加入
+          </Button>
+        </template>
       </DialogFooter>
     </DialogContent>
   </Dialog>

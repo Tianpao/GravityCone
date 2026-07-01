@@ -58,3 +58,8 @@ export interface StunResult {
     "min_port": number;
     "max_port": number;
 }
+
+export interface WatermarkResult {
+    "output_path": string;
+    "base64_png": string;
+}

@@ -2,17 +2,21 @@
 import { onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useScaffoldingStore } from '@/stores/scaffolding'
+import { useWatermarkStore } from '@/stores/watermark'
 import { Button } from '@/components/ui/button'
 import { useClipboard } from '@vueuse/core'
 import { CopyOutline, StopCircleOutline, CheckmarkOutline } from '@vicons/ionicons5'
+import WatermarkShare from '@/components/WatermarkShare.vue'
 
 const router = useRouter()
 const scaffold = useScaffoldingStore()
+const watermark = useWatermarkStore()
 const { copy, copied } = useClipboard()
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
   pollTimer = setInterval(() => scaffold.refreshRoomStatus(), 3000)
+  watermark.loadDemoImages()
 })
 
 onUnmounted(() => {
@@ -92,6 +96,12 @@ function copyAddress() {
           </li>
         </ul>
       </div>
+
+      <!-- Watermark Share -->
+      <WatermarkShare
+        v-if="scaffold.roomStatus?.code"
+        :room-code="scaffold.roomStatus.code"
+      />
 
       <!-- Stop Button -->
       <Button variant="destructive" class="w-full gap-2" @click="handleStop">

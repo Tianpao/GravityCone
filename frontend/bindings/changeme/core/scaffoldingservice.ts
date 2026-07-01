@@ -10,6 +10,13 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * CancelJoin aborts a running JoinRoom call. Safe to call even if no join is in progress.
+ */
+export function CancelJoin(): $CancellablePromise<void> {
+    return $Call.ByID(3960731962);
+}
+
+/**
  * Cleanup stops any running room or connection (called on app shutdown)
  */
 export function Cleanup(): $CancellablePromise<void> {

@@ -53,6 +53,7 @@ func main() {
 			application.NewService(&core.LanService{}),
 			application.NewService(natayarkSvc),
 			application.NewService(scaffoldingSvc),
+			application.NewService(&core.WatermarkService{}),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),

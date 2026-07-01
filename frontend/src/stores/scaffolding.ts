@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { CreateRoom, StopRoom, GetRoomStatus, JoinRoom, LeaveRoom, GetConnectionStatus } from '@/../bindings/changeme/core/scaffoldingservice'
+import { CreateRoom, StopRoom, GetRoomStatus, JoinRoom, LeaveRoom, GetConnectionStatus, CancelJoin } from '@/../bindings/changeme/core/scaffoldingservice'
 import type { RoomStatus, ConnectionStatus } from '@/../bindings/changeme/core/models'
 
 export const useScaffoldingStore = defineStore('scaffolding', {
@@ -47,6 +47,12 @@ export const useScaffoldingStore = defineStore('scaffolding', {
       try {
         const result = await GetRoomStatus()
         if (result) this.roomStatus = result
+      } catch {}
+    },
+
+    async cancelJoin() {
+      try {
+        await CancelJoin()
       } catch {}
     },
 
