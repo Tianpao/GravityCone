@@ -38,7 +38,7 @@ type PlayerInfo struct {
 }
 
 func ReadProtocolRequest(conn net.Conn) (typeName string, body []byte, err error) {
-	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
 	var typeLenBuf [1]byte
 	if _, err := io.ReadFull(conn, typeLenBuf[:]); err != nil {
@@ -95,7 +95,7 @@ func WriteProtocolRequest(conn net.Conn, typeName string, body []byte) error {
 }
 
 func ReadProtocolResponse(conn net.Conn) (status uint8, body []byte, err error) {
-	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
 	var header [5]byte
 	if _, err := io.ReadFull(conn, header[:]); err != nil {

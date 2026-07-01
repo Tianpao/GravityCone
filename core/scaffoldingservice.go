@@ -52,6 +52,8 @@ type ScaffoldingService struct {
 	hostRunning    bool
 	hostMu         sync.Mutex
 	hostPlayerName string
+	hostConns      map[net.Conn]struct{} // track active connections for shutdown
+	hostConnMu     sync.Mutex
 
 	// GUEST state
 	guestManager       *EasyTierManager
@@ -70,8 +72,16 @@ type ScaffoldingService struct {
 	guestDisconnectReason       string // set when connection is lost (e.g. host closed room)
 	guestMCListener             net.Listener // local listener for MC proxy connections
 	guestDirectLocal            bool // true when guest and host are on the same machine
+	guestIOMu        sync.Mutex // serializes writes on guestConn
+	guestReadCh      chan readResult // background reader delivers responses here
 
 	joinCancelled atomic.Bool // set to true to abort a running JoinRoom
+}
+
+type readResult struct {
+	status uint8
+	body   []byte
+	err    error
 }
 
 // --- HOST methods ---
@@ -135,6 +145,7 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string) (*Room
 	s.hostStopCh = make(chan struct{})
 	s.hostRunning = true
 	s.hostPlayerName = playerName
+	s.hostConns = make(map[net.Conn]struct{})
 	s.hostMu.Unlock()
 
 	// Add HOST as a player
@@ -169,6 +180,15 @@ func (s *ScaffoldingService) StopRoom() error {
 	}
 	s.hostRunning = false
 	s.hostMu.Unlock()
+
+	// Close all active guest connections so they detect disconnection immediately.
+	s.hostConnMu.Lock()
+	log.Printf("[StopRoom] closing %d host connections", len(s.hostConns))
+	for conn := range s.hostConns {
+		conn.Close()
+	}
+	s.hostConns = nil
+	s.hostConnMu.Unlock()
 
 	if s.hostManager != nil {
 		s.hostManager.Stop()
@@ -262,7 +282,33 @@ func (s *ScaffoldingService) hostServerLoop() {
 func (s *ScaffoldingService) handleHostConnection(conn net.Conn) {
 	defer conn.Close()
 
+	// Register connection so StopRoom can close it.
+	s.hostConnMu.Lock()
+	if s.hostConns != nil {
+		s.hostConns[conn] = struct{}{}
+		log.Printf("[HostConn] registered, total=%d", len(s.hostConns))
+	} else {
+		log.Printf("[HostConn] hostConns is nil, not registered!")
+	}
+	s.hostConnMu.Unlock()
+
+	defer func() {
+		s.hostConnMu.Lock()
+		if s.hostConns != nil {
+			delete(s.hostConns, conn)
+		}
+		s.hostConnMu.Unlock()
+	}()
+
 	for {
+		// Check if room is still running before blocking on read.
+		s.hostMu.Lock()
+		running := s.hostRunning
+		s.hostMu.Unlock()
+		if !running {
+			return
+		}
+
 		typeName, body, err := ReadProtocolRequest(conn)
 		if err == ErrMCProxyConnection {
 			s.handleMCProxyConnection(conn)
@@ -526,6 +572,12 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string) (*Connecti
 		go s.setupMCLocalListener(hostIP, mcPort)
 	}
 
+	// Background reader: like Rust's ClientSession background thread.
+	// Continuously reads responses from the TCP connection and delivers
+	// them via guestReadCh. When the connection breaks, the channel closes.
+	s.guestReadCh = make(chan readResult, 1)
+	go s.guestReadLoop(conn)
+
 	go s.guestHeartbeatLoop(machineID, easytierID, playerName)
 
 	return s.buildConnectionStatus(), nil
@@ -563,6 +615,7 @@ func (s *ScaffoldingService) discoverHostAndConnect(manager *EasyTierManager, ti
 		if err == nil {
 			if WriteProtocolRequest(directConn, ProtocolPing, nil) == nil {
 				if _, _, err := ReadProtocolResponse(directConn); err == nil {
+					log.Printf("[JoinRoom] connected via direct localhost:%d", scaffoldingPort)
 					s.guestMu.Lock()
 					s.guestConn = directConn
 					s.guestScaffoldingLocalPort = scaffoldingPort
@@ -710,15 +763,21 @@ func (s *ScaffoldingService) LeaveRoom() error {
 
 func (s *ScaffoldingService) GetConnectionStatus() (*ConnectionStatus, error) {
 	s.guestMu.Lock()
-	if !s.guestRunning {
+	running := s.guestRunning
+	s.guestMu.Unlock()
+
+	log.Printf("[GetConnectionStatus] running=%v", running)
+
+	if !running {
+		s.guestMu.Lock()
 		reason := s.guestDisconnectReason
 		s.guestMu.Unlock()
+		log.Printf("[GetConnectionStatus] not running, reason=%q", reason)
 		if reason != "" {
 			return s.buildConnectionStatus(), nil
 		}
 		return nil, fmt.Errorf("未连接到任何房间")
 	}
-	s.guestMu.Unlock()
 
 	// Try to refresh player list
 	s.refreshGuestPlayerList()
@@ -748,9 +807,55 @@ func (s *ScaffoldingService) buildConnectionStatus() *ConnectionStatus {
 	}
 }
 
+// guestReadLoop runs in a background goroutine. It continuously reads responses
+// from the TCP connection (like Rust's ClientSession background thread).
+// When the read fails, it closes guestReadCh to signal all waiters.
+func (s *ScaffoldingService) guestReadLoop(conn net.Conn) {
+	log.Printf("[ReadLoop] started")
+	for {
+		status, body, err := ReadProtocolResponse(conn)
+		if err != nil {
+			log.Printf("[ReadLoop] read failed: %v", err)
+			// Drain any pending read result, then close the channel.
+			select {
+			case s.guestReadCh <- readResult{err: err}:
+			default:
+			}
+			close(s.guestReadCh)
+			return
+		}
+		s.guestReadCh <- readResult{status: status, body: body}
+	}
+}
+
+// writeAndWait writes a request then waits for the background reader to deliver
+// the response. Returns an error if the write fails, the reader fails, or a
+// timeout occurs.
+func (s *ScaffoldingService) writeAndWait(conn net.Conn, typeName string, body []byte) (uint8, []byte, error) {
+	s.guestIOMu.Lock()
+	if err := WriteProtocolRequest(conn, typeName, body); err != nil {
+		s.guestIOMu.Unlock()
+		return 0, nil, fmt.Errorf("write %s: %w", typeName, err)
+	}
+	s.guestIOMu.Unlock()
+
+	// Wait for the background reader to deliver the response.
+	select {
+	case result, ok := <-s.guestReadCh:
+		if !ok {
+			return 0, nil, fmt.Errorf("连接已断开")
+		}
+		return result.status, result.body, result.err
+	case <-time.After(5 * time.Second):
+		return 0, nil, fmt.Errorf("等待响应超时")
+	}
+}
+
 func (s *ScaffoldingService) guestHeartbeatLoop(machineID, easytierID, playerName string) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+
+	log.Printf("[Heartbeat] started")
 
 	for {
 		select {
@@ -761,6 +866,7 @@ func (s *ScaffoldingService) guestHeartbeatLoop(machineID, easytierID, playerNam
 			s.guestMu.Unlock()
 
 			if !running || conn == nil {
+				log.Printf("[Heartbeat] exiting: running=%v", running)
 				return
 			}
 
@@ -772,16 +878,15 @@ func (s *ScaffoldingService) guestHeartbeatLoop(machineID, easytierID, playerNam
 				Kind:       "GUEST",
 			})
 
-			if err := WriteProtocolRequest(conn, ProtocolPlayerPing, pingData); err != nil {
-				s.autoDisconnect("房主已关闭房间")
-				return
-			}
-			if _, _, err := ReadProtocolResponse(conn); err != nil {
+			_, _, err := s.writeAndWait(conn, ProtocolPlayerPing, pingData)
+			if err != nil {
+				log.Printf("[Heartbeat] failed: %v", err)
 				s.autoDisconnect("房主已关闭房间")
 				return
 			}
 
 		case <-s.guestStopCh:
+			log.Printf("[Heartbeat] stopCh, exiting")
 			return
 		}
 	}
@@ -903,6 +1008,7 @@ func (s *ScaffoldingService) handleMCProxyConnection(conn net.Conn) {
 }
 
 func (s *ScaffoldingService) autoDisconnect(reason string) {
+	log.Printf("[autoDisconnect] reason=%q", reason)
 	s.guestMu.Lock()
 	if s.guestConn != nil {
 		s.guestConn.Close()
@@ -943,10 +1049,7 @@ func (s *ScaffoldingService) refreshGuestPlayerList() {
 		return
 	}
 
-	if err := WriteProtocolRequest(conn, ProtocolPlayerProfilesList, nil); err != nil {
-		return
-	}
-	status, body, err := ReadProtocolResponse(conn)
+	status, body, err := s.writeAndWait(conn, ProtocolPlayerProfilesList, nil)
 	if err != nil || status != StatusOK {
 		return
 	}

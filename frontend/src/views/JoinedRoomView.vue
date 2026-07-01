@@ -1,7 +1,15 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from 'vue'
+import { onMounted, onUnmounted, watch, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useScaffoldingStore } from '@/stores/scaffolding'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { useClipboard } from '@vueuse/core'
 import { CopyOutline, LogOutOutline, CheckmarkOutline } from '@vicons/ionicons5'
@@ -10,6 +18,8 @@ const router = useRouter()
 const scaffold = useScaffoldingStore()
 const { copy, copied } = useClipboard()
 let pollTimer: ReturnType<typeof setInterval> | null = null
+const showDisconnectDialog = ref(false)
+const disconnectReason = ref('')
 
 onMounted(() => {
   pollTimer = setInterval(() => scaffold.refreshConnectionStatus(), 3000)
@@ -22,12 +32,16 @@ onUnmounted(() => {
 watch(() => scaffold.connectionStatus?.connected, (connected) => {
   if (connected === false && scaffold.connectionStatus?.disconnect_reason) {
     if (pollTimer) clearInterval(pollTimer)
-    setTimeout(() => {
-      scaffold.leaveRoom()
-      router.push('/')
-    }, 3000)
+    disconnectReason.value = scaffold.connectionStatus.disconnect_reason
+    showDisconnectDialog.value = true
   }
 })
+
+function handleBackHome() {
+  showDisconnectDialog.value = false
+  scaffold.leaveRoom()
+  router.push('/')
+}
 
 async function handleLeave() {
   await scaffold.leaveRoom()
@@ -56,7 +70,7 @@ function copyAddress() {
       <!-- Disconnect reason banner -->
       <div v-if="!scaffold.connectionStatus.connected && scaffold.connectionStatus.disconnect_reason" class="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-center">
         <p class="text-sm text-destructive font-medium">{{ scaffold.connectionStatus.disconnect_reason }}</p>
-        <p class="text-xs text-muted-foreground mt-1">3 秒后自动返回首页...</p>
+        <p class="text-xs text-muted-foreground mt-1">正在返回首页...</p>
       </div>
 
       <!-- Room Code -->
@@ -125,5 +139,18 @@ function copyAddress() {
       <div class="size-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
       <p class="text-sm text-muted-foreground">正在连接房间...</p>
     </div>
+
+    <!-- Disconnect Dialog -->
+    <Dialog :open="showDisconnectDialog" @update:open="showDisconnectDialog = $event">
+      <DialogContent class="sm:max-w-sm" @pointer-down-outside.prevent @escape-key-down.prevent>
+        <DialogHeader>
+          <DialogTitle>连接已断开</DialogTitle>
+          <DialogDescription>{{ disconnectReason }}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button class="w-full" @click="handleBackHome">返回首页</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>
