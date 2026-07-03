@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image"
+	_ "image/jpeg"
 	"image/png"
 	"log"
 	"os"
