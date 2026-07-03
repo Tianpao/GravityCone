@@ -878,9 +878,14 @@ func (s *ScaffoldingService) guestHeartbeatLoop(machineID, easytierID, playerNam
 				Kind:       "GUEST",
 			})
 
-			_, _, err := s.writeAndWait(conn, ProtocolPlayerPing, pingData)
+			status, _, err := s.writeAndWait(conn, ProtocolPlayerPing, pingData)
 			if err != nil {
 				log.Printf("[Heartbeat] failed: %v", err)
+				s.autoDisconnect("房主已关闭房间")
+				return
+			}
+			if status != 0 {
+				log.Printf("[Heartbeat] server returned error status %d", status)
 				s.autoDisconnect("房主已关闭房间")
 				return
 			}
