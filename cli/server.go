@@ -16,7 +16,8 @@ const version = "1.0.0"
 
 // Run starts the CLI stdio server. It reads JSON requests from stdin,
 // dispatches them to core services, and writes responses/events to stdout.
-func Run() {
+// peers overrides the default EasyTier public peer list.
+func Run(peers []string) {
 	// Resolve logs directory next to the CLI executable
 	logsDir, stdioLogPath, etLogPath, gccoreLogPath, err := resolveLogPaths()
 	if err != nil {
@@ -37,6 +38,12 @@ func Run() {
 
 	// Redirect EasyTier logs to file
 	core.SetEasyTierLogOutput(etLogPath)
+
+	// Override EasyTier peers if provided
+	if len(peers) > 0 {
+		core.SetPublicPeers(peers)
+		log.Printf("Using custom peers: %v", peers)
+	}
 
 	// Set up services
 	writer := NewStdioWriter()

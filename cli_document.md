@@ -18,6 +18,48 @@ task build:cli:dev
 
 产物位于 `bin/gravitycone-cli.exe`（Windows）或 `bin/gravitycone-cli`（Linux/macOS）。
 
+### 命令行参数
+
+```
+gravitycone-cli [-p <addr>] [--peers <addr>]
+```
+
+| 参数 | 说明 |
+|------|------|
+| `-p <addr>` | 添加 EasyTier 公网节点地址，可多次使用 |
+| `--peers <addr>` | 同 `-p`，可多次使用 |
+
+地址支持逗号分隔，以下写法均合法：
+
+```bash
+# 多次指定
+gravitycone-cli -p tcp://1.2.3.4:5678 -p tcp://5.6.7.8:9012
+
+# 等号连接
+gravitycone-cli --peers=tcp://1.2.3.4:5678 --peers=tcp://5.6.7.8:9012
+
+# 逗号分隔
+gravitycone-cli -p tcp://1.2.3.4:5678,tcp://5.6.7.8:9012
+
+# 混用
+gravitycone-cli -p tcp://1.2.3.4:5678 --peers tcp://5.6.7.8:9012
+```
+
+不指定则使用内置默认节点。
+
+### 日志文件
+
+CLI 启动后会在可执行文件同目录下创建 `logs/` 文件夹：
+
+```
+logs/
+  gccore.log      — 程序自身运行日志
+  easytier.log    — EasyTier 子进程日志
+  stdio.log       — 协议输入输出记录（> 前缀表示输入，其余为输出）
+```
+
+**终端不输出任何日志**，仅输出协议 JSON 消息。
+
 ### 启动与关闭
 
 ```bash
@@ -40,7 +82,7 @@ task build:cli:dev
 
 - 通信通过 **stdin/stdout** 进行，每条消息占一行（以 `\n` 结尾）
 - 所有消息均为 **JSON 格式**
-- **stderr** 用于日志输出，不参与协议通信
+- **终端不输出任何日志**，日志写入可执行文件同目录下的 `logs/` 文件夹
 - CLI 启动后进入常驻模式，持续监听 stdin
 
 ### 请求格式
@@ -458,7 +500,7 @@ CLI 会主动推送以下事件，宿主进程无需发送请求即可接收。
 ```javascript
 const { spawn } = require('child_process');
 
-const cli = spawn('./bin/gravitycone-cli', [], { stdio: ['pipe', 'pipe', 'pipe'] });
+const cli = spawn('./bin/gravitycone-cli', ['-p', 'tcp://1.2.3.4:5678'], { stdio: ['pipe', 'pipe', 'pipe'] });
 
 let nextId = 1;
 
@@ -478,9 +520,9 @@ rl.on('line', (line) => {
   }
 });
 
-// 监听 stderr 日志
+// 监听 stderr（CLI 不向终端输出日志，stderr 通常为空）
 cli.stderr.on('data', (data) => {
-  console.error('[cli-log]', data.toString());
+  console.error('[cli-err]', data.toString());
 });
 
 // 发送请求
@@ -512,7 +554,7 @@ import json
 import sys
 
 cli = subprocess.Popen(
-    ['./bin/gravitycone-cli'],
+    ['./bin/gravitycone-cli', '-p', 'tcp://1.2.3.4:5678'],
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
@@ -544,9 +586,11 @@ for line in cli.stdout:
 ```bash
 # 管道方式：发送多条请求
 printf '{"id":1,"method":"system.ping","params":{}}\n{"id":2,"method":"room.status","params":{}}\n{"id":3,"method":"system.shutdown","params":{}}\n' \
-  | ./bin/gravitycone-cli 2>/dev/null
+  | ./bin/gravitycone-cli
 
-# 交互方式（需要 expect 或类似工具）
+# 指定自定义节点
+printf '{"id":1,"method":"system.ping","params":{}}\n{"id":2,"method":"system.shutdown","params":{}}\n' \
+  | ./bin/gravitycone-cli -p tcp://1.2.3.4:5678 -p tcp://5.6.7.8:9012
 ```
 
 ---
@@ -556,8 +600,8 @@ printf '{"id":1,"method":"system.ping","params":{}}\n{"id":2,"method":"room.stat
 ```
 宿主进程                        CLI 进程
    │                              │
-   │──── 启动 CLI ───────────────>│
-   │                              │  初始化服务
+   │──── 启动 CLI (-p ...) ──────>│
+   │                              │  初始化服务，日志写入 logs/
    │<─── system.ready 事件 ───────│  {"event":"system.ready","data":{"version":"1.0.0"}}
    │                              │
    │──── stun.probe ─────────────>│

@@ -21,6 +21,13 @@ var publicPeers = []string{
 	"https://etnode.zkitefly.eu.org/node1",
 }
 
+// SetPublicPeers replaces the default public peer list used when starting EasyTier.
+func SetPublicPeers(peers []string) {
+	if len(peers) > 0 {
+		publicPeers = peers
+	}
+}
+
 // easytierLogOutput controls where easytier-core stdout/stderr is written.
 // Defaults to os.Stdout/os.Stderr. Override with SetEasyTierLogOutput.
 var (
