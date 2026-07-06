@@ -18,15 +18,30 @@ type LanServer struct {
 	Port int    `json:"port"`
 }
 
-type LanService struct {
-	mu       sync.Mutex
-	servers  []LanServer
-	conns    []*net.UDPConn
-	pconns   []*ipv4.PacketConn
-	stopCh   chan struct{}
-	running  bool
-	localIPs map[string]bool
+type lanServerEntry struct {
+	server   LanServer
+	lastSeen time.Time
 }
+
+func NewLanService(emitter EventEmitter) *LanService {
+	if emitter == nil {
+		emitter = NilEventEmitter{}
+	}
+	return &LanService{eventEmitter: emitter}
+}
+
+type LanService struct {
+	eventEmitter EventEmitter
+	mu           sync.Mutex
+	entries      []lanServerEntry
+	conns        []*net.UDPConn
+	pconns       []*ipv4.PacketConn
+	stopCh       chan struct{}
+	running      bool
+	localIPs     map[string]bool
+}
+
+const lanServerTimeout = 30 * time.Second
 
 func (s *LanService) StartDiscovery() error {
 	s.mu.Lock()
@@ -34,7 +49,7 @@ func (s *LanService) StartDiscovery() error {
 		s.mu.Unlock()
 		return nil
 	}
-	s.servers = nil
+	s.entries = nil
 	s.stopCh = make(chan struct{})
 	s.mu.Unlock()
 
@@ -91,6 +106,7 @@ func (s *LanService) StartDiscovery() error {
 	s.mu.Unlock()
 
 	go s.listen(conns, s.stopCh, localIPs)
+	go s.cleanupLoop(s.stopCh)
 	return nil
 }
 
@@ -110,15 +126,17 @@ func (s *LanService) listen(conns []*net.UDPConn, stopCh chan struct{}, localIPs
 			}
 			s.mu.Lock()
 			found := false
-			for i := range s.servers {
-				if s.servers[i].IP == server.IP && s.servers[i].Port == server.Port {
-					s.servers[i].MOTD = server.MOTD
+			for i := range s.entries {
+				if s.entries[i].server.IP == server.IP && s.entries[i].server.Port == server.Port {
+					s.entries[i].server.MOTD = server.MOTD
+					s.entries[i].lastSeen = time.Now()
 					found = true
 					break
 				}
 			}
 			if !found {
-				s.servers = append(s.servers, server)
+				s.entries = append(s.entries, lanServerEntry{server: server, lastSeen: time.Now()})
+				s.eventEmitter.Emit("lan.server_found", server)
 			}
 			s.mu.Unlock()
 		}
@@ -127,6 +145,31 @@ func (s *LanService) listen(conns []*net.UDPConn, stopCh chan struct{}, localIPs
 		case <-stopCh:
 			return
 		default:
+		}
+	}
+}
+
+func (s *LanService) cleanupLoop(stopCh chan struct{}) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			s.mu.Lock()
+			now := time.Now()
+			var kept []lanServerEntry
+			for _, e := range s.entries {
+				if now.Sub(e.lastSeen) > lanServerTimeout {
+					s.eventEmitter.Emit("lan.server_lost", map[string]interface{}{"ip": e.server.IP, "port": e.server.Port})
+				} else {
+					kept = append(kept, e)
+				}
+			}
+			s.entries = kept
+			s.mu.Unlock()
+		case <-stopCh:
+			return
 		}
 	}
 }
@@ -148,14 +191,16 @@ func (s *LanService) StopDiscovery() {
 	s.conns = nil
 	s.localIPs = nil
 	s.running = false
-	s.servers = nil
+	s.entries = nil
 }
 
 func (s *LanService) GetDiscoveredServers() []LanServer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result := make([]LanServer, len(s.servers))
-	copy(result, s.servers)
+	result := make([]LanServer, len(s.entries))
+	for i, e := range s.entries {
+		result[i] = e.server
+	}
 	return result
 }
 

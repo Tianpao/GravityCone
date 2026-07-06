@@ -55,7 +55,35 @@ type playerEntry struct {
 	lastSeen time.Time
 }
 
+func NewScaffoldingService(emitter EventEmitter) *ScaffoldingService {
+	if emitter == nil {
+		emitter = NilEventEmitter{}
+	}
+	return &ScaffoldingService{
+		eventEmitter: emitter,
+	}
+}
+
+// SetEventEmitter replaces the event emitter. Used by Wails to inject
+// the app emitter after the service is created and registered.
+// Not exported to avoid Wails binding generation.
+func (s *ScaffoldingService) setEventEmitter(emitter EventEmitter) {
+	if emitter != nil {
+		s.eventEmitter = emitter
+	}
+}
+
+// InitScaffoldingEmitter sets the event emitter on a ScaffoldingService.
+// This is a package-level helper so main.go can call it without the method
+// appearing in Wails bindings.
+func InitScaffoldingEmitter(svc *ScaffoldingService, emitter EventEmitter) {
+	svc.setEventEmitter(emitter)
+}
+
 type ScaffoldingService struct {
+	eventEmitter    EventEmitter
+	joinProgressCb  func(string) // set by CLI mode for progress notifications
+
 	// HOST state
 	hostManager    *EasyTierManager
 	hostListener   net.Listener
@@ -209,6 +237,13 @@ func (s *ScaffoldingService) StopRoom() error {
 	s.hostRunning = false
 	s.hostMu.Unlock()
 
+	// Emit room.closed event
+	reason := s.hostStopReason
+	if reason == "" {
+		reason = "room stopped by host"
+	}
+	s.eventEmitter.Emit("room.closed", map[string]string{"reason": reason})
+
 	// Close all active guest connections so they detect disconnection immediately.
 	s.hostConnMu.Lock()
 	log.Printf("[StopRoom] closing %d host connections", len(s.hostConns))
@@ -235,7 +270,7 @@ func (s *ScaffoldingService) GetRoomStatus() (*RoomStatus, error) {
 		reason := s.hostStopReason
 		s.hostMu.Unlock()
 		if reason != "" {
-			return nil, fmt.Errorf(reason)
+			return nil, fmt.Errorf("%s", reason)
 		}
 		return nil, fmt.Errorf("没有正在运行的房间")
 	}
@@ -285,6 +320,7 @@ func (s *ScaffoldingService) hostPlayerCleanupLoop() {
 			now := time.Now()
 			for id, e := range s.hostPlayers {
 				if e.info.Kind == "GUEST" && now.Sub(e.lastSeen) > guestTimeout {
+					s.eventEmitter.Emit("room.player_left", *e.info)
 					delete(s.hostPlayers, id)
 				}
 			}
@@ -459,11 +495,19 @@ func (s *ScaffoldingService) handlePlayerPing(conn net.Conn, body []byte) {
 	if player.Kind == "" {
 		player.Kind = "GUEST"
 	}
+	isNew := false
+	if _, exists := s.hostPlayers[player.MachineID]; !exists && player.Kind == "GUEST" {
+		isNew = true
+	}
 	s.hostPlayers[player.MachineID] = &playerEntry{
 		info:     &player,
 		lastSeen: time.Now(),
 	}
 	s.hostPlayerMu.Unlock()
+
+	if isNew {
+		s.eventEmitter.Emit("room.player_joined", player)
+	}
 
 	WriteProtocolResponse(conn, StatusOK, nil)
 }
@@ -489,6 +533,25 @@ func (s *ScaffoldingService) handlePlayerProfilesList(conn net.Conn) {
 // CancelJoin aborts a running JoinRoom call. Safe to call even if no join is in progress.
 func (s *ScaffoldingService) CancelJoin() {
 	s.joinCancelled.Store(true)
+}
+
+// setJoinProgressCallback sets an optional progress callback for JoinRoom.
+// Only needed by CLI mode; Wails mode ignores it.
+func (s *ScaffoldingService) setJoinProgressCallback(cb func(step string)) {
+	s.joinProgressCb = cb
+}
+
+// SetScaffoldingJoinProgress sets the progress callback on a ScaffoldingService.
+// Package-level helper so the CLI handler can call it without the method
+// appearing in Wails bindings.
+func SetScaffoldingJoinProgress(svc *ScaffoldingService, cb func(step string)) {
+	svc.setJoinProgressCallback(cb)
+}
+
+func (s *ScaffoldingService) reportJoinProgress(step string) {
+	if cb := s.joinProgressCb; cb != nil {
+		cb(step)
+	}
 }
 
 func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPrefix string) (*ConnectionStatus, error) {
@@ -522,6 +585,7 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
 	}
 	_ = virtualIP // used indirectly via DiscoverPeer
+	s.reportJoinProgress("connecting")
 
 	// 3. Discover HOST and wait for P2P connection
 	// The hostname format is scaffolding-mc-server-{port}, scan peers for matching hostname.
@@ -591,6 +655,8 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 		}
 	}
 
+	s.reportJoinProgress("handshaking")
+
 	// 7. Get MC server port
 	if err := WriteProtocolRequest(conn, ProtocolServerPort, nil); err != nil {
 		conn.Close()
@@ -643,6 +709,7 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 
 	go s.guestHeartbeatLoop(machineID, easytierID, playerName, vendorPrefix)
 
+	s.reportJoinProgress("ready")
 	return s.buildConnectionStatus(), nil
 }
 
@@ -656,6 +723,7 @@ func (s *ScaffoldingService) discoverHostAndConnect(manager *EasyTierManager, ti
 	var prevForwardRemote string
 
 	for time.Now().Before(deadline) {
+		s.reportJoinProgress("waiting_peer")
 		// Check if cancelled
 		if s.joinCancelled.Load() {
 			return "", 0, fmt.Errorf("加入已取消")
@@ -1101,6 +1169,8 @@ func (s *ScaffoldingService) autoDisconnect(reason string) {
 	s.guestScaffoldingLocalPort = 0
 	s.guestDirectLocal = false
 	s.guestMu.Unlock()
+	// Emit room.disconnected event
+	s.eventEmitter.Emit("room.disconnected", map[string]string{"reason": reason})
 
 	if manager != nil {
 		manager.Stop()

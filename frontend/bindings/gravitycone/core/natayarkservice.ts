@@ -10,20 +10,20 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 export function GetCurrentUser(): $CancellablePromise<$models.NatayarkUser | null> {
-    return $Call.ByID(3055897417);
+    return $Call.ByID(444810324);
 }
 
 export function Logout(): $CancellablePromise<void> {
-    return $Call.ByID(3793153729);
+    return $Call.ByID(4087187948);
 }
 
 /**
  * RestoreSession is called at startup to reload the persisted session.
  */
 export function RestoreSession(): $CancellablePromise<void> {
-    return $Call.ByID(2235759601);
+    return $Call.ByID(1945922164);
 }
 
 export function StartLogin(): $CancellablePromise<$models.NatayarkUser | null> {
-    return $Call.ByID(3293870338);
+    return $Call.ByID(4223886063);
 }

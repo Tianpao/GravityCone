@@ -40,6 +40,16 @@ tasks:
     cmds:
       - task: common:setup:docker
 
+  build:cli:
+    summary: Builds the CLI version (no GUI, stdio JSON protocol)
+    cmds:
+      - go build -tags cli -trimpath -ldflags="-w -s" -o "{{.BIN_DIR}}/{{.APP_NAME}}-cli{{exeExt}}" .
+
+  build:cli:dev:
+    summary: Builds the CLI version in development mode
+    cmds:
+      - go build -tags cli -o "{{.BIN_DIR}}/{{.APP_NAME}}-cli{{exeExt}}" .
+
   build:server:
     summary: Builds the application in server mode (no GUI, HTTP server only)
     cmds:

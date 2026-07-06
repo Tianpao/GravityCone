@@ -13,36 +13,36 @@ import * as $models from "./models.js";
  * CancelJoin aborts a running JoinRoom call. Safe to call even if no join is in progress.
  */
 export function CancelJoin(): $CancellablePromise<void> {
-    return $Call.ByID(3960731962);
+    return $Call.ByID(1094851085);
 }
 
 /**
  * Cleanup stops any running room or connection (called on app shutdown)
  */
 export function Cleanup(): $CancellablePromise<void> {
-    return $Call.ByID(3318415232);
+    return $Call.ByID(2877413657);
 }
 
 export function CreateRoom(mcPort: number, playerName: string, vendorPrefix: string): $CancellablePromise<$models.RoomStatus | null> {
-    return $Call.ByID(2616414379, mcPort, playerName, vendorPrefix);
+    return $Call.ByID(668317184, mcPort, playerName, vendorPrefix);
 }
 
 export function GetConnectionStatus(): $CancellablePromise<$models.ConnectionStatus | null> {
-    return $Call.ByID(2919172306);
+    return $Call.ByID(1169126479);
 }
 
 export function GetRoomStatus(): $CancellablePromise<$models.RoomStatus | null> {
-    return $Call.ByID(969092125);
+    return $Call.ByID(3873649912);
 }
 
 export function JoinRoom(code: string, playerName: string, vendorPrefix: string): $CancellablePromise<$models.ConnectionStatus | null> {
-    return $Call.ByID(3330044535, code, playerName, vendorPrefix);
+    return $Call.ByID(1312253032, code, playerName, vendorPrefix);
 }
 
 export function LeaveRoom(): $CancellablePromise<void> {
-    return $Call.ByID(847243300);
+    return $Call.ByID(3396570265);
 }
 
 export function StopRoom(): $CancellablePromise<void> {
-    return $Call.ByID(1930853247);
+    return $Call.ByID(695010240);
 }

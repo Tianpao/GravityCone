@@ -1,4 +1,4 @@
-module changeme
+module gravitycone
 
 go 1.26.1
 
