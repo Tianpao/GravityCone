@@ -9,12 +9,13 @@ import (
 
 // Handler dispatches CLI requests to core service methods.
 type Handler struct {
-	stunSvc       *core.StunService
-	lanSvc        *core.LanService
+	stunSvc        *core.StunService
+	lanSvc         *core.LanService
 	scaffoldingSvc *core.ScaffoldingService
-	writer        *StdioWriter
-	shutdownCh    chan struct{}
-	shutdownOnce  sync.Once
+	writer         *StdioWriter
+	shutdownCh     chan struct{}
+	shutdownOnce   sync.Once
+	vendorPrefix   string
 }
 
 // NewHandler creates a Handler with the given services and writer.
@@ -24,6 +25,7 @@ func NewHandler(
 	scaffoldingSvc *core.ScaffoldingService,
 	writer *StdioWriter,
 	shutdownCh chan struct{},
+	vendorPrefix string,
 ) *Handler {
 	return &Handler{
 		stunSvc:        stunSvc,
@@ -31,6 +33,7 @@ func NewHandler(
 		scaffoldingSvc: scaffoldingSvc,
 		writer:         writer,
 		shutdownCh:     shutdownCh,
+		vendorPrefix:   vendorPrefix,
 	}
 }
 
@@ -84,9 +87,8 @@ func (h *Handler) handleRoom(req Request, action string) {
 			h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
 			return
 		}
-		vendorPrefix, _ := req.getString("vendor_prefix")
 
-		result, err := h.scaffoldingSvc.CreateRoom(uint16(mcPort), playerName, vendorPrefix)
+		result, err := h.scaffoldingSvc.CreateRoom(uint16(mcPort), playerName, h.vendorPrefix)
 		if err != nil {
 			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
 			return
@@ -112,7 +114,6 @@ func (h *Handler) handleRoom(req Request, action string) {
 			h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
 			return
 		}
-		vendorPrefix, _ := req.getString("vendor_prefix")
 
 		// Set progress callback that writes progress responses
 		core.SetScaffoldingJoinProgress(h.scaffoldingSvc, func(step string) {
@@ -123,7 +124,7 @@ func (h *Handler) handleRoom(req Request, action string) {
 		})
 		defer core.SetScaffoldingJoinProgress(h.scaffoldingSvc, nil)
 
-		result, err := h.scaffoldingSvc.JoinRoom(code, playerName, vendorPrefix)
+		result, err := h.scaffoldingSvc.JoinRoom(code, playerName, h.vendorPrefix)
 		if err != nil {
 			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
 			return
