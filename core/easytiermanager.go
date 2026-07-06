@@ -28,6 +28,11 @@ func SetPublicPeers(peers []string) {
 	}
 }
 
+// AddPublicPeers appends peer addresses to the public peer list.
+func AddPublicPeers(peers []string) {
+	publicPeers = append(publicPeers, peers...)
+}
+
 // easytierLogOutput controls where easytier-core stdout/stderr is written.
 // Defaults to os.Stdout/os.Stderr. Override with SetEasyTierLogOutput.
 var (

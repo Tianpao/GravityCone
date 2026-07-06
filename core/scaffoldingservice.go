@@ -1207,3 +1207,8 @@ func (s *ScaffoldingService) Cleanup() {
 	s.StopRoom()
 	s.LeaveRoom()
 }
+
+// AddPeers appends peer addresses so they are included when EasyTier starts.
+func (s *ScaffoldingService) AddPeers(addrs []string) {
+	AddPublicPeers(addrs)
+}

@@ -244,9 +244,41 @@ func (h *Handler) handleSystem(req Request, action string) {
 		h.shutdownOnce.Do(func() {
 			close(h.shutdownCh)
 		})
+	case "add_peers":
+		h.handleAddPeers(req)
 	default:
 		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidMethod, req.Method))
 	}
+}
+
+func (h *Handler) handleAddPeers(req Request) {
+	rawPeers, ok := req.Params["peers"]
+	if !ok {
+		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, "missing required parameter: peers"))
+		return
+	}
+	peersArr, ok := rawPeers.([]interface{})
+	if !ok {
+		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, "parameter peers must be an array of strings"))
+		return
+	}
+	var addrs []string
+	for _, v := range peersArr {
+		s, ok := v.(string)
+		if !ok {
+			h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, "parameter peers must be an array of strings"))
+			return
+		}
+		if s != "" {
+			addrs = append(addrs, s)
+		}
+	}
+	if len(addrs) == 0 {
+		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, "peers array must not be empty"))
+		return
+	}
+	h.scaffoldingSvc.AddPeers(addrs)
+	h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
 }
 
 // mapStunError maps a STUN-related error to a CLI error code.
