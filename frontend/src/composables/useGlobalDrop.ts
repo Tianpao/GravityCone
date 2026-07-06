@@ -44,11 +44,13 @@ export function useGlobalDrop() {
   }
 
   function handleDragOver(e: DragEvent) {
+    if (!e.dataTransfer) return
+    // Only intercept if files are being dragged in from outside
+    if (!e.dataTransfer.types.includes('Files')) return
+
     e.preventDefault()
     e.stopPropagation()
-    if (e.dataTransfer) {
-      e.dataTransfer.dropEffect = 'copy'
-    }
+    e.dataTransfer.dropEffect = 'copy'
   }
 
   function handleDragLeave(e: DragEvent) {
