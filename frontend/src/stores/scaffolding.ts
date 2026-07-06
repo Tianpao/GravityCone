@@ -7,11 +7,11 @@ export const useScaffoldingStore = defineStore('scaffolding', {
     // HOST
     roomStatus: null as RoomStatus | null,
     creating: false,
+    hostError: '',
     // GUEST
     connectionStatus: null as ConnectionStatus | null,
     joining: false,
-    // Shared
-    error: '',
+    guestError: '',
   }),
 
   getters: {
@@ -23,12 +23,12 @@ export const useScaffoldingStore = defineStore('scaffolding', {
   actions: {
     async createRoom(mcPort: number, playerName: string) {
       this.creating = true
-      this.error = ''
+      this.hostError = ''
       try {
         const result = await CreateRoom(mcPort, playerName)
         this.roomStatus = result
       } catch (e: any) {
-        this.error = e?.message || String(e)
+        this.hostError = e?.message || String(e)
         throw e
       } finally {
         this.creating = false
@@ -40,7 +40,7 @@ export const useScaffoldingStore = defineStore('scaffolding', {
         await StopRoom()
       } catch {}
       this.roomStatus = null
-      this.error = ''
+      this.hostError = ''
     },
 
     async refreshRoomStatus() {
@@ -58,12 +58,12 @@ export const useScaffoldingStore = defineStore('scaffolding', {
 
     async joinRoom(roomCode: string, playerName: string) {
       this.joining = true
-      this.error = ''
+      this.guestError = ''
       try {
         const result = await JoinRoom(roomCode, playerName)
         this.connectionStatus = result
       } catch (e: any) {
-        this.error = e?.message || String(e)
+        this.guestError = e?.message || String(e)
         throw e
       } finally {
         this.joining = false
@@ -75,7 +75,7 @@ export const useScaffoldingStore = defineStore('scaffolding', {
         await LeaveRoom()
       } catch {}
       this.connectionStatus = null
-      this.error = ''
+      this.guestError = ''
     },
 
     async refreshConnectionStatus() {
@@ -84,7 +84,7 @@ export const useScaffoldingStore = defineStore('scaffolding', {
         if (result) {
           this.connectionStatus = result
           if (!result.connected && result.disconnect_reason) {
-            this.error = result.disconnect_reason
+            this.guestError = result.disconnect_reason
           }
         }
       } catch {}

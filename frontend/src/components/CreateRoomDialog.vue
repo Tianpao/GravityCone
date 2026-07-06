@@ -77,6 +77,7 @@ function stopPolling() {
 
 watch(() => props.open, (val) => {
   if (val) {
+    scaffold.hostError = ''
     startPolling()
   } else {
     stopPolling()
@@ -137,8 +138,8 @@ onUnmounted(() => {
       </div>
 
       <!-- Error -->
-      <div v-if="lan.error || scaffold.error" class="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
-        {{ scaffold.error || lan.error }}
+      <div v-if="lan.error || scaffold.hostError" class="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        {{ scaffold.hostError || lan.error }}
       </div>
 
       <!-- Separator -->

@@ -94,7 +94,7 @@ function handleCancelJoin() {
 watch(() => props.open, (val) => {
   if (!val) {
     rawInput.value = ''
-    scaffold.error = ''
+    scaffold.guestError = ''
   }
 })
 </script>
@@ -131,8 +131,8 @@ watch(() => props.open, (val) => {
       </div>
 
       <!-- Error -->
-      <div v-if="scaffold.error" class="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
-        {{ scaffold.error }}
+      <div v-if="scaffold.guestError" class="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        {{ scaffold.guestError }}
       </div>
 
       <DialogFooter>
