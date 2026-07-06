@@ -5,6 +5,7 @@ import * as GreetService from "./greetservice.js";
 import * as LanService from "./lanservice.js";
 import * as NatayarkService from "./natayarkservice.js";
 import * as ScaffoldingService from "./scaffoldingservice.js";
+import * as SettingsService from "./settingsservice.js";
 import * as StunService from "./stunservice.js";
 import * as WatermarkService from "./watermarkservice.js";
 export {
@@ -12,6 +13,7 @@ export {
     LanService,
     NatayarkService,
     ScaffoldingService,
+    SettingsService,
     StunService,
     WatermarkService
 };

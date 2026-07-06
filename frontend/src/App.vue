@@ -2,11 +2,15 @@
 import TitleBar from "@/components/TitleBar.vue"
 import BottomNav from "@/components/BottomNav.vue"
 import { useUserStore } from "@/stores/user"
+import { useSettingsStore } from "@/stores/settings"
 import { useGlobalDrop } from "@/composables/useGlobalDrop"
 import { Button } from "@/components/ui/button"
 
 const user = useUserStore()
 user.refreshUser()
+
+const settings = useSettingsStore()
+settings.loadPeers()
 
 const { showDropOverlay, dropStatus, dropRoomCode, dropError, cancel } = useGlobalDrop()
 </script>

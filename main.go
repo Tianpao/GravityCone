@@ -37,10 +37,11 @@ func main() {
 		Services: []application.Service{
 			application.NewService(&core.GreetService{}),
 			application.NewService(&core.StunService{}),
-			application.NewService(&core.LanService{}),
+			application.NewService(core.NewLanService(nil)),
 			application.NewService(natayarkSvc),
 			application.NewService(scaffoldingSvc),
 			application.NewService(&core.WatermarkService{}),
+			application.NewService(&core.SettingsService{}),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
