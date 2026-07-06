@@ -28,7 +28,7 @@ func Run(peers []string) {
 	}
 
 	// Redirect Go log to gccore.log (no terminal output)
-	gccoreLog, err := os.OpenFile(gccoreLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	gccoreLog, err := os.OpenFile(gccoreLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		log.Fatalf("Failed to open gccore.log: %v", err)
 	}
@@ -57,7 +57,7 @@ func Run(peers []string) {
 	handler := NewHandler(stunSvc, lanSvc, scaffoldingSvc, writer, shutdownCh)
 
 	// Open stdio log file
-	stdioLog, err := os.OpenFile(stdioLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	stdioLog, err := os.OpenFile(stdioLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		log.Printf("Warning: failed to open stdio.log: %v", err)
 	} else {

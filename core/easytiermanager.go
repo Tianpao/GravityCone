@@ -43,7 +43,7 @@ func SetEasyTierLogOutput(path string) {
 		easytierStderr = os.Stderr
 		return
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		log.Printf("Warning: failed to open easytier log file %s: %v", path, err)
 		return
