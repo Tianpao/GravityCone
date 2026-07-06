@@ -30,7 +30,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const isValidPort = computed(() => {
   const p = parseInt(manualPort.value)
-  return !isNaN(p) && p >= 1 && p <= 65535
+  return !isNaN(p) && p > 1024 && p <= 65535
 })
 
 function selectServer(index: number) {

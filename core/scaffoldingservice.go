@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	mcstatus "github.com/andre-carbajal/go-mcstatus"
 )
 
 type RoomStatus struct {
@@ -94,6 +96,15 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string) (*Room
 	}
 	s.hostMu.Unlock()
 
+	// 0. Verify the port has a Minecraft server running
+	if mcPort <= 1024 || mcPort > 65535 {
+		return nil, fmt.Errorf("端口号必须在 1025~65535 之间")
+	}
+	server := mcstatus.JavaServer{Host: "127.0.0.1", Port: mcPort}
+	if _, err := server.Status(); err != nil {
+		return nil, fmt.Errorf("端口 %d 上未检测到 Minecraft 服务器，请确认服务器已启动", mcPort)
+	}
+
 	// 1. Generate room code
 	rc, err := GenerateRoomCode()
 	if err != nil {
@@ -108,7 +119,7 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string) (*Room
 	tcpPort := uint16(listener.Addr().(*net.TCPAddr).Port)
 
 	// Validate: port must be > 1024 and <= 65535
-	if tcpPort <= 1024 {
+	if tcpPort <= 1024 || tcpPort > 65535 {
 		listener.Close()
 		return nil, fmt.Errorf("分配的TCP端口 %d 不合法（需大于1024）", tcpPort)
 	}
