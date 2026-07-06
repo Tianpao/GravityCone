@@ -26,7 +26,14 @@ async function generate() {
   if (!source) return
   const result = await watermark.encode(source, props.roomCode)
   if (result) {
-    previewBase64.value = result.base64_png
+    // Verify the room code can be decoded from the generated image
+    const decoded = await watermark.decode(result.base64_png)
+    if (!decoded || decoded !== props.roomCode) {
+      previewBase64.value = ''
+      watermark.error = '此图片无法包含有效的房间信息，请换另一张图片！'
+    } else {
+      previewBase64.value = result.base64_png
+    }
   }
 }
 
