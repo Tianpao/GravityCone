@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -211,7 +212,9 @@ func (m *EasyTierManager) getSelfVirtualIP() (string, error) {
 	if err := json.Unmarshal([]byte(out), &info); err != nil {
 		return "", err
 	}
-	return info.VirtualIP, nil
+	// Remove CIDR suffix if present (e.g. "10.144.0.1/24" -> "10.144.0.1")
+	ip, _, _ := strings.Cut(info.VirtualIP, "/")
+	return ip, nil
 }
 
 func (m *EasyTierManager) Stop() error {
@@ -305,7 +308,9 @@ func (m *EasyTierManager) DiscoverPeer(hostname string) (string, error) {
 
 	for _, p := range peers {
 		if p.Hostname == hostname && p.VirtualIP != "" {
-			return p.VirtualIP, nil
+			// Remove CIDR suffix if present (e.g. "10.144.0.1/24" -> "10.144.0.1")
+			ip, _, _ := strings.Cut(p.VirtualIP, "/")
+			return ip, nil
 		}
 	}
 

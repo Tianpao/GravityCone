@@ -33,12 +33,6 @@ function copyCode() {
     copy(scaffold.roomStatus.code)
   }
 }
-
-function copyAddress() {
-  if (scaffold.roomStatus?.mc_address && scaffold.roomStatus?.mc_port) {
-    copy(`${scaffold.roomStatus.mc_address}:${scaffold.roomStatus.mc_port}`)
-  }
-}
 </script>
 
 <template>
@@ -54,18 +48,6 @@ function copyAddress() {
         <Button variant="ghost" size="sm" @click="copyCode" class="gap-1.5">
           <component :is="copied ? CheckmarkOutline : CopyOutline" class="size-3.5" />
           <span class="text-xs">{{ copied ? '已复制' : '复制代码' }}</span>
-        </Button>
-      </div>
-
-      <!-- Server Address -->
-      <div v-if="scaffold.roomStatus.mc_address" class="rounded-xl border border-border bg-card p-4 text-center space-y-2">
-        <p class="text-xs text-muted-foreground">游戏地址</p>
-        <p class="font-mono text-sm">
-          {{ scaffold.roomStatus.mc_address }}:{{ scaffold.roomStatus.mc_port }}
-        </p>
-        <Button variant="ghost" size="xs" @click="copyAddress" class="gap-1">
-          <component :is="copied ? CheckmarkOutline : CopyOutline" class="size-3" />
-          <span class="text-xs">{{ copied ? '已复制' : '复制' }}</span>
         </Button>
       </div>
 
