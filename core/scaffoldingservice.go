@@ -66,9 +66,10 @@ type ScaffoldingService struct {
 	hostPlayerMu   sync.Mutex
 	hostStopCh     chan struct{}
 	hostRunning    bool
-	hostMu         sync.Mutex
-	hostPlayerName string
-	hostConns      map[net.Conn]struct{} // track active connections for shutdown
+	hostMu            sync.Mutex
+	hostPlayerName    string
+	hostStopReason    string // reason the room was auto-stopped (e.g. MC server gone)
+	hostConns         map[net.Conn]struct{} // track active connections for shutdown
 	hostConnMu     sync.Mutex
 
 	// GUEST state
@@ -169,6 +170,7 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 	s.hostPlayers = make(map[string]*playerEntry)
 	s.hostStopCh = make(chan struct{})
 	s.hostRunning = true
+	s.hostStopReason = ""
 	s.hostPlayerName = playerName
 	s.hostConns = make(map[net.Conn]struct{})
 	s.hostMu.Unlock()
@@ -189,6 +191,7 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 
 	go s.hostServerLoop()
 	go s.hostPlayerCleanupLoop()
+	go s.hostMCHealthCheckLoop()
 
 	return s.buildRoomStatus(virtualIP), nil
 }
@@ -229,7 +232,11 @@ func (s *ScaffoldingService) StopRoom() error {
 func (s *ScaffoldingService) GetRoomStatus() (*RoomStatus, error) {
 	s.hostMu.Lock()
 	if !s.hostRunning {
+		reason := s.hostStopReason
 		s.hostMu.Unlock()
+		if reason != "" {
+			return nil, fmt.Errorf(reason)
+		}
 		return nil, fmt.Errorf("没有正在运行的房间")
 	}
 	virtualIP := ""
@@ -282,6 +289,37 @@ func (s *ScaffoldingService) hostPlayerCleanupLoop() {
 				}
 			}
 			s.hostPlayerMu.Unlock()
+		case <-s.hostStopCh:
+			return
+		}
+	}
+}
+
+func (s *ScaffoldingService) hostMCHealthCheckLoop() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			s.hostMu.Lock()
+			mcPort := s.mcPort
+			running := s.hostRunning
+			s.hostMu.Unlock()
+
+			if !running {
+				return
+			}
+
+			server := mcstatus.JavaServer{Host: "127.0.0.1", Port: mcPort}
+			if _, err := server.Status(); err != nil {
+				log.Printf("[MCHealthCheck] MC server not responding on port %d, stopping room", mcPort)
+				s.hostMu.Lock()
+				s.hostStopReason = "Minecraft 服务器已关闭，房间已自动销毁"
+				s.hostMu.Unlock()
+				s.StopRoom()
+				return
+			}
 		case <-s.hostStopCh:
 			return
 		}

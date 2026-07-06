@@ -1,9 +1,17 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, watch, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useScaffoldingStore } from '@/stores/scaffolding'
 import { useWatermarkStore } from '@/stores/watermark'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { useClipboard } from '@vueuse/core'
 import { CopyOutline, StopCircleOutline, CheckmarkOutline } from '@vicons/ionicons5'
 import WatermarkShare from '@/components/WatermarkShare.vue'
@@ -13,6 +21,8 @@ const scaffold = useScaffoldingStore()
 const watermark = useWatermarkStore()
 const { copy, copied } = useClipboard()
 let pollTimer: ReturnType<typeof setInterval> | null = null
+const showStopDialog = ref(false)
+const stopReason = ref('')
 
 onMounted(() => {
   pollTimer = setInterval(() => scaffold.refreshRoomStatus(), 3000)
@@ -23,8 +33,21 @@ onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
 })
 
+watch(() => scaffold.roomStatus, (val) => {
+  if (!val && scaffold.hostError) {
+    if (pollTimer) clearInterval(pollTimer)
+    stopReason.value = scaffold.hostError
+    showStopDialog.value = true
+  }
+})
+
 async function handleStop() {
   await scaffold.stopRoom()
+  router.push('/')
+}
+
+function handleBackHome() {
+  showStopDialog.value = false
   router.push('/')
 }
 
@@ -97,5 +120,18 @@ function copyCode() {
       <div class="size-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
       <p class="text-sm text-muted-foreground">正在创建房间...</p>
     </div>
+
+    <!-- Room Stopped Dialog -->
+    <Dialog :open="showStopDialog" @update:open="showStopDialog = $event">
+      <DialogContent class="sm:max-w-sm" @pointer-down-outside.prevent @escape-key-down.prevent>
+        <DialogHeader>
+          <DialogTitle>房间已关闭</DialogTitle>
+          <DialogDescription>{{ stopReason }}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button class="w-full" @click="handleBackHome">返回首页</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   </div>
 </template>

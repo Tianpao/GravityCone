@@ -47,7 +47,10 @@ export const useScaffoldingStore = defineStore('scaffolding', {
       try {
         const result = await GetRoomStatus()
         if (result) this.roomStatus = result
-      } catch {}
+      } catch (e: any) {
+        this.hostError = e?.message || ''
+        this.roomStatus = null
+      }
     },
 
     async cancelJoin() {
