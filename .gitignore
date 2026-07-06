@@ -15,3 +15,6 @@ easytier/
 CLAUDE.md
 .mcp.json
 images/
+
+*.exe
+*.zip

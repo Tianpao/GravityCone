@@ -15,6 +15,20 @@ import (
 	mcstatus "github.com/andre-carbajal/go-mcstatus"
 )
 
+// BaseVendor is the default vendor suffix. Call MakeVendor to append optional prefixes.
+const BaseVendor = "GCCore v0.1.0, EasyTier v2.6.4"
+
+func MakeVendor(prefixes ...string) string {
+	parts := make([]string, 0, len(prefixes)+1)
+	for _, p := range prefixes {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	parts = append(parts, BaseVendor)
+	return strings.Join(parts, ", ")
+}
+
 type RoomStatus struct {
 	Code        string       `json:"code"`
 	MCAddress   string       `json:"mc_address"`
@@ -58,24 +72,24 @@ type ScaffoldingService struct {
 	hostConnMu     sync.Mutex
 
 	// GUEST state
-	guestManager       *EasyTierManager
-	guestConn          net.Conn
-	guestPlayers       []PlayerInfo
-	guestStopCh        chan struct{}
-	guestMu            sync.Mutex
-	guestRunning       bool
-	guestMCAddr        string
-	guestMCPort        uint16
-	guestHeartbeating  bool
-	guestRoomCode      *RoomCode
-	guestPlayerName    string
-	guestNegotiatedEasyTierID   bool
-	guestScaffoldingLocalPort   uint16 // local port forwarded to host's scaffolding port
-	guestDisconnectReason       string // set when connection is lost (e.g. host closed room)
-	guestMCListener             net.Listener // local listener for MC proxy connections
-	guestDirectLocal            bool // true when guest and host are on the same machine
-	guestIOMu        sync.Mutex // serializes writes on guestConn
-	guestReadCh      chan readResult // background reader delivers responses here
+	guestManager              *EasyTierManager
+	guestConn                 net.Conn
+	guestPlayers              []PlayerInfo
+	guestStopCh               chan struct{}
+	guestMu                   sync.Mutex
+	guestRunning              bool
+	guestMCAddr               string
+	guestMCPort               uint16
+	guestHeartbeating         bool
+	guestRoomCode             *RoomCode
+	guestPlayerName           string
+	guestNegotiatedEasyTierID bool
+	guestScaffoldingLocalPort uint16          // local port forwarded to host's scaffolding port
+	guestDisconnectReason     string          // set when connection is lost (e.g. host closed room)
+	guestMCListener           net.Listener    // local listener for MC proxy connections
+	guestDirectLocal          bool            // true when guest and host are on the same machine
+	guestIOMu                 sync.Mutex      // serializes writes on guestConn
+	guestReadCh               chan readResult // background reader delivers responses here
 
 	joinCancelled atomic.Bool // set to true to abort a running JoinRoom
 }
@@ -88,7 +102,7 @@ type readResult struct {
 
 // --- HOST methods ---
 
-func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string) (*RoomStatus, error) {
+func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendorPrefix string) (*RoomStatus, error) {
 	s.hostMu.Lock()
 	if s.hostRunning {
 		s.hostMu.Unlock()
@@ -166,7 +180,7 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string) (*Room
 		info: &PlayerInfo{
 			Name:      playerName,
 			MachineID: machineID,
-			Vendor:    "gravitycone",
+			Vendor:    MakeVendor(vendorPrefix),
 			Kind:      "HOST",
 		},
 		lastSeen: time.Now(),
@@ -439,7 +453,7 @@ func (s *ScaffoldingService) CancelJoin() {
 	s.joinCancelled.Store(true)
 }
 
-func (s *ScaffoldingService) JoinRoom(code string, playerName string) (*ConnectionStatus, error) {
+func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPrefix string) (*ConnectionStatus, error) {
 	s.joinCancelled.Store(false)
 	s.guestMu.Lock()
 	if s.guestRunning {
@@ -497,7 +511,7 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string) (*Connecti
 		Name:       playerName,
 		MachineID:  machineID,
 		EasyTierID: easytierID,
-		Vendor:     "gravitycone",
+		Vendor:     MakeVendor(vendorPrefix),
 		Kind:       "GUEST",
 	})
 	if err := WriteProtocolRequest(conn, ProtocolPlayerPing, pingData); err != nil {
@@ -589,7 +603,7 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string) (*Connecti
 	s.guestReadCh = make(chan readResult, 1)
 	go s.guestReadLoop(conn)
 
-	go s.guestHeartbeatLoop(machineID, easytierID, playerName)
+	go s.guestHeartbeatLoop(machineID, easytierID, playerName, vendorPrefix)
 
 	return s.buildConnectionStatus(), nil
 }
@@ -862,7 +876,7 @@ func (s *ScaffoldingService) writeAndWait(conn net.Conn, typeName string, body [
 	}
 }
 
-func (s *ScaffoldingService) guestHeartbeatLoop(machineID, easytierID, playerName string) {
+func (s *ScaffoldingService) guestHeartbeatLoop(machineID, easytierID, playerName, vendorPrefix string) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -885,7 +899,7 @@ func (s *ScaffoldingService) guestHeartbeatLoop(machineID, easytierID, playerNam
 				Name:       playerName,
 				MachineID:  machineID,
 				EasyTierID: easytierID,
-				Vendor:     "gravitycone",
+				Vendor:     MakeVendor(vendorPrefix),
 				Kind:       "GUEST",
 			})
 

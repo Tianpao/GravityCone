@@ -25,7 +25,7 @@ export const useScaffoldingStore = defineStore('scaffolding', {
       this.creating = true
       this.hostError = ''
       try {
-        const result = await CreateRoom(mcPort, playerName)
+        const result = await CreateRoom(mcPort, playerName, 'GravityCone v1.0.0')
         this.roomStatus = result
       } catch (e: any) {
         this.hostError = e?.message || String(e)
@@ -60,7 +60,7 @@ export const useScaffoldingStore = defineStore('scaffolding', {
       this.joining = true
       this.guestError = ''
       try {
-        const result = await JoinRoom(roomCode, playerName)
+        const result = await JoinRoom(roomCode, playerName, 'GravityCone v1.0.0')
         this.connectionStatus = result
       } catch (e: any) {
         this.guestError = e?.message || String(e)
