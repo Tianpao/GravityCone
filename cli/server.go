@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -16,8 +17,26 @@ const version = "1.0.0"
 // Run starts the CLI stdio server. It reads JSON requests from stdin,
 // dispatches them to core services, and writes responses/events to stdout.
 func Run() {
-	log.SetOutput(os.Stderr)
+	// Resolve logs directory next to the CLI executable
+	logsDir, stdioLogPath, etLogPath, gccoreLogPath, err := resolveLogPaths()
+	if err != nil {
+		log.Fatalf("Failed to resolve log paths: %v", err)
+	}
+	if err := os.MkdirAll(logsDir, 0755); err != nil {
+		log.Fatalf("Failed to create logs directory: %v", err)
+	}
+
+	// Redirect Go log to gccore.log (no terminal output)
+	gccoreLog, err := os.OpenFile(gccoreLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Fatalf("Failed to open gccore.log: %v", err)
+	}
+	defer gccoreLog.Close()
+	log.SetOutput(gccoreLog)
 	log.SetPrefix("[gravitycone-cli] ")
+
+	// Redirect EasyTier logs to file
+	core.SetEasyTierLogOutput(etLogPath)
 
 	// Set up services
 	writer := NewStdioWriter()
@@ -29,6 +48,15 @@ func Run() {
 
 	shutdownCh := make(chan struct{})
 	handler := NewHandler(stunSvc, lanSvc, scaffoldingSvc, writer, shutdownCh)
+
+	// Open stdio log file
+	stdioLog, err := os.OpenFile(stdioLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Printf("Warning: failed to open stdio.log: %v", err)
+	} else {
+		defer stdioLog.Close()
+		writer.SetTee(stdioLog)
+	}
 
 	// Emit system.ready
 	writer.WriteEvent(Event{
@@ -48,6 +76,9 @@ func Run() {
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
 			line := scanner.Text()
+			if stdioLog != nil {
+				stdioLog.WriteString("> " + line + "\n")
+			}
 			var req Request
 			if err := json.Unmarshal([]byte(line), &req); err != nil {
 				writer.WriteResponse(errorResponse(0, ErrInvalidParams, err.Error()))
@@ -81,4 +112,21 @@ func Run() {
 	// Cleanup
 	scaffoldingSvc.Cleanup()
 	lanSvc.StopDiscovery()
+}
+
+// resolveLogPaths returns (logsDir, stdioLogPath, etLogPath, gccoreLogPath).
+// The logs directory is placed next to the CLI executable.
+func resolveLogPaths() (string, string, string, string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", "", "", "", err
+	}
+	dir := filepath.Dir(exe)
+	// Resolve symlinks
+	dir, err = filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	logsDir := filepath.Join(dir, "logs")
+	return logsDir, filepath.Join(logsDir, "stdio.log"), filepath.Join(logsDir, "easytier.log"), filepath.Join(logsDir, "gccore.log"), nil
 }

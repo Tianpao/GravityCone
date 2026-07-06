@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -18,6 +19,30 @@ const hostVirtualIP = "10.114.51.41"
 
 var publicPeers = []string{
 	"https://etnode.zkitefly.eu.org/node1",
+}
+
+// easytierLogOutput controls where easytier-core stdout/stderr is written.
+// Defaults to os.Stdout/os.Stderr. Override with SetEasyTierLogOutput.
+var (
+	easytierStdout io.Writer = os.Stdout
+	easytierStderr io.Writer = os.Stderr
+)
+
+// SetEasyTierLogOutput redirects easytier-core process output to the given file path.
+// Pass empty string to reset to default (os.Stdout/os.Stderr).
+func SetEasyTierLogOutput(path string) {
+	if path == "" {
+		easytierStdout = os.Stdout
+		easytierStderr = os.Stderr
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		log.Printf("Warning: failed to open easytier log file %s: %v", path, err)
+		return
+	}
+	easytierStdout = f
+	easytierStderr = f
 }
 
 type EasyTierManager struct {
@@ -153,8 +178,8 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 	}
 
 	cmd := exec.Command(m.corePath, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = easytierStdout
+	cmd.Stderr = easytierStderr
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("启动 easytier-core 失败: %w", err)
