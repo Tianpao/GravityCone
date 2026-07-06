@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { TestStun } from '@/../bindings/changeme/core/stunservice'
+import { TestStun } from '@/../bindings/gravitycone/core/stunservice'
 
 type HoleGrade = 'excellent' | 'good' | 'poor' | 'unavailable'
 

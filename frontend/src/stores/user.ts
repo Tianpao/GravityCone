@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { StartLogin, Logout, GetCurrentUser } from '@/../bindings/changeme/core/natayarkservice'
+import { StartLogin, Logout, GetCurrentUser } from '@/../bindings/gravitycone/core/natayarkservice'
 
 export interface NatayarkUser {
   id: number
