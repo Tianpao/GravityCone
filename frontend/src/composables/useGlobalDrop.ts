@@ -19,6 +19,10 @@ export function useGlobalDrop() {
   let cancelFlag = false
   let currentDropId = 0           // increment to invalidate stale drops
 
+  function isHomePage() {
+    return router.currentRoute.value.path === '/'
+  }
+
   function cancel() {
     cancelFlag = true
     scaffold.cancelJoin()
@@ -30,6 +34,8 @@ export function useGlobalDrop() {
   }
 
   function handleDragEnter(e: DragEvent) {
+    if (!isHomePage()) return
+
     e.preventDefault()
     e.stopPropagation()
 
@@ -44,6 +50,8 @@ export function useGlobalDrop() {
   }
 
   function handleDragOver(e: DragEvent) {
+    if (!isHomePage()) return
+
     if (!e.dataTransfer) return
     // Only intercept if files are being dragged in from outside
     if (!e.dataTransfer.types.includes('Files')) return
@@ -54,6 +62,8 @@ export function useGlobalDrop() {
   }
 
   function handleDragLeave(e: DragEvent) {
+    if (!isHomePage()) return
+
     e.preventDefault()
     e.stopPropagation()
 
@@ -64,6 +74,8 @@ export function useGlobalDrop() {
   }
 
   async function handleDrop(e: DragEvent) {
+    if (!isHomePage()) return
+
     e.preventDefault()
     e.stopPropagation()
     dragCounter = 0
