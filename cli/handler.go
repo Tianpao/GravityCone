@@ -16,6 +16,7 @@ type Handler struct {
 	shutdownCh     chan struct{}
 	shutdownOnce   sync.Once
 	vendorPrefix   string
+	motd           string
 }
 
 // NewHandler creates a Handler with the given services and writer.
@@ -26,6 +27,7 @@ func NewHandler(
 	writer *StdioWriter,
 	shutdownCh chan struct{},
 	vendorPrefix string,
+	motd string,
 ) *Handler {
 	return &Handler{
 		stunSvc:        stunSvc,
@@ -34,6 +36,7 @@ func NewHandler(
 		writer:         writer,
 		shutdownCh:     shutdownCh,
 		vendorPrefix:   vendorPrefix,
+		motd:           motd,
 	}
 }
 
@@ -88,7 +91,7 @@ func (h *Handler) handleRoom(req Request, action string) {
 			return
 		}
 
-		result, err := h.scaffoldingSvc.CreateRoom(uint16(mcPort), playerName, h.vendorPrefix)
+		result, err := h.scaffoldingSvc.CreateRoom(uint16(mcPort), playerName, h.vendorPrefix, h.motd)
 		if err != nil {
 			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
 			return
@@ -124,7 +127,7 @@ func (h *Handler) handleRoom(req Request, action string) {
 		})
 		defer core.SetScaffoldingJoinProgress(h.scaffoldingSvc, nil)
 
-		result, err := h.scaffoldingSvc.JoinRoom(code, playerName, h.vendorPrefix)
+		result, err := h.scaffoldingSvc.JoinRoom(code, playerName, h.vendorPrefix, h.motd)
 		if err != nil {
 			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
 			return

@@ -30,8 +30,8 @@ export function Cleanup(): $CancellablePromise<void> {
     return $Call.ByID(2877413657);
 }
 
-export function CreateRoom(mcPort: number, playerName: string, vendorPrefix: string): $CancellablePromise<$models.RoomStatus | null> {
-    return $Call.ByID(668317184, mcPort, playerName, vendorPrefix);
+export function CreateRoom(mcPort: number, playerName: string, vendorPrefix: string, motd: string): $CancellablePromise<$models.RoomStatus | null> {
+    return $Call.ByID(668317184, mcPort, playerName, vendorPrefix, motd);
 }
 
 export function GetConnectionStatus(): $CancellablePromise<$models.ConnectionStatus | null> {
@@ -42,8 +42,8 @@ export function GetRoomStatus(): $CancellablePromise<$models.RoomStatus | null> 
     return $Call.ByID(3873649912);
 }
 
-export function JoinRoom(code: string, playerName: string, vendorPrefix: string): $CancellablePromise<$models.ConnectionStatus | null> {
-    return $Call.ByID(1312253032, code, playerName, vendorPrefix);
+export function JoinRoom(code: string, playerName: string, vendorPrefix: string, motd: string): $CancellablePromise<$models.ConnectionStatus | null> {
+    return $Call.ByID(1312253032, code, playerName, vendorPrefix, motd);
 }
 
 export function LeaveRoom(): $CancellablePromise<void> {

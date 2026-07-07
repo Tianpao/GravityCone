@@ -21,7 +21,7 @@ task build:cli:dev
 ### 命令行参数
 
 ```
-gravitycone-cli [-p <addr>] [--peers <addr>] [-v <prefix>] [--vendor <prefix>]
+gravitycone-cli [-p <addr>] [--peers <addr>] [-v <prefix>] [--vendor <prefix>] [-m <motd>] [--motd <motd>]
 ```
 
 | 参数 | 说明 |
@@ -30,6 +30,8 @@ gravitycone-cli [-p <addr>] [--peers <addr>] [-v <prefix>] [--vendor <prefix>]
 | `--peers <addr>` | 同 `-p`，可多次使用 |
 | `-v <prefix>` | 厂商前缀，附加到 vendor 字符串前 |
 | `--vendor <prefix>` | 同 `-v` |
+| `-m <motd>` | 自定义局域网广播 MOTD，其他玩家在多人游戏列表中看到的房间名称 |
+| `--motd <motd>` | 同 `-m` |
 
 地址支持逗号分隔，以下写法均合法：
 
@@ -46,9 +48,13 @@ gravitycone-cli -p tcp://1.2.3.4:5678 --peers tcp://5.6.7.8:9012
 # 指定厂商前缀
 gravitycone-cli -v GC
 gravitycone-cli --vendor GC -p tcp://1.2.3.4:5678
+
+# 自定义局域网广播 MOTD
+gravitycone-cli -m "PCL CE 联机房间"
+gravitycone-cli --motd "PCL CE 联机房间" -p tcp://1.2.3.4:5678
 ```
 
-不指定节点则使用内置默认节点，不指定厂商前缀则默认为空。
+不指定节点则使用内置默认节点，不指定厂商前缀则默认为空，不指定 MOTD 则使用默认值 `§6§l双击进入联机房间（请保持GravityCone运行）`。
 
 ### 日志文件
 
@@ -515,7 +521,7 @@ CLI 会主动推送以下事件，宿主进程无需发送请求即可接收。
 ```javascript
 const { spawn } = require('child_process');
 
-const cli = spawn('./bin/gravitycone-cli', ['-p', 'tcp://1.2.3.4:5678', '-v', 'GC'], { stdio: ['pipe', 'pipe', 'pipe'] });
+const cli = spawn('./bin/gravitycone-cli', ['-p', 'tcp://1.2.3.4:5678', '-v', 'GC', '-m', 'PCL CE 联机房间'], { stdio: ['pipe', 'pipe', 'pipe'] });
 
 let nextId = 1;
 
@@ -569,7 +575,7 @@ import json
 import sys
 
 cli = subprocess.Popen(
-    ['./bin/gravitycone-cli', '-p', 'tcp://1.2.3.4:5678', '-v', 'GC'],
+    ['./bin/gravitycone-cli', '-p', 'tcp://1.2.3.4:5678', '-v', 'GC', '-m', 'PCL CE 联机房间'],
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
@@ -615,7 +621,7 @@ printf '{"id":1,"method":"system.ping","params":{}}\n{"id":2,"method":"system.sh
 ```
 宿主进程                        CLI 进程
    │                              │
-   │──── 启动 CLI (-p ... -v ...) ──>│
+   │──── 启动 CLI (-p ... -v ... -m ...) ──>│
    │                              │  初始化服务，日志写入 logs/
    │<─── system.ready 事件 ───────│  {"event":"system.ready","data":{"version":"1.0.0"}}
    │                              │

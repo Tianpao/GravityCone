@@ -120,6 +120,7 @@ type ScaffoldingService struct {
 	guestFakeServer           *FakeServer     // LAN broadcaster for Minecraft discovery
 	guestMCLocalPort          uint16          // local port forwarded to host's MC server via EasyTier
 	guestMCRemoteAddr         string          // remote addr for port-forward cleanup (host_virtual_ip:mc_port)
+	guestMotd                 string          // custom MOTD for LAN broadcast
 
 	joinCancelled atomic.Bool // set to true to abort a running JoinRoom
 }
@@ -132,7 +133,7 @@ type readResult struct {
 
 // --- HOST methods ---
 
-func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendorPrefix string) (*RoomStatus, error) {
+func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendorPrefix string, motd string) (*RoomStatus, error) {
 	s.hostMu.Lock()
 	if s.hostRunning {
 		s.hostMu.Unlock()
@@ -202,6 +203,7 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 	s.hostStopReason = ""
 	s.hostPlayerName = playerName
 	s.hostConns = make(map[net.Conn]struct{})
+	s.guestMotd = motd
 	s.hostMu.Unlock()
 
 	// Add HOST as a player
@@ -552,7 +554,7 @@ func (s *ScaffoldingService) reportJoinProgress(step string) {
 	}
 }
 
-func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPrefix string) (*ConnectionStatus, error) {
+func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPrefix string, motd string) (*ConnectionStatus, error) {
 	s.joinCancelled.Store(false)
 	s.guestMu.Lock()
 	if s.guestRunning {
@@ -692,6 +694,7 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 	s.guestRoomCode = rc
 	s.guestPlayerName = playerName
 	s.guestNegotiatedEasyTierID = negotiatedEasyTierID
+	s.guestMotd = motd
 	s.guestMu.Unlock()
 
 	// Set up MC port-forward via EasyTier (compatible with both GravityCone and Terracotta hosts)
@@ -885,6 +888,7 @@ func (s *ScaffoldingService) LeaveRoom() error {
 	s.guestDirectLocal = false
 	s.guestMCLocalPort = 0
 	s.guestMCRemoteAddr = ""
+	s.guestMotd = ""
 	s.guestMu.Unlock()
 
 	// Remove MC port-forward rules before stopping EasyTier
@@ -1083,7 +1087,11 @@ func (s *ScaffoldingService) setupMCPortForward(hostIP string, mcPort uint16) {
 		s.guestMCLocalPort = mcLocalPort
 		s.guestMCRemoteAddr = remoteAddr
 		// Start LAN broadcast so other MC clients on the same network can discover this room
-		s.guestFakeServer = NewFakeServer(mcLocalPort, "§6§l双击进入联机房间（请保持GravityCone运行）")
+		motd := s.guestMotd
+		if motd == "" {
+			motd = "§6§l双击进入联机房间（请保持GravityCone运行）"
+		}
+		s.guestFakeServer = NewFakeServer(mcLocalPort, motd)
 	}
 	s.guestMu.Unlock()
 }
@@ -1117,6 +1125,7 @@ func (s *ScaffoldingService) autoDisconnect(reason string) {
 	s.guestDirectLocal = false
 	s.guestMCLocalPort = 0
 	s.guestMCRemoteAddr = ""
+	s.guestMotd = ""
 	s.guestMu.Unlock()
 	// Emit room.disconnected event
 	s.eventEmitter.Emit("room.disconnected", map[string]string{"reason": reason})

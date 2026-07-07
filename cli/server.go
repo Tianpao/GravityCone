@@ -18,7 +18,8 @@ const version = "1.0.0"
 // dispatches them to core services, and writes responses/events to stdout.
 // peers overrides the default EasyTier public peer list.
 // vendorPrefix is prepended to the vendor string in room operations.
-func Run(peers []string, vendorPrefix string) {
+// motd is the custom MOTD for LAN broadcast (empty uses the default).
+func Run(peers []string, vendorPrefix string, motd string) {
 	// Resolve logs directory next to the CLI executable
 	logsDir, stdioLogPath, etLogPath, gccoreLogPath, err := resolveLogPaths()
 	if err != nil {
@@ -55,7 +56,7 @@ func Run(peers []string, vendorPrefix string) {
 	scaffoldingSvc := core.NewScaffoldingService(emitter)
 
 	shutdownCh := make(chan struct{})
-	handler := NewHandler(stunSvc, lanSvc, scaffoldingSvc, writer, shutdownCh, vendorPrefix)
+	handler := NewHandler(stunSvc, lanSvc, scaffoldingSvc, writer, shutdownCh, vendorPrefix, motd)
 
 	// Open stdio log file
 	stdioLog, err := os.OpenFile(stdioLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
