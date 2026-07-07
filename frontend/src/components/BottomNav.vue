@@ -7,7 +7,7 @@ const route = useRoute()
 const router = useRouter()
 const visible = ref(false)
 
-const hiddenRoutes = new Set(["host-room", "joined-room"])
+const hiddenRoutes = new Set(["host-room", "joined-room", "pc-host-room", "pc-joined-room"])
 const shouldHide = computed(() => hiddenRoutes.has(route.name as string))
 
 const navItems = [

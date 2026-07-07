@@ -44,7 +44,8 @@ func main() {
 	}
 
 	natayarkSvc := &core.NatayarkService{}
-	scaffoldingSvc := core.NewScaffoldingService(nil) // nil = NilEventEmitter; Wails frontend polls via method calls
+	scaffoldingSvc := core.NewScaffoldingService(nil)
+	paperConnectSvc := core.NewPaperConnectService(nil)
 
 	app := application.New(application.Options{
 		Name:        "GravityCone",
@@ -55,6 +56,7 @@ func main() {
 			application.NewService(core.NewLanService(nil)),
 			application.NewService(natayarkSvc),
 			application.NewService(scaffoldingSvc),
+			application.NewService(paperConnectSvc),
 			application.NewService(&core.WatermarkService{}),
 			application.NewService(&core.SettingsService{}),
 		},
@@ -68,6 +70,7 @@ func main() {
 
 	// Wire up Wails event emitter now that app exists
 	core.InitScaffoldingEmitter(scaffoldingSvc, &wailsEventEmitter{app: app})
+	core.InitPaperConnectEmitter(paperConnectSvc, &wailsEventEmitter{app: app})
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title: "GravityCone",
@@ -100,6 +103,7 @@ func main() {
 
 	app.OnShutdown(func() {
 		scaffoldingSvc.Cleanup()
+		paperConnectSvc.Cleanup()
 	})
 
 	err := app.Run()

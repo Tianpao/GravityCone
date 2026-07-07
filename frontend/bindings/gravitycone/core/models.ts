@@ -29,6 +29,37 @@ export interface NatayarkUser {
     "regtime": string;
 }
 
+export interface PCPlayerEntry {
+    "player": string;
+    "clientId": string;
+    "isRoomHost": boolean;
+}
+
+/**
+ * PaperConnectConnectionStatus is the guest-side connection status.
+ */
+export interface PaperConnectConnectionStatus {
+    "room_code": string;
+    "host_address": string;
+    "game_port": number;
+    "connected": boolean;
+    "online_count": number;
+    "players": PCPlayerEntry[] | null;
+    "heartbeating": boolean;
+    "disconnect_reason": string;
+}
+
+/**
+ * PaperConnectRoomStatus is the host-side room status.
+ */
+export interface PaperConnectRoomStatus {
+    "code": string;
+    "game_port": number;
+    "online_count": number;
+    "players": PCPlayerEntry[] | null;
+    "running": boolean;
+}
+
 export interface PlayerInfo {
     "name": string;
     "machine_id": string;

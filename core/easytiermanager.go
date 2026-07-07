@@ -120,10 +120,12 @@ func allocateRPCPort() (string, error) {
 type StartOptions struct {
 	NetworkName   string
 	NetworkSecret string
-	Hostname      string // HOST only; GUEST leaves empty
+	Hostname      string   // HOST only; GUEST leaves empty
 	IsHost        bool
-	TCPPort       uint16 // HOST only: scaffolding TCP port, used for whitelist
-	MCPort        uint16 // HOST only: MC server port, used for whitelist
+	TCPPort       uint16   // HOST only: scaffolding TCP port, used for whitelist
+	MCPort        uint16   // HOST only: MC server port, used for whitelist
+	ConfigPath    string   // Path to TOML ACL config file (adds -c flag)
+	PortForwards  []string // Port forward entries (e.g. "tcp://0.0.0.0:12345/10.144.144.1:12345")
 }
 
 func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
@@ -179,6 +181,14 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 	}
 
 	args = append(args, "-l=tcp://0.0.0.0:0", "-l=udp://0.0.0.0:0")
+
+	if opts.ConfigPath != "" {
+		args = append(args, "-c", opts.ConfigPath)
+	}
+
+	for _, pf := range opts.PortForwards {
+		args = append(args, "--port-forward", pf)
+	}
 
 	for _, p := range publicPeers {
 		args = append(args, "-p", p)
@@ -352,6 +362,29 @@ func (m *EasyTierManager) DiscoverPeer(hostname string) (string, error) {
 	}
 
 	return "", fmt.Errorf("未找到主机 (%s)，请确认房间代码正确", hostname)
+}
+
+// DiscoverPeerByPrefix finds a peer whose hostname starts with the given prefix.
+// Returns the matching hostname and virtual IP.
+func (m *EasyTierManager) DiscoverPeerByPrefix(hostnamePrefix string) (hostname string, virtualIP string, err error) {
+	out, err := m.runCli("-o", "json", "-p", m.rpcPortal, "peer", "list")
+	if err != nil {
+		return "", "", fmt.Errorf("查询对等节点失败: %w", err)
+	}
+
+	var peers []peerInfo
+	if err := json.Unmarshal([]byte(out), &peers); err != nil {
+		return "", "", fmt.Errorf("解析对等节点列表失败: %w", err)
+	}
+
+	for _, p := range peers {
+		if strings.HasPrefix(p.Hostname, hostnamePrefix) && p.VirtualIP != "" {
+			ip, _, _ := strings.Cut(p.VirtualIP, "/")
+			return p.Hostname, ip, nil
+		}
+	}
+
+	return "", "", fmt.Errorf("未找到主机 (前缀 %s)，请确认房间代码正确", hostnamePrefix)
 }
 
 func (m *EasyTierManager) GetPeerID() (string, error) {

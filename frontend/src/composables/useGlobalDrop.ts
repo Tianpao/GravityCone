@@ -2,12 +2,14 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useWatermarkStore } from '@/stores/watermark'
 import { useScaffoldingStore } from '@/stores/scaffolding'
+import { usePaperConnectStore } from '@/stores/paperconnect'
 import { useUserStore } from '@/stores/user'
 
 export function useGlobalDrop() {
   const router = useRouter()
   const watermark = useWatermarkStore()
   const scaffold = useScaffoldingStore()
+  const pcStore = usePaperConnectStore()
   const user = useUserStore()
 
   const showDropOverlay = ref(false)
@@ -17,7 +19,7 @@ export function useGlobalDrop() {
 
   let dragCounter = 0
   let cancelFlag = false
-  let currentDropId = 0           // increment to invalidate stale drops
+  let currentDropId = 0
 
   function isHomePage() {
     return router.currentRoute.value.path === '/'
@@ -26,6 +28,7 @@ export function useGlobalDrop() {
   function cancel() {
     cancelFlag = true
     scaffold.cancelJoin()
+    pcStore.pcCancelJoin()
     showDropOverlay.value = false
     dropStatus.value = 'idle'
     dropRoomCode.value = ''
@@ -35,13 +38,10 @@ export function useGlobalDrop() {
 
   function handleDragEnter(e: DragEvent) {
     if (!isHomePage()) return
-
     e.preventDefault()
     e.stopPropagation()
-
     if (!e.dataTransfer) return
     if (e.dataTransfer.types && !e.dataTransfer.types.includes('Files')) return
-
     dragCounter++
     if (dragCounter === 1) {
       showDropOverlay.value = true
@@ -51,11 +51,8 @@ export function useGlobalDrop() {
 
   function handleDragOver(e: DragEvent) {
     if (!isHomePage()) return
-
     if (!e.dataTransfer) return
-    // Only intercept if files are being dragged in from outside
     if (!e.dataTransfer.types.includes('Files')) return
-
     e.preventDefault()
     e.stopPropagation()
     e.dataTransfer.dropEffect = 'copy'
@@ -63,10 +60,8 @@ export function useGlobalDrop() {
 
   function handleDragLeave(e: DragEvent) {
     if (!isHomePage()) return
-
     e.preventDefault()
     e.stopPropagation()
-
     dragCounter--
     if (dragCounter <= 0) {
       showDropOverlay.value = false
@@ -75,7 +70,6 @@ export function useGlobalDrop() {
 
   async function handleDrop(e: DragEvent) {
     if (!isHomePage()) return
-
     e.preventDefault()
     e.stopPropagation()
     dragCounter = 0
@@ -114,22 +108,32 @@ export function useGlobalDrop() {
       }
 
       dropRoomCode.value = code
-
       const playerName = user.user?.username || 'Player'
-      await scaffold.joinRoom(code, playerName)
+      const isBedrock = code.toUpperCase().startsWith('P/')
 
-      // joinRoom completed — check if user cancelled while waiting
-      if (cancelFlag) {
-        scaffold.leaveRoom()
-        return
+      if (isBedrock) {
+        await pcStore.pcJoinRoom(code, playerName)
+        if (cancelFlag) {
+          pcStore.pcLeaveRoom()
+          return
+        }
+        if (dropId !== currentDropId) {
+          pcStore.pcLeaveRoom()
+          return
+        }
+        router.push('/pc-joined-room')
+      } else {
+        await scaffold.joinRoom(code, playerName)
+        if (cancelFlag) {
+          scaffold.leaveRoom()
+          return
+        }
+        if (dropId !== currentDropId) {
+          scaffold.leaveRoom()
+          return
+        }
+        router.push('/joined-room')
       }
-      if (dropId !== currentDropId) {
-        // Another drop started, clean up this stale join
-        scaffold.leaveRoom()
-        return
-      }
-
-      router.push('/joined-room')
       setTimeout(reset, 500)
     } catch (e: any) {
       if (cancelFlag || dropId !== currentDropId) return

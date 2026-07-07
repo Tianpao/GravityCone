@@ -123,17 +123,30 @@ func (w *WatermarkService) DecodeRoomCode(imageBase64 string) (string, error) {
 	code := unpadPayload(text)
 	log.Printf("[WatermarkService] unpad result: %q", code)
 
-	// Validate the room code
-	if _, err := ParseRoomCode(code); err != nil {
-		// Try without U/ prefix
-		if !strings.HasPrefix(strings.ToUpper(code), "U/") {
-			code = "U/" + code
+	// Validate the room code — try both U/ (Scaffolding) and P/ (PaperConnect) prefixes
+	if _, err := ParseRoomCode(code); err == nil {
+		log.Printf("[WatermarkService] valid Scaffolding room code: %q", code)
+	} else if _, err := ParsePaperConnectRoomCode(code); err == nil {
+		log.Printf("[WatermarkService] valid PaperConnect room code: %q", code)
+	} else {
+		// Try adding U/ prefix
+		if strings.HasPrefix(strings.ToUpper(code), "U/") || strings.HasPrefix(strings.ToUpper(code), "P/") {
+			return "", fmt.Errorf("图片中的房间代码无效，可能图片未包含房间信息或被过度压缩")
+		}
+		// Try U/ first
+		uCode := "U/" + code
+		if _, err := ParseRoomCode(uCode); err == nil {
+			code = uCode
 			log.Printf("[WatermarkService] added U/ prefix: %q", code)
-			if _, err := ParseRoomCode(code); err != nil {
+		} else {
+			// Try P/ prefix
+			pCode := "P/" + code
+			if _, err := ParsePaperConnectRoomCode(pCode); err == nil {
+				code = pCode
+				log.Printf("[WatermarkService] added P/ prefix: %q", code)
+			} else {
 				return "", fmt.Errorf("图片中的房间代码无效，可能图片未包含房间信息或被过度压缩")
 			}
-		} else {
-			return "", fmt.Errorf("图片中的房间代码无效，可能图片未包含房间信息或被过度压缩")
 		}
 	}
 
