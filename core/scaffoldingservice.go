@@ -696,7 +696,7 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 
 	// Set up MC port-forward via EasyTier (compatible with both GravityCone and Terracotta hosts)
 	if mcPort != 0 {
-		go s.setupMCPortForward(hostIP, mcPort)
+		s.setupMCPortForward(hostIP, mcPort)
 	}
 
 	// Background reader: like Rust's ClientSession background thread.
