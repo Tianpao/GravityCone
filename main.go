@@ -7,6 +7,7 @@ import (
 	"gravitycone/core"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -26,6 +27,20 @@ func main() {
 			log.Println("Running in service mode (no GUI)")
 			return
 		}
+	}
+
+	// Redirect GravityCone logs to file (separate from EasyTier noise)
+	if exe, err := os.Executable(); err == nil {
+		logDir := filepath.Join(filepath.Dir(exe), "logs")
+		os.MkdirAll(logDir, 0755)
+		if f, err := os.OpenFile(filepath.Join(logDir, "gravitycone.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
+			log.SetOutput(f)
+		}
+	}
+	// Redirect EasyTier logs to file too
+	if exe, err := os.Executable(); err == nil {
+		logDir := filepath.Join(filepath.Dir(exe), "logs")
+		core.SetEasyTierLogOutput(filepath.Join(logDir, "easytier.log"))
 	}
 
 	natayarkSvc := &core.NatayarkService{}

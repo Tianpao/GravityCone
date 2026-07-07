@@ -414,11 +414,10 @@ func (m *EasyTierManager) RemovePortForward(proto string, localAddr string, remo
 }
 
 func (m *EasyTierManager) runCli(args ...string) (string, error) {
-	log.Printf("[easytier-cli] %s %v", m.cliPath, args)
 	cmd := exec.Command(m.cliPath, args...)
 	out, err := cmd.CombinedOutput()
-	log.Printf("[easytier-cli] output: %s", string(out))
 	if err != nil {
+		log.Printf("[easytier-cli] %s %v failed: %v, output: %s", m.cliPath, args, err, string(out))
 		return "", err
 	}
 	return string(out), nil

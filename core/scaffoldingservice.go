@@ -3,7 +3,6 @@ package core
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"strconv"
@@ -115,11 +114,12 @@ type ScaffoldingService struct {
 	guestNegotiatedEasyTierID bool
 	guestScaffoldingLocalPort uint16          // local port forwarded to host's scaffolding port
 	guestDisconnectReason     string          // set when connection is lost (e.g. host closed room)
-	guestMCListener           net.Listener    // local listener for MC proxy connections
 	guestDirectLocal          bool            // true when guest and host are on the same machine
 	guestIOMu                 sync.Mutex      // serializes writes on guestConn
 	guestReadCh               chan readResult // background reader delivers responses here
 	guestFakeServer           *FakeServer     // LAN broadcaster for Minecraft discovery
+	guestMCLocalPort          uint16          // local port forwarded to host's MC server via EasyTier
+	guestMCRemoteAddr         string          // remote addr for port-forward cleanup (host_virtual_ip:mc_port)
 
 	joinCancelled atomic.Bool // set to true to abort a running JoinRoom
 }
@@ -371,17 +371,16 @@ func (s *ScaffoldingService) hostServerLoop() {
 			case <-s.hostStopCh:
 				return
 			default:
-				log.Printf("Accept error: %v", err)
+				log.Printf("[hostServerLoop] Accept error: %v", err)
 				continue
 			}
 		}
+		log.Printf("[hostServerLoop] Accepted connection from %s", conn.RemoteAddr())
 		go s.handleHostConnection(conn)
 	}
 }
 
 func (s *ScaffoldingService) handleHostConnection(conn net.Conn) {
-	defer conn.Close()
-
 	// Register connection so StopRoom can close it.
 	s.hostConnMu.Lock()
 	if s.hostConns != nil {
@@ -393,6 +392,7 @@ func (s *ScaffoldingService) handleHostConnection(conn net.Conn) {
 	s.hostConnMu.Unlock()
 
 	defer func() {
+		conn.Close()
 		s.hostConnMu.Lock()
 		if s.hostConns != nil {
 			delete(s.hostConns, conn)
@@ -410,11 +410,8 @@ func (s *ScaffoldingService) handleHostConnection(conn net.Conn) {
 		}
 
 		typeName, body, err := ReadProtocolRequest(conn)
-		if err == ErrMCProxyConnection {
-			s.handleMCProxyConnection(conn)
-			return
-		}
 		if err != nil {
+			log.Printf("[HostConn] ReadProtocolRequest error: %v", err)
 			return
 		}
 
@@ -697,9 +694,9 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 	s.guestNegotiatedEasyTierID = negotiatedEasyTierID
 	s.guestMu.Unlock()
 
-	// Set up MC local proxy listener (uses scaffolding port-forward, no new rule)
+	// Set up MC port-forward via EasyTier (compatible with both GravityCone and Terracotta hosts)
 	if mcPort != 0 {
-		go s.setupMCLocalListener(hostIP, mcPort)
+		go s.setupMCPortForward(hostIP, mcPort)
 	}
 
 	// Background reader: like Rust's ClientSession background thread.
@@ -866,10 +863,6 @@ func (s *ScaffoldingService) LeaveRoom() error {
 			s.guestConn.Close()
 			s.guestConn = nil
 		}
-		if s.guestMCListener != nil {
-			s.guestMCListener.Close()
-			s.guestMCListener = nil
-		}
 		if s.guestFakeServer != nil {
 			s.guestFakeServer.Stop()
 			s.guestFakeServer = nil
@@ -877,6 +870,8 @@ func (s *ScaffoldingService) LeaveRoom() error {
 	}
 	manager := s.guestManager
 	s.guestManager = nil
+	mcLocalPort := s.guestMCLocalPort
+	mcRemoteAddr := s.guestMCRemoteAddr
 
 	// Reset all guest state so a future JoinRoom starts from a clean slate.
 	s.guestDisconnectReason = ""
@@ -888,7 +883,16 @@ func (s *ScaffoldingService) LeaveRoom() error {
 	s.guestNegotiatedEasyTierID = false
 	s.guestScaffoldingLocalPort = 0
 	s.guestDirectLocal = false
+	s.guestMCLocalPort = 0
+	s.guestMCRemoteAddr = ""
 	s.guestMu.Unlock()
+
+	// Remove MC port-forward rules before stopping EasyTier
+	if manager != nil && mcLocalPort != 0 && mcRemoteAddr != "" {
+		localAddr := fmt.Sprintf("0.0.0.0:%d", mcLocalPort)
+		manager.RemovePortForward("tcp", localAddr, mcRemoteAddr)
+		manager.RemovePortForward("udp", localAddr, mcRemoteAddr)
+	}
 
 	if manager != nil {
 		manager.Stop()
@@ -1033,121 +1037,55 @@ func (s *ScaffoldingService) guestHeartbeatLoop(machineID, easytierID, playerNam
 	}
 }
 
-// setupMCLocalListener creates a local TCP listener for Minecraft connections.
-// MC traffic is tunneled through the EXISTING scaffolding port-forward (no new EasyTier rule),
-// so it does not trigger the SOCKS5 port-forward bug.
-func (s *ScaffoldingService) setupMCLocalListener(hostIP string, mcPort uint16) {
-	mcListener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", mcPort))
+// setupMCPortForward creates an EasyTier port-forward for the MC server port
+// so that Minecraft clients on the local machine can connect directly via
+// 127.0.0.1:localPort. This is compatible with both GravityCone and Terracotta hosts.
+func (s *ScaffoldingService) setupMCPortForward(hostIP string, mcPort uint16) {
+	s.guestMu.Lock()
+	manager := s.guestManager
+	running := s.guestRunning
+	s.guestMu.Unlock()
+
+	if !running || manager == nil {
+		return
+	}
+
+	// Try to use the same port as the MC server for convenience
+	localListener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", mcPort))
 	if err != nil {
-		mcListener, err = net.Listen("tcp", "127.0.0.1:0")
+		localListener, err = net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			log.Printf("创建MC本地监听失败: %v", err)
+			log.Printf("[setupMCPortForward] 分配本地端口失败: %v", err)
 			return
 		}
 	}
-	mcLocalPort := uint16(mcListener.Addr().(*net.TCPAddr).Port)
+	mcLocalPort := uint16(localListener.Addr().(*net.TCPAddr).Port)
+	localListener.Close()
+
+	// Set up EasyTier port-forward: local -> HOST virtual IP:mcPort
+	remoteAddr := fmt.Sprintf("%s:%d", hostIP, mcPort)
+	localAddr := fmt.Sprintf("0.0.0.0:%d", mcLocalPort)
+
+	// TCP port-forward
+	if err := manager.AddPortForward("tcp", localAddr, remoteAddr); err != nil {
+		log.Printf("[setupMCPortForward] TCP端口转发失败: %v", err)
+		return
+	}
+	// UDP port-forward (for voice chat etc.)
+	manager.AddPortForward("udp", localAddr, remoteAddr)
+
+	log.Printf("[setupMCPortForward] forwarded 0.0.0.0:%d -> %s (mc_port=%d)", mcLocalPort, remoteAddr, mcPort)
 
 	s.guestMu.Lock()
 	if s.guestRunning {
 		s.guestMCAddr = "127.0.0.1"
 		s.guestMCPort = mcLocalPort
-		s.guestMCListener = mcListener
+		s.guestMCLocalPort = mcLocalPort
+		s.guestMCRemoteAddr = remoteAddr
 		// Start LAN broadcast so other MC clients on the same network can discover this room
 		s.guestFakeServer = NewFakeServer(mcLocalPort, "§6§l双击进入联机房间（请保持GravityCone运行）")
-	} else {
-		mcListener.Close()
-		s.guestMu.Unlock()
-		return
 	}
 	s.guestMu.Unlock()
-
-	for {
-		clientConn, err := mcListener.Accept()
-		if err != nil {
-			return
-		}
-		go s.proxyMCToHost(clientConn, mcPort)
-	}
-}
-
-// proxyMCToHost proxies a single Minecraft client connection to the host
-// through the scaffolding port-forward. It opens a new TCP connection
-// through the existing port-forward and sends a 0x00 marker byte
-// to indicate MC proxy mode to the host.
-func (s *ScaffoldingService) proxyMCToHost(clientConn net.Conn, mcPort uint16) {
-	defer clientConn.Close()
-
-	s.guestMu.Lock()
-	scLocalPort := s.guestScaffoldingLocalPort
-	s.guestMu.Unlock()
-
-	proxyConn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", scLocalPort), 5*time.Second)
-	if err != nil {
-		log.Printf("MC代理连接失败: %v", err)
-		return
-	}
-	defer proxyConn.Close()
-
-	// Send 0x00 marker to indicate MC proxy mode
-	if _, err := proxyConn.Write([]byte{0}); err != nil {
-		return
-	}
-
-	// Read status byte from host
-	status := make([]byte, 1)
-	if _, err := io.ReadFull(proxyConn, status); err != nil {
-		return
-	}
-	if status[0] != 0 {
-		log.Printf("MC代理连接被拒: status=%d", status[0])
-		return
-	}
-
-	// Bridge data bidirectionally
-	done := make(chan struct{}, 2)
-	go func() {
-		io.Copy(proxyConn, clientConn)
-		proxyConn.Close()
-		done <- struct{}{}
-	}()
-	go func() {
-		io.Copy(clientConn, proxyConn)
-		clientConn.Close()
-		done <- struct{}{}
-	}()
-	<-done
-}
-
-// handleMCProxyConnection bridges an incoming MC proxy connection
-// (identified by the 0x00 first byte) to the local Minecraft server.
-func (s *ScaffoldingService) handleMCProxyConnection(conn net.Conn) {
-	defer conn.Close()
-
-	mcConn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", s.mcPort), 5*time.Second)
-	if err != nil {
-		conn.Write([]byte{1}) // Status: failure
-		return
-	}
-	defer mcConn.Close()
-
-	// Send success status
-	if _, err := conn.Write([]byte{0}); err != nil {
-		return
-	}
-
-	// Bridge data bidirectionally
-	done := make(chan struct{}, 2)
-	go func() {
-		io.Copy(mcConn, conn)
-		mcConn.Close()
-		done <- struct{}{}
-	}()
-	go func() {
-		io.Copy(conn, mcConn)
-		conn.Close()
-		done <- struct{}{}
-	}()
-	<-done
 }
 
 func (s *ScaffoldingService) autoDisconnect(reason string) {
@@ -1160,16 +1098,14 @@ func (s *ScaffoldingService) autoDisconnect(reason string) {
 	s.guestRunning = false
 	s.guestHeartbeating = false
 	s.guestDisconnectReason = reason
-	if s.guestMCListener != nil {
-		s.guestMCListener.Close()
-		s.guestMCListener = nil
-	}
 	if s.guestFakeServer != nil {
 		s.guestFakeServer.Stop()
 		s.guestFakeServer = nil
 	}
 	manager := s.guestManager
 	s.guestManager = nil
+	mcLocalPort := s.guestMCLocalPort
+	mcRemoteAddr := s.guestMCRemoteAddr
 	// Reset remaining guest state to allow a clean re-join.
 	s.guestPlayers = nil
 	s.guestMCAddr = ""
@@ -1179,9 +1115,18 @@ func (s *ScaffoldingService) autoDisconnect(reason string) {
 	s.guestNegotiatedEasyTierID = false
 	s.guestScaffoldingLocalPort = 0
 	s.guestDirectLocal = false
+	s.guestMCLocalPort = 0
+	s.guestMCRemoteAddr = ""
 	s.guestMu.Unlock()
 	// Emit room.disconnected event
 	s.eventEmitter.Emit("room.disconnected", map[string]string{"reason": reason})
+
+	// Remove MC port-forward rules before stopping EasyTier
+	if manager != nil && mcLocalPort != 0 && mcRemoteAddr != "" {
+		localAddr := fmt.Sprintf("0.0.0.0:%d", mcLocalPort)
+		manager.RemovePortForward("tcp", localAddr, mcRemoteAddr)
+		manager.RemovePortForward("udp", localAddr, mcRemoteAddr)
+	}
 
 	if manager != nil {
 		manager.Stop()
