@@ -10,6 +10,13 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * AddPeers appends peer addresses so they are included when EasyTier starts.
+ */
+export function AddPeers(addrs: string[] | null): $CancellablePromise<void> {
+    return $Call.ByID(111594907, addrs);
+}
+
+/**
  * CancelJoin aborts a running JoinRoom call. Safe to call even if no join is in progress.
  */
 export function CancelJoin(): $CancellablePromise<void> {

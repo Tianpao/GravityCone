@@ -119,6 +119,7 @@ type ScaffoldingService struct {
 	guestDirectLocal          bool            // true when guest and host are on the same machine
 	guestIOMu                 sync.Mutex      // serializes writes on guestConn
 	guestReadCh               chan readResult // background reader delivers responses here
+	guestFakeServer           *FakeServer     // LAN broadcaster for Minecraft discovery
 
 	joinCancelled atomic.Bool // set to true to abort a running JoinRoom
 }
@@ -869,6 +870,10 @@ func (s *ScaffoldingService) LeaveRoom() error {
 			s.guestMCListener.Close()
 			s.guestMCListener = nil
 		}
+		if s.guestFakeServer != nil {
+			s.guestFakeServer.Stop()
+			s.guestFakeServer = nil
+		}
 	}
 	manager := s.guestManager
 	s.guestManager = nil
@@ -1047,6 +1052,8 @@ func (s *ScaffoldingService) setupMCLocalListener(hostIP string, mcPort uint16) 
 		s.guestMCAddr = "127.0.0.1"
 		s.guestMCPort = mcLocalPort
 		s.guestMCListener = mcListener
+		// Start LAN broadcast so other MC clients on the same network can discover this room
+		s.guestFakeServer = NewFakeServer(mcLocalPort, "§6§l双击进入联机房间（请保持GravityCone运行）")
 	} else {
 		mcListener.Close()
 		s.guestMu.Unlock()
@@ -1156,6 +1163,10 @@ func (s *ScaffoldingService) autoDisconnect(reason string) {
 	if s.guestMCListener != nil {
 		s.guestMCListener.Close()
 		s.guestMCListener = nil
+	}
+	if s.guestFakeServer != nil {
+		s.guestFakeServer.Stop()
+		s.guestFakeServer = nil
 	}
 	manager := s.guestManager
 	s.guestManager = nil
