@@ -9,13 +9,14 @@ import (
 
 // Handler dispatches CLI requests to core service methods.
 type Handler struct {
-	stunSvc        *core.StunService
-	lanSvc         *core.LanService
-	scaffoldingSvc *core.ScaffoldingService
-	writer         *StdioWriter
-	shutdownCh     chan struct{}
-	shutdownOnce   sync.Once
-	vendorPrefix   string
+	stunSvc          *core.StunService
+	lanSvc           *core.LanService
+	scaffoldingSvc   *core.ScaffoldingService
+	paperConnectSvc  *core.PaperConnectService
+	writer           *StdioWriter
+	shutdownCh       chan struct{}
+	shutdownOnce     sync.Once
+	vendorPrefix     string
 }
 
 // NewHandler creates a Handler with the given services and writer.
@@ -23,17 +24,19 @@ func NewHandler(
 	stunSvc *core.StunService,
 	lanSvc *core.LanService,
 	scaffoldingSvc *core.ScaffoldingService,
+	paperConnectSvc *core.PaperConnectService,
 	writer *StdioWriter,
 	shutdownCh chan struct{},
 	vendorPrefix string,
 ) *Handler {
 	return &Handler{
-		stunSvc:        stunSvc,
-		lanSvc:         lanSvc,
-		scaffoldingSvc: scaffoldingSvc,
-		writer:         writer,
-		shutdownCh:     shutdownCh,
-		vendorPrefix:   vendorPrefix,
+		stunSvc:         stunSvc,
+		lanSvc:          lanSvc,
+		scaffoldingSvc:  scaffoldingSvc,
+		paperConnectSvc: paperConnectSvc,
+		writer:          writer,
+		shutdownCh:      shutdownCh,
+		vendorPrefix:    vendorPrefix,
 	}
 }
 
@@ -77,71 +80,22 @@ func (h *Handler) handleStun(req Request, action string) {
 func (h *Handler) handleRoom(req Request, action string) {
 	switch action {
 	case "create":
-		mcPort, err := req.getInt("mc_port")
-		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
-			return
-		}
-		playerName, err := req.getString("player_name")
-		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
-			return
-		}
-
-		result, err := h.scaffoldingSvc.CreateRoom(uint16(mcPort), playerName, h.vendorPrefix)
-		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
-			return
-		}
-		h.writer.WriteResponse(successResponse(req.ID, result))
+		h.handleRoomCreate(req)
 
 	case "stop":
-		err := h.scaffoldingSvc.StopRoom()
-		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
-			return
-		}
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+		h.handleRoomStop(req)
 
 	case "join":
-		code, err := req.getString("code")
-		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
-			return
-		}
-		playerName, err := req.getString("player_name")
-		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
-			return
-		}
-
-		// Set progress callback that writes progress responses
-		core.SetScaffoldingJoinProgress(h.scaffoldingSvc, func(step string) {
-			h.writer.WriteResponse(progressResponse(req.ID, map[string]string{
-				"step":    step,
-				"message": progressMessage(step),
-			}))
-		})
-		defer core.SetScaffoldingJoinProgress(h.scaffoldingSvc, nil)
-
-		result, err := h.scaffoldingSvc.JoinRoom(code, playerName, h.vendorPrefix)
-		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
-			return
-		}
-		h.writer.WriteResponse(successResponse(req.ID, result))
+		h.handleRoomJoin(req)
 
 	case "cancel_join":
+		// Cancel both — whichever is active will respond
 		h.scaffoldingSvc.CancelJoin()
+		h.paperConnectSvc.CancelJoin()
 		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
 
 	case "leave":
-		err := h.scaffoldingSvc.LeaveRoom()
-		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
-			return
-		}
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+		h.handleRoomLeave(req)
 
 	case "status":
 		h.handleRoomStatus(req)
@@ -151,23 +105,179 @@ func (h *Handler) handleRoom(req Request, action string) {
 	}
 }
 
-func (h *Handler) handleRoomStatus(req Request) {
-	// Try host status first
-	hostStatus, hostErr := h.scaffoldingSvc.GetRoomStatus()
-	if hostErr == nil {
+// isPaperConnectCode returns true if the room code starts with "P/" or "p/".
+func isPaperConnectCode(code string) bool {
+	return len(code) >= 2 && (code[0] == 'P' || code[0] == 'p') && code[1] == '/'
+}
+
+func (h *Handler) handleRoomCreate(req Request) {
+	playerName, err := req.getString("player_name")
+	if err != nil {
+		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
+		return
+	}
+
+	protocol, _ := req.getString("protocol")
+
+	if protocol == "paperconnect" {
+		result, err := h.paperConnectSvc.CreateRoom(playerName, h.vendorPrefix)
+		if err != nil {
+			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
+			return
+		}
 		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
-			"role":  "host",
-			"code":  hostStatus.Code,
-			"mc_address": hostStatus.MCAddress,
-			"mc_port":    hostStatus.MCPort,
-			"online_count": hostStatus.OnlineCount,
-			"players":     hostStatus.Players,
-			"running":     hostStatus.Running,
+			"code":         result.Code,
+			"game_port":    result.GamePort,
+			"online_count": result.OnlineCount,
+			"players":      result.Players,
+			"running":      result.Running,
+			"protocol":     "paperconnect",
 		}))
 		return
 	}
 
-	// Try guest status
+	// Default: Scaffolding (Java Edition)
+	mcPort, err := req.getInt("mc_port")
+	if err != nil {
+		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
+		return
+	}
+
+	result, err := h.scaffoldingSvc.CreateRoom(uint16(mcPort), playerName, h.vendorPrefix)
+	if err != nil {
+		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
+		return
+	}
+	h.writer.WriteResponse(successResponse(req.ID, result))
+}
+
+func (h *Handler) handleRoomStop(req Request) {
+	// Try PaperConnect first, then Scaffolding
+	if err := h.paperConnectSvc.StopRoom(); err == nil {
+		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+		return
+	}
+	err := h.scaffoldingSvc.StopRoom()
+	if err != nil {
+		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
+		return
+	}
+	h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+}
+
+func (h *Handler) handleRoomJoin(req Request) {
+	code, err := req.getString("code")
+	if err != nil {
+		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
+		return
+	}
+	playerName, err := req.getString("player_name")
+	if err != nil {
+		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
+		return
+	}
+
+	if isPaperConnectCode(code) {
+		result, err := h.paperConnectSvc.JoinRoom(code, playerName, h.vendorPrefix)
+		if err != nil {
+			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
+			return
+		}
+		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
+			"room_code":         result.RoomCode,
+			"host_address":      result.HostAddress,
+			"game_port":         result.GamePort,
+			"connected":         result.Connected,
+			"online_count":      result.OnlineCount,
+			"players":           result.Players,
+			"heartbeating":      result.Heartbeating,
+			"disconnect_reason": result.DisconnectReason,
+			"protocol":          "paperconnect",
+		}))
+		return
+	}
+
+	// Scaffolding (U/) join with progress callback
+	core.SetScaffoldingJoinProgress(h.scaffoldingSvc, func(step string) {
+		h.writer.WriteResponse(progressResponse(req.ID, map[string]string{
+			"step":    step,
+			"message": progressMessage(step),
+		}))
+	})
+	defer core.SetScaffoldingJoinProgress(h.scaffoldingSvc, nil)
+
+	result, err := h.scaffoldingSvc.JoinRoom(code, playerName, h.vendorPrefix)
+	if err != nil {
+		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
+		return
+	}
+	h.writer.WriteResponse(successResponse(req.ID, result))
+}
+
+func (h *Handler) handleRoomLeave(req Request) {
+	// Try PaperConnect first, then Scaffolding
+	if err := h.paperConnectSvc.LeaveRoom(); err == nil {
+		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+		return
+	}
+	err := h.scaffoldingSvc.LeaveRoom()
+	if err != nil {
+		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
+		return
+	}
+	h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+}
+
+func (h *Handler) handleRoomStatus(req Request) {
+	// Try PaperConnect host status first
+	pcHostStatus, pcHostErr := h.paperConnectSvc.GetRoomStatus()
+	if pcHostErr == nil {
+		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
+			"role":         "host",
+			"code":         pcHostStatus.Code,
+			"game_port":    pcHostStatus.GamePort,
+			"online_count": pcHostStatus.OnlineCount,
+			"players":      pcHostStatus.Players,
+			"running":      pcHostStatus.Running,
+			"protocol":     "paperconnect",
+		}))
+		return
+	}
+
+	// Try Scaffolding host status
+	hostStatus, hostErr := h.scaffoldingSvc.GetRoomStatus()
+	if hostErr == nil {
+		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
+			"role":         "host",
+			"code":         hostStatus.Code,
+			"mc_address":   hostStatus.MCAddress,
+			"mc_port":      hostStatus.MCPort,
+			"online_count": hostStatus.OnlineCount,
+			"players":      hostStatus.Players,
+			"running":      hostStatus.Running,
+		}))
+		return
+	}
+
+	// Try PaperConnect guest status
+	pcGuestStatus, pcGuestErr := h.paperConnectSvc.GetConnectionStatus()
+	if pcGuestErr == nil {
+		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
+			"role":              "guest",
+			"room_code":         pcGuestStatus.RoomCode,
+			"host_address":      pcGuestStatus.HostAddress,
+			"game_port":         pcGuestStatus.GamePort,
+			"connected":         pcGuestStatus.Connected,
+			"online_count":      pcGuestStatus.OnlineCount,
+			"players":           pcGuestStatus.Players,
+			"heartbeating":      pcGuestStatus.Heartbeating,
+			"disconnect_reason": pcGuestStatus.DisconnectReason,
+			"protocol":          "paperconnect",
+		}))
+		return
+	}
+
+	// Try Scaffolding guest status
 	guestStatus, guestErr := h.scaffoldingSvc.GetConnectionStatus()
 	if guestErr == nil {
 		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{

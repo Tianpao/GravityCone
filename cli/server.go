@@ -53,9 +53,10 @@ func Run(peers []string, vendorPrefix string) {
 	stunSvc := &core.StunService{}
 	lanSvc := core.NewLanService(emitter)
 	scaffoldingSvc := core.NewScaffoldingService(emitter)
+	paperConnectSvc := core.NewPaperConnectService(emitter)
 
 	shutdownCh := make(chan struct{})
-	handler := NewHandler(stunSvc, lanSvc, scaffoldingSvc, writer, shutdownCh, vendorPrefix)
+	handler := NewHandler(stunSvc, lanSvc, scaffoldingSvc, paperConnectSvc, writer, shutdownCh, vendorPrefix)
 
 	// Open stdio log file
 	stdioLog, err := os.OpenFile(stdioLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
@@ -119,6 +120,7 @@ func Run(peers []string, vendorPrefix string) {
 
 	// Cleanup
 	scaffoldingSvc.Cleanup()
+	paperConnectSvc.Cleanup()
 	lanSvc.StopDiscovery()
 }
 

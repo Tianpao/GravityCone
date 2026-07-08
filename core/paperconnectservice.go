@@ -124,8 +124,8 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 		return nil, fmt.Errorf("分配的TCP端口 %d 不合法", tcpPort)
 	}
 
-	// Generate ACL config (hostProtocolPort is nil, matching C# behavior)
-	aclConfig := BuildPaperConnectACL(true, PCHostVIP, nil)
+	// Generate ACL config
+	aclConfig := BuildPaperConnectACL(true, PCHostVIP, &tcpPort)
 	if err := WritePaperConnectACL(aclConfig, "./config.toml"); err != nil {
 		listener.Close()
 		return nil, fmt.Errorf("写入ACL配置失败: %w", err)
@@ -168,12 +168,7 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	s.hostConns = make(map[net.Conn]struct{})
 	s.hostMu.Unlock()
 
-	// clientId is the vendor prefix identifying the client application (e.g. "GravityCone-1.0.0")
-	// Per PaperConnect spec: clientId contains client name and version number.
-	clientId := vendorPrefix
-	if clientId == "" {
-		clientId = "GravityCone-1.0.0"
-	}
+	clientId := MakeVendor(vendorPrefix)
 
 	// Add HOST as a player
 	s.hostPlayerMu.Lock()
@@ -629,11 +624,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		break
 	}
 
-	// clientId is the vendor prefix identifying the client application
-	clientId := vendorPrefix
-	if clientId == "" {
-		clientId = "GravityCone-1.0.0"
-	}
+	clientId := MakeVendor(vendorPrefix)
 
 	playerReq := PCPlayerRequest{
 		ClientId:   clientId,
