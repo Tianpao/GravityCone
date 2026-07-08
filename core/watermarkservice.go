@@ -7,7 +7,7 @@ import (
 	"image"
 	_ "image/jpeg"
 	"image/png"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,7 +37,7 @@ func (w *WatermarkService) EncodeRoomCode(sourcePath string, roomCode string) (*
 	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("源图片不存在: %s", sourcePath)
 	}
-	log.Printf("[WatermarkService] EncodeRoomCode source=%s roomCode=%q", sourcePath, roomCode)
+	slog.Info("EncodeRoomCode", "source", sourcePath, "roomCode", roomCode)
 
 	// 1. Decode source image
 	srcData, err := os.ReadFile(sourcePath)
@@ -86,25 +86,25 @@ func (w *WatermarkService) EncodeRoomCode(sourcePath string, roomCode string) (*
 		OutputPath: persistentPath,
 		Base64PNG:  base64.StdEncoding.EncodeToString(outputData),
 	}
-	log.Printf("[WatermarkService] EncodeRoomCode done, output=%s, base64 len=%d", persistentPath, len(result.Base64PNG))
+	slog.Info("EncodeRoomCode done", "output", persistentPath, "base64_len", len(result.Base64PNG))
 	return result, nil
 }
 
 // DecodeRoomCode extracts a room code from a blind-watermarked image (base64 encoded).
 func (w *WatermarkService) DecodeRoomCode(imageBase64 string) (string, error) {
-	log.Printf("[WatermarkService] DecodeRoomCode called, base64 len=%d", len(imageBase64))
+	slog.Info("DecodeRoomCode", "base64_len", len(imageBase64))
 
 	data, err := base64.StdEncoding.DecodeString(imageBase64)
 	if err != nil {
 		return "", fmt.Errorf("图片数据解码失败: %w", err)
 	}
-	log.Printf("[WatermarkService] decoded %d bytes from base64", len(data))
+	slog.Info("decoded base64", "bytes", len(data))
 
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return "", fmt.Errorf("图片解码失败，请确认拖入的是有效的PNG/JPEG图片")
 	}
-	log.Printf("[WatermarkService] image decoded, bounds=%v", img.Bounds())
+	slog.Info("image decoded", "bounds", img.Bounds())
 
 	// Extract blind watermark (32 bytes = 256 bits)
 	engine := bwm.New(seedImg, seedWm)
@@ -114,21 +114,21 @@ func (w *WatermarkService) DecodeRoomCode(imageBase64 string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("提取房间信息失败: %w", err)
 	}
-	log.Printf("[WatermarkService] extracted %d bits", len(wmBits))
+	slog.Info("extracted bits", "count", len(wmBits))
 
 	text := bwm.BitsToText(wmBits)
-	log.Printf("[WatermarkService] raw extracted text (len=%d): %q", len(text), text)
+	slog.Info("raw extracted text", "len", len(text), "text", text)
 
 	// Unpad: remove trailing spaces and null bytes
 	code := unpadPayload(text)
-	log.Printf("[WatermarkService] unpad result: %q", code)
+	slog.Info("unpad result", "code", code)
 
 	// Validate the room code
 	if _, err := ParseRoomCode(code); err != nil {
 		// Try without U/ prefix
 		if !strings.HasPrefix(strings.ToUpper(code), "U/") {
 			code = "U/" + code
-			log.Printf("[WatermarkService] added U/ prefix: %q", code)
+			slog.Info("added U/ prefix", "code", code)
 			if _, err := ParseRoomCode(code); err != nil {
 				return "", fmt.Errorf("图片中的房间代码无效，可能图片未包含房间信息或被过度压缩")
 			}
@@ -137,7 +137,7 @@ func (w *WatermarkService) DecodeRoomCode(imageBase64 string) (string, error) {
 		}
 	}
 
-	log.Printf("[WatermarkService] final room code: %q", code)
+	slog.Info("final room code", "code", code)
 	return code, nil
 }
 

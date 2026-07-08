@@ -5,7 +5,7 @@ package main
 import (
 	"embed"
 	"gravitycone/core"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -24,7 +24,7 @@ func main() {
 	// If --service flag is present, run in service-only mode without GUI.
 	for _, arg := range os.Args[1:] {
 		if arg == "--service" {
-			log.Println("Running in service mode (no GUI)")
+			slog.Info("Running in service mode (no GUI)")
 			return
 		}
 	}
@@ -34,7 +34,7 @@ func main() {
 		logDir := filepath.Join(filepath.Dir(exe), "logs")
 		os.MkdirAll(logDir, 0755)
 		if f, err := os.OpenFile(filepath.Join(logDir, "gravitycone.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
-			log.SetOutput(f)
+			core.InitLogger(f, nil)
 		}
 	}
 	// Redirect EasyTier logs to file too
@@ -95,7 +95,7 @@ func main() {
 	}()
 
 	if err := natayarkSvc.RestoreSession(); err != nil {
-		log.Printf("Warning: failed to restore session: %v", err)
+		slog.Warn("failed to restore session", "error", err)
 	}
 
 	app.OnShutdown(func() {
@@ -104,7 +104,8 @@ func main() {
 
 	err := app.Run()
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("app.Run failed", "error", err)
+		os.Exit(1)
 	}
 }
 

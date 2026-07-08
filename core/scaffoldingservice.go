@@ -3,7 +3,7 @@ package core
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
@@ -249,7 +249,7 @@ func (s *ScaffoldingService) StopRoom() error {
 
 	// Close all active guest connections so they detect disconnection immediately.
 	s.hostConnMu.Lock()
-	log.Printf("[StopRoom] closing %d host connections", len(s.hostConns))
+	slog.Info("StopRoom closing host connections", "count", len(s.hostConns))
 	for conn := range s.hostConns {
 		conn.Close()
 	}
@@ -352,7 +352,7 @@ func (s *ScaffoldingService) hostMCHealthCheckLoop() {
 
 			server := mcstatus.JavaServer{Host: "127.0.0.1", Port: mcPort}
 			if _, err := server.Status(); err != nil {
-				log.Printf("[MCHealthCheck] MC server not responding on port %d, stopping room", mcPort)
+				slog.Warn("MC server not responding, stopping room", "port", mcPort)
 				s.hostMu.Lock()
 				s.hostStopReason = "Minecraft 服务器已关闭，房间已自动销毁"
 				s.hostMu.Unlock()
@@ -373,11 +373,11 @@ func (s *ScaffoldingService) hostServerLoop() {
 			case <-s.hostStopCh:
 				return
 			default:
-				log.Printf("[hostServerLoop] Accept error: %v", err)
+				slog.Warn("Accept error", "error", err)
 				continue
 			}
 		}
-		log.Printf("[hostServerLoop] Accepted connection from %s", conn.RemoteAddr())
+		slog.Info("accepted connection", "remote", conn.RemoteAddr())
 		go s.handleHostConnection(conn)
 	}
 }
@@ -387,9 +387,9 @@ func (s *ScaffoldingService) handleHostConnection(conn net.Conn) {
 	s.hostConnMu.Lock()
 	if s.hostConns != nil {
 		s.hostConns[conn] = struct{}{}
-		log.Printf("[HostConn] registered, total=%d", len(s.hostConns))
+		slog.Info("HostConn registered", "total", len(s.hostConns))
 	} else {
-		log.Printf("[HostConn] hostConns is nil, not registered!")
+		slog.Warn("HostConn not registered, hostConns is nil")
 	}
 	s.hostConnMu.Unlock()
 
@@ -413,7 +413,7 @@ func (s *ScaffoldingService) handleHostConnection(conn net.Conn) {
 
 		typeName, body, err := ReadProtocolRequest(conn)
 		if err != nil {
-			log.Printf("[HostConn] ReadProtocolRequest error: %v", err)
+			slog.Warn("ReadProtocolRequest error", "error", err)
 			return
 		}
 
@@ -747,7 +747,7 @@ func (s *ScaffoldingService) discoverHostAndConnect(manager *EasyTierManager, ti
 		if err == nil {
 			if WriteProtocolRequest(directConn, ProtocolPing, nil) == nil {
 				if _, _, err := ReadProtocolResponse(directConn); err == nil {
-					log.Printf("[JoinRoom] connected via direct localhost:%d", scaffoldingPort)
+					slog.Info("connected via direct localhost", "port", scaffoldingPort)
 					s.guestMu.Lock()
 					s.guestConn = directConn
 					s.guestScaffoldingLocalPort = scaffoldingPort
@@ -910,13 +910,13 @@ func (s *ScaffoldingService) GetConnectionStatus() (*ConnectionStatus, error) {
 	running := s.guestRunning
 	s.guestMu.Unlock()
 
-	log.Printf("[GetConnectionStatus] running=%v", running)
+	slog.Info("GetConnectionStatus", "running", running)
 
 	if !running {
 		s.guestMu.Lock()
 		reason := s.guestDisconnectReason
 		s.guestMu.Unlock()
-		log.Printf("[GetConnectionStatus] not running, reason=%q", reason)
+		slog.Info("GetConnectionStatus not running", "reason", reason)
 		if reason != "" {
 			return s.buildConnectionStatus(), nil
 		}
@@ -955,11 +955,11 @@ func (s *ScaffoldingService) buildConnectionStatus() *ConnectionStatus {
 // from the TCP connection (like Rust's ClientSession background thread).
 // When the read fails, it closes guestReadCh to signal all waiters.
 func (s *ScaffoldingService) guestReadLoop(conn net.Conn) {
-	log.Printf("[ReadLoop] started")
+	slog.Info("ReadLoop started")
 	for {
 		status, body, err := ReadProtocolResponse(conn)
 		if err != nil {
-			log.Printf("[ReadLoop] read failed: %v", err)
+			slog.Warn("ReadLoop read failed", "error", err)
 			// Drain any pending read result, then close the channel.
 			select {
 			case s.guestReadCh <- readResult{err: err}:
@@ -999,7 +999,7 @@ func (s *ScaffoldingService) guestHeartbeatLoop(machineID, easytierID, playerNam
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	log.Printf("[Heartbeat] started")
+	slog.Info("Heartbeat started")
 
 	for {
 		select {
@@ -1010,7 +1010,7 @@ func (s *ScaffoldingService) guestHeartbeatLoop(machineID, easytierID, playerNam
 			s.guestMu.Unlock()
 
 			if !running || conn == nil {
-				log.Printf("[Heartbeat] exiting: running=%v", running)
+				slog.Info("Heartbeat exiting", "running", running)
 				return
 			}
 
@@ -1024,18 +1024,18 @@ func (s *ScaffoldingService) guestHeartbeatLoop(machineID, easytierID, playerNam
 
 			status, _, err := s.writeAndWait(conn, ProtocolPlayerPing, pingData)
 			if err != nil {
-				log.Printf("[Heartbeat] failed: %v", err)
+				slog.Warn("Heartbeat failed", "error", err)
 				s.autoDisconnect("房主已关闭房间")
 				return
 			}
 			if status != 0 {
-				log.Printf("[Heartbeat] server returned error status %d", status)
+				slog.Warn("Heartbeat server error", "status", status)
 				s.autoDisconnect("房主已关闭房间")
 				return
 			}
 
 		case <-s.guestStopCh:
-			log.Printf("[Heartbeat] stopCh, exiting")
+			slog.Info("Heartbeat exiting on stopCh")
 			return
 		}
 	}
@@ -1059,7 +1059,7 @@ func (s *ScaffoldingService) setupMCPortForward(hostIP string, mcPort uint16) {
 	if err != nil {
 		localListener, err = net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
-			log.Printf("[setupMCPortForward] 分配本地端口失败: %v", err)
+			slog.Warn("分配本地端口失败", "error", err)
 			return
 		}
 	}
@@ -1072,13 +1072,13 @@ func (s *ScaffoldingService) setupMCPortForward(hostIP string, mcPort uint16) {
 
 	// TCP port-forward
 	if err := manager.AddPortForward("tcp", localAddr, remoteAddr); err != nil {
-		log.Printf("[setupMCPortForward] TCP端口转发失败: %v", err)
+		slog.Warn("TCP端口转发失败", "error", err)
 		return
 	}
 	// UDP port-forward (for voice chat etc.)
 	manager.AddPortForward("udp", localAddr, remoteAddr)
 
-	log.Printf("[setupMCPortForward] forwarded 0.0.0.0:%d -> %s (mc_port=%d)", mcLocalPort, remoteAddr, mcPort)
+	slog.Info("端口转发已建立", "local", fmt.Sprintf("0.0.0.0:%d", mcLocalPort), "remote", remoteAddr, "mc_port", mcPort)
 
 	s.guestMu.Lock()
 	if s.guestRunning {
@@ -1097,7 +1097,7 @@ func (s *ScaffoldingService) setupMCPortForward(hostIP string, mcPort uint16) {
 }
 
 func (s *ScaffoldingService) autoDisconnect(reason string) {
-	log.Printf("[autoDisconnect] reason=%q", reason)
+	slog.Info("autoDisconnect", "reason", reason)
 	s.guestMu.Lock()
 	if s.guestConn != nil {
 		s.guestConn.Close()

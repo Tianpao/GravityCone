@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"gravitycone/core"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -23,20 +23,22 @@ func Run(peers []string, vendorPrefix string, motd string) {
 	// Resolve logs directory next to the CLI executable
 	logsDir, stdioLogPath, etLogPath, gccoreLogPath, err := resolveLogPaths()
 	if err != nil {
-		log.Fatalf("Failed to resolve log paths: %v", err)
+		slog.Error("failed to resolve log paths", "error", err)
+		os.Exit(1)
 	}
 	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		log.Fatalf("Failed to create logs directory: %v", err)
+		slog.Error("failed to create logs directory", "error", err)
+		os.Exit(1)
 	}
 
-	// Redirect Go log to gccore.log (no terminal output)
+	// Redirect Go slog to gccore.log (no terminal output)
 	gccoreLog, err := os.OpenFile(gccoreLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		log.Fatalf("Failed to open gccore.log: %v", err)
+		slog.Error("failed to open gccore.log", "error", err)
+		os.Exit(1)
 	}
 	defer gccoreLog.Close()
-	log.SetOutput(gccoreLog)
-	log.SetPrefix("[gravitycone-cli] ")
+	core.InitLogger(gccoreLog, &slog.HandlerOptions{AddSource: false})
 
 	// Redirect EasyTier logs to file
 	core.SetEasyTierLogOutput(etLogPath)
@@ -44,7 +46,7 @@ func Run(peers []string, vendorPrefix string, motd string) {
 	// Override EasyTier peers if provided
 	if len(peers) > 0 {
 		core.SetPublicPeers(peers)
-		log.Printf("Using custom peers: %v", peers)
+		slog.Info("Using custom peers", "peers", peers)
 	}
 
 	// Set up services
@@ -61,7 +63,7 @@ func Run(peers []string, vendorPrefix string, motd string) {
 	// Open stdio log file
 	stdioLog, err := os.OpenFile(stdioLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		log.Printf("Warning: failed to open stdio.log: %v", err)
+		slog.Warn("failed to open stdio.log", "error", err)
 	} else {
 		defer stdioLog.Close()
 		writer.SetTee(stdioLog)

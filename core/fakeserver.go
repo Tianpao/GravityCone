@@ -2,7 +2,7 @@ package core
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"time"
 
@@ -50,7 +50,7 @@ func (fs *FakeServer) run(port uint16, motd string) {
 
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		log.Printf("[FakeServer] failed to list interfaces: %v", err)
+		slog.Warn("failed to list interfaces", "error", err)
 		return
 	}
 
@@ -77,7 +77,7 @@ func (fs *FakeServer) run(port uint16, motd string) {
 			bindAddr := &net.UDPAddr{IP: ip, Port: 0}
 			conn, err := net.ListenPacket("udp4", bindAddr.String())
 			if err != nil {
-				log.Printf("[FakeServer] bind %s failed: %v", ip, err)
+					slog.Warn("bind failed", "ip", ip, "error", err)
 				continue
 			}
 			udpConn := conn.(*net.UDPConn)
@@ -93,7 +93,7 @@ func (fs *FakeServer) run(port uint16, motd string) {
 	if len(conns) == 0 {
 		conn, err := net.ListenPacket("udp4", "0.0.0.0:0")
 		if err != nil {
-			log.Printf("[FakeServer] fallback bind failed: %v", err)
+			slog.Warn("fallback bind failed", "error", err)
 			return
 		}
 		udpConn := conn.(*net.UDPConn)
@@ -116,11 +116,11 @@ func (fs *FakeServer) run(port uint16, motd string) {
 		}
 	}()
 
-	log.Printf("[FakeServer] started broadcasting port %d on %s", port, group)
+	slog.Info("FakeServer started broadcasting", "port", port, "group", group)
 	for {
 		select {
 		case <-fs.stopCh:
-			log.Printf("[FakeServer] stopped")
+			slog.Info("FakeServer stopped")
 			return
 		case <-ticker.C:
 			for _, c := range conns {

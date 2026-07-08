@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -50,7 +50,7 @@ func SetEasyTierLogOutput(path string) {
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		log.Printf("Warning: failed to open easytier log file %s: %v", path, err)
+		slog.Warn("failed to open easytier log file", "path", path, "error", err)
 		return
 	}
 	easytierStdout = f
@@ -267,7 +267,7 @@ func (m *EasyTierManager) Stop() error {
 	if runtime.GOOS == "windows" {
 		killCmd := exec.Command("taskkill", "/PID", fmt.Sprintf("%d", pid), "/T", "/F")
 		if out, err := killCmd.CombinedOutput(); err != nil {
-			log.Printf("taskkill failed (pid=%d): %v, output: %s", pid, err, string(out))
+			slog.Error("taskkill failed", "pid", pid, "error", err, "output", string(out))
 		}
 	} else {
 		m.mu.Lock()
@@ -291,7 +291,7 @@ func (m *EasyTierManager) Stop() error {
 	case <-time.After(5 * time.Second):
 		m.mu.Lock()
 		if m.cmd != nil && m.cmd.Process != nil {
-			log.Printf("easytier-core (pid=%d) did not exit after 5s, force-killing", pid)
+			slog.Warn("easytier-core did not exit after 5s, force-killing", "pid", pid)
 			m.cmd.Process.Kill()
 		}
 		m.mu.Unlock()
@@ -417,7 +417,7 @@ func (m *EasyTierManager) runCli(args ...string) (string, error) {
 	cmd := exec.Command(m.cliPath, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Printf("[easytier-cli] %s %v failed: %v, output: %s", m.cliPath, args, err, string(out))
+		slog.Error("easytier-cli failed", "path", m.cliPath, "args", args, "error", err, "output", string(out))
 		return "", err
 	}
 	return string(out), nil
