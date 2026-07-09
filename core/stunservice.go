@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 )
 
 type StunResult struct {
@@ -39,16 +37,5 @@ func (s *StunService) TestStun() (*StunResult, error) {
 }
 
 func getEasytierCliPath() (string, error) {
-	if runtime.GOOS == "windows" {
-		exe, err := exec.LookPath("easytier-cli.exe")
-		if err == nil {
-			return exe, nil
-		}
-		return filepath.Join("easytier", "easytier-cli.exe"), nil
-	}
-	exe, err := exec.LookPath("easytier-cli")
-	if err == nil {
-		return exe, nil
-	}
-	return "", fmt.Errorf("easytier-cli not found")
+	return resolveEasyTierBinary("easytier-cli")
 }

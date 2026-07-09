@@ -43,6 +43,11 @@ func main() {
 		core.SetEasyTierLogOutput(filepath.Join(logDir, "easytier.log"))
 	}
 
+	// Ensure EasyTier binaries are available (auto-download if missing)
+	if err := core.EnsureEasyTier(); err != nil {
+		slog.Warn("EasyTier auto-download failed", "error", err)
+	}
+
 	natayarkSvc := &core.NatayarkService{}
 	scaffoldingSvc := core.NewScaffoldingService(nil) // nil = NilEventEmitter; Wails frontend polls via method calls
 

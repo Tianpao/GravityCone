@@ -15,7 +15,7 @@ import (
 )
 
 // BaseVendor is the default vendor suffix. Call MakeVendor to append optional prefixes.
-const BaseVendor = "GVC v0.1.0, EasyTier v2.6.4"
+const BaseVendor = "GVC v0.1.0, EasyTier " + EasyTierVersion
 
 func MakeVendor(prefixes ...string) string {
 	parts := make([]string, 0, len(prefixes)+1)
