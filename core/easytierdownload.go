@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/adrg/xdg"
 )
 
 // EasyTierVersion is the expected EasyTier release version.
@@ -189,9 +191,12 @@ func downloadEasyTierBinary(name string) (string, error) {
 }
 
 // resolveEasyTierDir returns the easytier/ directory where binaries should be placed.
-// Prefers next to the executable (matching resolveEasyTierBinary's search order),
-// falls back to relative path.
+// Uses XDG_DATA_HOME/gravitycone/easytier/ so all GravityCone installations share
+// the same EasyTier binaries. Falls back to next-to-executable if XDG is unavailable.
 func resolveEasyTierDir() string {
+	if dir := filepath.Join(xdg.DataHome, "gravitycone", "easytier"); dir != "" {
+		return dir
+	}
 	if exeDir, err := os.Executable(); err == nil {
 		return filepath.Join(filepath.Dir(exeDir), "easytier")
 	}

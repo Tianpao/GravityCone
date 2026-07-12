@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/adrg/xdg"
 )
 
 const hostVirtualIP = "10.114.51.41"
@@ -89,18 +91,18 @@ func resolveEasyTierBinary(name string) (string, error) {
 		return p, nil
 	}
 
-	exeDir, err := os.Executable()
-	if err == nil {
+	// Check XDG data directory (shared across installations)
+	p := filepath.Join(xdg.DataHome, "gravitycone", "easytier", exeName)
+	if _, err := os.Stat(p); err == nil {
+		return p, nil
+	}
+
+	// Fallback: next to executable
+	if exeDir, err := os.Executable(); err == nil {
 		p := filepath.Join(filepath.Dir(exeDir), "easytier", exeName)
 		if _, err := os.Stat(p); err == nil {
 			return p, nil
 		}
-	}
-
-	p := filepath.Join("easytier", exeName)
-	if _, err := os.Stat(p); err == nil {
-		abs, _ := filepath.Abs(p)
-		return abs, nil
 	}
 
 	return "", fmt.Errorf("%s not found", exeName)
