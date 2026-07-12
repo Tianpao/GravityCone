@@ -3,8 +3,10 @@ import TitleBar from "@/components/TitleBar.vue"
 import BottomNav from "@/components/BottomNav.vue"
 import { useUserStore } from "@/stores/user"
 import { useSettingsStore } from "@/stores/settings"
+import { useDownloadStore } from "@/stores/download"
 import { useGlobalDrop } from "@/composables/useGlobalDrop"
 import { Button } from "@/components/ui/button"
+import { onMounted, computed } from "vue"
 
 const user = useUserStore()
 user.refreshUser()
@@ -12,7 +14,39 @@ user.refreshUser()
 const settings = useSettingsStore()
 settings.loadPeers()
 
+const download = useDownloadStore()
+onMounted(() => download.startListening())
+
 const { showDropOverlay, dropStatus, dropRoomCode, dropError, cancel } = useGlobalDrop()
+
+function formatSize(bytes: number): string {
+  if (bytes <= 0) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function formatSpeed(bytesPerSec: number): string {
+  if (bytesPerSec <= 0) return ''
+  if (bytesPerSec < 1024) return `${bytesPerSec} B/s`
+  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(0)} KB/s`
+  return `${(bytesPerSec / 1024 / 1024).toFixed(1)} MB/s`
+}
+
+const progressLabel = computed(() => {
+  if (!download.progress) return ''
+  const p = download.progress
+  if (p.step === 'downloading') {
+    const parts = [`下载中 ${p.percent}%`]
+    if (p.totalSize > 0) parts.push(formatSize(p.totalSize))
+    if (p.speed > 0) parts.push(formatSpeed(p.speed))
+    return parts.join(' · ')
+  }
+  if (p.step === 'extracting') {
+    return `解压中 ${p.percent}%`
+  }
+  return ''
+})
 </script>
 
 <template>
@@ -22,6 +56,20 @@ const { showDropOverlay, dropStatus, dropRoomCode, dropError, cancel } = useGlob
       <RouterView />
     </main>
     <BottomNav />
+
+    <!-- Download Progress Overlay -->
+    <Transition name="overlay-fade">
+      <div
+        v-if="download.downloading"
+        class="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-xl bg-background/60"
+      >
+        <div class="flex flex-col items-center gap-4 px-10 py-10 rounded-2xl border border-border bg-card/90 min-w-72">
+          <div class="size-10 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <p class="text-lg font-semibold">正在下载 EasyTier</p>
+          <p class="text-sm text-muted-foreground">{{ progressLabel }}</p>
+        </div>
+      </div>
+    </Transition>
 
     <!-- Global Drop Overlay -->
     <Transition name="overlay-fade">

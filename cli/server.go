@@ -49,15 +49,17 @@ func Run(peers []string, vendorPrefix string, motd string) {
 		slog.Info("Using custom peers", "peers", peers)
 	}
 
+	// Set up writer and emitter early so download progress can be reported
+	writer := NewStdioWriter()
+	emitter := NewStdioEventEmitter(writer)
+	core.SetEnsureEasyTierEmitter(emitter)
+
 	// Ensure EasyTier binaries are available (auto-download if missing)
 	if err := core.EnsureEasyTier(); err != nil {
 		slog.Warn("EasyTier auto-download failed", "error", err)
 	}
 
 	// Set up services
-	writer := NewStdioWriter()
-	emitter := NewStdioEventEmitter(writer)
-
 	stunSvc := &core.StunService{}
 	lanSvc := core.NewLanService(emitter)
 	scaffoldingSvc := core.NewScaffoldingService(emitter)

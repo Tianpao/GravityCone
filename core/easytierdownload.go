@@ -35,6 +35,14 @@ func SetEasyTierBaseURL(url string) {
 	}
 }
 
+// DownloadProgressData is the data shape emitted during download progress events.
+type DownloadProgressData struct {
+	Step      string `json:"step"`       // "downloading" or "extracting"
+	Percent   int    `json:"percent"`    // 0-100
+	TotalSize int64  `json:"total_size"` // total bytes (0 if unknown)
+	Speed     int64  `json:"speed"`      // bytes/sec (download step only)
+}
+
 // easyTierPlatform holds the OS and arch segments used in the download URL.
 type easyTierPlatform struct {
 	sys  string // "windows", "macos", "linux", "freebsd"
@@ -75,8 +83,19 @@ func (p easyTierPlatform) downloadURL() string {
 		easyTierBaseURL, EasyTierVersion, p.sys, p.arch, EasyTierVersion)
 }
 
+// ensureEasyTierEmitter is the event emitter used by EnsureEasyTier for progress reporting.
+var ensureEasyTierEmitter EventEmitter = NilEventEmitter{}
+
+// SetEnsureEasyTierEmitter sets the event emitter for download progress reporting.
+func SetEnsureEasyTierEmitter(emitter EventEmitter) {
+	if emitter != nil {
+		ensureEasyTierEmitter = emitter
+	}
+}
+
 // EnsureEasyTier checks if easytier-core and easytier-cli exist locally,
-// and downloads them if missing. Call this at startup before any EasyTier operations.
+// and downloads them if missing. Emits "download.progress" events via the
+// configured emitter. Call this at startup before any EasyTier operations.
 func EnsureEasyTier() error {
 	corePath, err := resolveEasyTierBinary("easytier-core")
 	if err == nil {
@@ -113,7 +132,6 @@ func downloadEasyTierBinary(name string) (string, error) {
 		exeName = name + ".exe"
 	}
 
-	// Resolve target directory (same logic as resolveEasyTierBinary)
 	targetDir := resolveEasyTierDir()
 
 	downloadMu.Lock()
@@ -133,7 +151,7 @@ func downloadEasyTierBinary(name string) (string, error) {
 	url := plat.downloadURL()
 	slog.Info("downloading EasyTier", "url", url, "target", targetDir)
 
-	// Download zip to temp file
+	// Download zip to temp file with progress tracking
 	tmpFile, err := os.CreateTemp("", "easytier-*.zip")
 	if err != nil {
 		return "", fmt.Errorf("create temp file: %w", err)
@@ -141,16 +159,24 @@ func downloadEasyTierBinary(name string) (string, error) {
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
-	if err := downloadFile(tmpFile, url); err != nil {
+	if err := downloadFileWithProgress(tmpFile, url); err != nil {
 		tmpFile.Close()
 		return "", fmt.Errorf("download failed: %w", err)
 	}
 	tmpFile.Close()
 
 	// Extract needed files from zip
+	ensureEasyTierEmitter.Emit("download.progress", DownloadProgressData{
+		Step:    "extracting",
+		Percent: 0,
+	})
 	if err := extractEasyTierZip(tmpPath, targetDir); err != nil {
 		return "", fmt.Errorf("extract failed: %w", err)
 	}
+	ensureEasyTierEmitter.Emit("download.progress", DownloadProgressData{
+		Step:    "extracting",
+		Percent: 100,
+	})
 
 	// Verify the binary we need is now present
 	result := filepath.Join(targetDir, exeName)
@@ -173,9 +199,9 @@ func resolveEasyTierDir() string {
 	return abs
 }
 
-// downloadFile downloads url into the given writer with a 60-second timeout.
-func downloadFile(dst io.Writer, url string) error {
-	client := &http.Client{Timeout: 60 * time.Second}
+// downloadFileWithProgress downloads url into dst with progress events emitted every second.
+func downloadFileWithProgress(dst io.Writer, url string) error {
+	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
 		return err
@@ -186,8 +212,59 @@ func downloadFile(dst io.Writer, url string) error {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
-	_, err = io.Copy(dst, resp.Body)
-	return err
+	total := resp.ContentLength
+	var written int64
+	var lastReport time.Time
+	lastWritten := int64(0)
+
+	buf := make([]byte, 32*1024)
+	for {
+		nr, readErr := resp.Body.Read(buf)
+		if nr > 0 {
+			nw, writeErr := dst.Write(buf[:nr])
+			if writeErr != nil {
+				return writeErr
+			}
+			written += int64(nw)
+		}
+
+		now := time.Now()
+		if now.Sub(lastReport) >= time.Second {
+			elapsed := now.Sub(lastReport).Seconds()
+			if elapsed <= 0 {
+				elapsed = 1
+			}
+			speed := int64(float64(written-lastWritten) / elapsed)
+
+			percent := 0
+			if total > 0 {
+				percent = int(written * 100 / total)
+			}
+
+			ensureEasyTierEmitter.Emit("download.progress", DownloadProgressData{
+				Step:      "downloading",
+				Percent:   percent,
+				TotalSize: total,
+				Speed:     speed,
+			})
+			lastReport = now
+			lastWritten = written
+		}
+
+		if readErr != nil {
+			break
+		}
+	}
+
+	// Final progress event
+	ensureEasyTierEmitter.Emit("download.progress", DownloadProgressData{
+		Step:      "downloading",
+		Percent:   100,
+		TotalSize: total,
+		Speed:     0,
+	})
+
+	return nil
 }
 
 // extractEasyTierZip extracts easytier-core, easytier-cli, and (on Windows)

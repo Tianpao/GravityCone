@@ -18,6 +18,7 @@ var assets embed.FS
 
 func init() {
 	application.RegisterEvent[string]("time")
+	application.RegisterEvent[core.DownloadProgressData]("download.progress")
 }
 
 func main() {
@@ -43,11 +44,6 @@ func main() {
 		core.SetEasyTierLogOutput(filepath.Join(logDir, "easytier.log"))
 	}
 
-	// Ensure EasyTier binaries are available (auto-download if missing)
-	if err := core.EnsureEasyTier(); err != nil {
-		slog.Warn("EasyTier auto-download failed", "error", err)
-	}
-
 	natayarkSvc := &core.NatayarkService{}
 	scaffoldingSvc := core.NewScaffoldingService(nil) // nil = NilEventEmitter; Wails frontend polls via method calls
 
@@ -71,8 +67,15 @@ func main() {
 		},
 	})
 
-	// Wire up Wails event emitter now that app exists
-	core.InitScaffoldingEmitter(scaffoldingSvc, &wailsEventEmitter{app: app})
+	// Wire up Wails event emitters now that app exists
+	wailsEmitter := &wailsEventEmitter{app: app}
+	core.InitScaffoldingEmitter(scaffoldingSvc, wailsEmitter)
+	core.SetEnsureEasyTierEmitter(wailsEmitter)
+
+	// Ensure EasyTier binaries are available (auto-download if missing)
+	if err := core.EnsureEasyTier(); err != nil {
+		slog.Warn("EasyTier auto-download failed", "error", err)
+	}
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title: "GravityCone",
