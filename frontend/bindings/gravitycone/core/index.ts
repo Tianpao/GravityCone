@@ -20,6 +20,7 @@ export {
 
 export type {
     ConnectionStatus,
+    DownloadProgressData,
     LanServer,
     NatayarkUser,
     PlayerInfo,

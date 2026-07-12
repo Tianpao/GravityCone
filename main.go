@@ -72,10 +72,13 @@ func main() {
 	core.InitScaffoldingEmitter(scaffoldingSvc, wailsEmitter)
 	core.SetEnsureEasyTierEmitter(wailsEmitter)
 
-	// Ensure EasyTier binaries are available (auto-download if missing)
-	if err := core.EnsureEasyTier(); err != nil {
-		slog.Warn("EasyTier auto-download failed", "error", err)
-	}
+	// Ensure EasyTier binaries are available (auto-download if missing).
+	// Run in background so the window appears immediately.
+	go func() {
+		if err := core.EnsureEasyTier(); err != nil {
+			slog.Warn("EasyTier auto-download failed", "error", err)
+		}
+	}()
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title: "GravityCone",
