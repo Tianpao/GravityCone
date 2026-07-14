@@ -13,11 +13,11 @@ export interface NatInfo {
 const natTypeMap: Record<number, NatInfo> = {
   1: { grade: 'excellent', label: '优', color: 'text-green-500', tooltip: 'No PAT / 开放型互联网' },
   2: { grade: 'good', label: '良', color: 'text-blue-500', tooltip: 'Symmetric Firewall / 对称型防火墙' },
-  3: { grade: 'good', label: '良', color: 'text-blue-500', tooltip: 'Full Cone NAT / 完全圆锥型NAT' },
-  4: { grade: 'poor', label: '差', color: 'text-yellow-500', tooltip: 'Restricted Cone NAT / 受限圆锥型NAT' },
-  5: { grade: 'poor', label: '差', color: 'text-yellow-500', tooltip: 'Port Restricted Cone NAT / 端口受限圆锥型NAT' },
+  3: { grade: 'good', label: '良', color: 'text-blue-500', tooltip: 'Full Cone / 完全圆锥型NAT' },
+  4: { grade: 'poor', label: '差', color: 'text-yellow-500', tooltip: 'Restricted Cone / 受限圆锥型NAT' },
+  5: { grade: 'poor', label: '差', color: 'text-yellow-500', tooltip: 'Port Restricted / 端口受限圆锥型NAT' },
   6: { grade: 'unavailable', label: '不可用', color: 'text-red-500', tooltip: 'Symmetric Increment / 对称型递增NAT' },
-  7: { grade: 'unavailable', label: '不可用', color: 'text-red-500', tooltip: 'Symmetric NAT / 对称型NAT' },
+  7: { grade: 'unavailable', label: '不可用', color: 'text-red-500', tooltip: 'Symmetric / 对称型NAT' },
 }
 
 const pendingInfo: NatInfo = { grade: 'excellent', label: '检测中', color: 'text-muted-foreground', tooltip: '' }
