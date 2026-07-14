@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { Events } from '@wailsio/runtime'
-import { StartDiscovery, StopDiscovery, GetDiscoveredServers, CreateRoom } from '@/../bindings/gravitycone/core/minecraft/lanservice'
+import { StartDiscovery, StopDiscovery, GetDiscoveredServers } from '@/../bindings/gravitycone/core/minecraft/lanservice'
 import type { LanServer } from '@/../bindings/gravitycone/core/minecraft/models'
 
 type EventUnsubscriber = () => void
@@ -10,7 +10,6 @@ export const useLanStore = defineStore('lan', {
     servers: [] as LanServer[],
     discovering: false,
     error: '',
-    creating: false,
     _unsubscribers: [] as EventUnsubscriber[],
   }),
   actions: {
@@ -69,18 +68,6 @@ export const useLanStore = defineStore('lan', {
         try { unsub() } catch {}
       }
       this._unsubscribers = []
-    },
-    async createRoom(ip: string, port: number) {
-      this.creating = true
-      this.error = ''
-      try {
-        await CreateRoom(ip, port)
-      } catch (e: any) {
-        this.error = e?.message || String(e)
-        throw e
-      } finally {
-        this.creating = false
-      }
     },
   },
 })

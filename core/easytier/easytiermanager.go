@@ -337,28 +337,6 @@ type peerInfo struct {
 	Hostname  string          `json:"hostname"`
 }
 
-func (m *EasyTierManager) DiscoverPeer(hostname string) (string, error) {
-	out, err := m.runCli("-o", "json", "-p", m.rpcPortal, "peer", "list")
-	if err != nil {
-		return "", fmt.Errorf("查询对等节点失败: %w", err)
-	}
-
-	var peers []peerInfo
-	if err := json.Unmarshal([]byte(out), &peers); err != nil {
-		return "", fmt.Errorf("解析对等节点列表失败: %w", err)
-	}
-
-	for _, p := range peers {
-		if p.Hostname == hostname && p.VirtualIP != "" {
-			// Remove CIDR suffix if present (e.g. "10.144.0.1/24" -> "10.144.0.1")
-			ip, _, _ := strings.Cut(p.VirtualIP, "/")
-			return ip, nil
-		}
-	}
-
-	return "", fmt.Errorf("未找到主机 (%s)，请确认房间代码正确", hostname)
-}
-
 func (m *EasyTierManager) GetPeerID() (string, error) {
 	out, err := m.runCli("-o", "json", "-p", m.rpcPortal, "node", "info")
 	if err != nil {

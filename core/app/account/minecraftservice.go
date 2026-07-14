@@ -3,6 +3,7 @@ package account
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -93,8 +94,14 @@ var charsetForPKCE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345
 
 func generateCodeVerifier() string {
 	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback is better than an empty verifier — use time-based randomness
+		for i := range b {
+			b[i] = byte(time.Now().UnixNano()>>(i%8)) ^ byte(i*37)
+		}
+	}
 	for i := range b {
-		b[i] = charsetForPKCE[i%len(charsetForPKCE)]
+		b[i] = charsetForPKCE[b[i]%byte(len(charsetForPKCE))]
 	}
 	return string(b)
 }

@@ -11,25 +11,31 @@ const roomCodeCharset = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ" // 34 chars, exclud
 // pow34Mod7[i] = 34^i mod 7. Since 34 mod 7 = 6, the pattern is 1,6,1,6,...
 var pow34Mod7 = [16]int{1, 6, 1, 6, 1, 6, 1, 6, 1, 6, 1, 6, 1, 6, 1, 6}
 
+var charToValueTable [256]int8
+
+func init() {
+	for i := range charToValueTable {
+		charToValueTable[i] = -1
+	}
+	for i := 0; i < len(roomCodeCharset); i++ {
+		charToValueTable[roomCodeCharset[i]] = int8(i)
+	}
+}
+
 type RoomCode struct {
 	NetworkPart string // 8 chars: NNNN-NNNN (without dash)
 	SecretPart  string // 8 chars: SSSS-SSSS (without dash)
 }
 
-func charToValue(c byte) (int, bool) {
-	for i := 0; i < len(roomCodeCharset); i++ {
-		if roomCodeCharset[i] == c {
-			return i, true
-		}
-	}
-	return -1, false
+func charToValue(c byte) int {
+	return int(charToValueTable[c])
 }
 
 func isValidChecksum(chars [16]byte) bool {
 	sum := 0
 	for i := 0; i < 16; i++ {
-		v, ok := charToValue(chars[i])
-		if !ok {
+		v := charToValue(chars[i])
+		if v < 0 {
 			return false
 		}
 		sum += v * pow34Mod7[i]
@@ -79,7 +85,7 @@ func ParseRoomCode(s string) (*RoomCode, error) {
 	var chars [16]byte
 	for i := 0; i < 16; i++ {
 		c := clean[i]
-		if _, ok := charToValue(c); !ok {
+		if charToValue(c) < 0 {
 			return nil, fmt.Errorf("房间代码包含无效字符: %c", c)
 		}
 		chars[i] = c

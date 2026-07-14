@@ -77,14 +77,6 @@ func main() {
 		naidsSecret = os.Getenv("NAIDS_CLIENT_SECRET")
 	}
 
-	// If --service flag is present, run in service-only mode without GUI.
-	for _, arg := range os.Args[1:] {
-		if arg == "--service" {
-			slog.Info("Running in service mode (no GUI)")
-			return
-		}
-	}
-
 	// Redirect GravityCone logs to file (separate from EasyTier noise)
 	if exe, err := os.Executable(); err == nil {
 		logDir := filepath.Join(filepath.Dir(exe), "logs")

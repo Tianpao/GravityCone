@@ -604,83 +604,14 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 	// 4. We already have a working TCP connection from discoverHostAndConnect
 	conn := s.guestConn
 
-	// 5. Send c:player_ping immediately
 	easytierID := ""
 	if peerID, err := manager.GetPeerID(); err == nil {
 		easytierID = peerID
 	}
 
-	pingData, _ := json.Marshal(PlayerInfo{
-		Name:       playerName,
-		MachineID:  machineID,
-		EasyTierID: easytierID,
-		Vendor:     MakeVendor(vendorPrefix),
-		Kind:       "GUEST",
-	})
-	if err := WriteProtocolRequest(conn, ProtocolPlayerPing, pingData); err != nil {
-		conn.Close()
-		manager.Stop()
-		return nil, fmt.Errorf("发送心跳失败: %w", err)
-	}
-	if _, _, err := ReadProtocolResponse(conn); err != nil {
-		conn.Close()
-		manager.Stop()
-		return nil, fmt.Errorf("心跳响应失败: %w", err)
-	}
-
-	// 6. Protocol negotiation
-	supportedProtocols := strings.Join([]string{
-		ProtocolPing,
-		ProtocolProtocols,
-		ProtocolServerPort,
-		ProtocolPlayerPing,
-		ProtocolPlayerProfilesList,
-		ProtocolPlayerEasyTierID,
-	}, "\x00")
-	if err := WriteProtocolRequest(conn, ProtocolProtocols, []byte(supportedProtocols)); err != nil {
-		conn.Close()
-		manager.Stop()
-		return nil, fmt.Errorf("协议协商失败: %w", err)
-	}
-	status, respBody, err := ReadProtocolResponse(conn)
-	if err != nil || status != StatusOK {
-		conn.Close()
-		manager.Stop()
-		return nil, fmt.Errorf("协议协商失败")
-	}
-	negotiated := strings.Split(string(respBody), "\x00")
-	negotiatedEasyTierID := false
-	for _, p := range negotiated {
-		if p == ProtocolPlayerEasyTierID {
-			negotiatedEasyTierID = true
-		}
-	}
-
-	s.reportJoinProgress("handshaking")
-
-	// 7. Get MC server port
-	if err := WriteProtocolRequest(conn, ProtocolServerPort, nil); err != nil {
-		conn.Close()
-		manager.Stop()
-		return nil, fmt.Errorf("获取服务器端口失败: %w", err)
-	}
-	status, respBody, err = ReadProtocolResponse(conn)
+	negotiatedEasyTierID, mcPort, err := s.joinHandshake(conn, manager, machineID, playerName, easytierID, vendorPrefix)
 	if err != nil {
-		conn.Close()
-		manager.Stop()
-		return nil, fmt.Errorf("获取服务器端口失败: %w", err)
-	}
-	if status == StatusServerNotStarted {
-		// Server not started yet, we'll keep trying later
-	} else if status != StatusOK || len(respBody) < 2 {
-		conn.Close()
-		manager.Stop()
-		return nil, fmt.Errorf("获取服务器端口失败: 状态=%d", status)
-	}
-
-	var mcPort uint16
-	if status == StatusOK && len(respBody) >= 2 {
-		mcPort = uint16(respBody[0])<<8 | uint16(respBody[1])
+		return nil, err
 	}
 
 	// 8. Store state and start heartbeat (MC port-forward is set up asynchronously)
@@ -717,7 +648,6 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 
 func (s *ScaffoldingService) discoverHostAndConnect(manager *easytier.EasyTierManager, timeout time.Duration) (string, uint16, error) {
 	deadline := time.Now().Add(timeout)
-	prefix := "scaffolding-mc-server-"
 
 	var lastErr error
 	var prevForwardProto string
@@ -726,67 +656,28 @@ func (s *ScaffoldingService) discoverHostAndConnect(manager *easytier.EasyTierMa
 
 	for time.Now().Before(deadline) {
 		s.reportJoinProgress("waiting_peer")
-		// Check if cancelled
 		if s.joinCancelled.Load() {
 			return "", 0, fmt.Errorf("加入已取消")
 		}
-		// Check if process exited
 		if !manager.IsRunning() {
 			return "", 0, fmt.Errorf("easytier-core 进程已退出")
 		}
 
-		// Find HOST by scanning peers
-		hostIP, scaffoldingPort, err := manager.FindPeerByHostnamePrefix(prefix)
+		hostIP, scaffoldingPort, err := manager.FindPeerByHostnamePrefix("scaffolding-mc-server-")
 		if err != nil {
 			lastErr = err
 			time.Sleep(2 * time.Second)
 			continue
 		}
 
-		// Try direct localhost first (same-machine shortcut, bypasses P2P).
-		directConn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", scaffoldingPort), 2*time.Second)
-		if err == nil {
-			if WriteProtocolRequest(directConn, ProtocolPing, nil) == nil {
-				if _, _, err := ReadProtocolResponse(directConn); err == nil {
-					slog.Info("connected via direct localhost", "port", scaffoldingPort)
-					s.guestMu.Lock()
-					s.guestConn = directConn
-					s.guestScaffoldingLocalPort = scaffoldingPort
-					s.guestDirectLocal = true
-					s.guestMu.Unlock()
-					return hostIP, scaffoldingPort, nil
-				}
-			}
-			directConn.Close()
+		if s.tryDirectLocalhost(scaffoldingPort) {
+			slog.Info("connected via direct localhost", "port", scaffoldingPort)
+			return hostIP, scaffoldingPort, nil
 		}
 
-		// Direct failed, fall back to EasyTier port-forward.
-		// Allocate a local port for port-forwarding to the host's scaffolding port
-		localListener, err := net.Listen("tcp", "127.0.0.1:0")
+		localPort, conn, err := s.tryP2PConnect(manager, hostIP, scaffoldingPort)
 		if err != nil {
-			return "", 0, fmt.Errorf("分配本地端口失败: %w", err)
-		}
-		localPort := uint16(localListener.Addr().(*net.TCPAddr).Port)
-		localListener.Close()
-
-		// Remove previous failed port-forward before adding a new one.
-		if prevForwardProto != "" {
-			manager.RemovePortForward(prevForwardProto, prevForwardLocal, prevForwardRemote)
-			prevForwardProto = ""
-		}
-
-		// Set up port-forward: local 0.0.0.0:localPort -> virtualIP:scaffoldingPort
-		if err := manager.AddPortForward("tcp",
-			fmt.Sprintf("0.0.0.0:%d", localPort),
-			fmt.Sprintf("%s:%d", hostIP, scaffoldingPort),
-		); err != nil {
-			return "", 0, fmt.Errorf("添加脚手架端口转发失败: %w", err)
-		}
-
-		// Connect via localhost through the port-forward
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", localPort), 5*time.Second)
-		if err != nil {
-			lastErr = fmt.Errorf("TCP连接失败 (127.0.0.1:%d -> %s:%d): %w", localPort, hostIP, scaffoldingPort, err)
+			lastErr = err
 			prevForwardProto = "tcp"
 			prevForwardLocal = fmt.Sprintf("0.0.0.0:%d", localPort)
 			prevForwardRemote = fmt.Sprintf("%s:%d", hostIP, scaffoldingPort)
@@ -794,28 +685,6 @@ func (s *ScaffoldingService) discoverHostAndConnect(manager *easytier.EasyTierMa
 			continue
 		}
 
-		// Verify the connection is actually usable. TCP handshake can succeed
-		// even when the underlying P2P tunnel isn't ready yet.
-		if err := WriteProtocolRequest(conn, ProtocolPing, nil); err != nil {
-			conn.Close()
-			lastErr = fmt.Errorf("P2P隧道验证失败: %w", err)
-			prevForwardProto = "tcp"
-			prevForwardLocal = fmt.Sprintf("0.0.0.0:%d", localPort)
-			prevForwardRemote = fmt.Sprintf("%s:%d", hostIP, scaffoldingPort)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		if _, _, err := ReadProtocolResponse(conn); err != nil {
-			conn.Close()
-			lastErr = fmt.Errorf("P2P隧道验证失败: %w", err)
-			prevForwardProto = "tcp"
-			prevForwardLocal = fmt.Sprintf("0.0.0.0:%d", localPort)
-			prevForwardRemote = fmt.Sprintf("%s:%d", hostIP, scaffoldingPort)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-
-		// Connected and verified! Clean up any previously-failed forward.
 		if prevForwardProto != "" {
 			manager.RemovePortForward(prevForwardProto, prevForwardLocal, prevForwardRemote)
 		}
@@ -830,54 +699,155 @@ func (s *ScaffoldingService) discoverHostAndConnect(manager *easytier.EasyTierMa
 	return "", 0, lastErr
 }
 
-func (s *ScaffoldingService) LeaveRoom() error {
+func (s *ScaffoldingService) tryDirectLocalhost(scaffoldingPort uint16) bool {
+	directConn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", scaffoldingPort), 2*time.Second)
+	if err != nil {
+		return false
+	}
+	if WriteProtocolRequest(directConn, ProtocolPing, nil) != nil {
+		directConn.Close()
+		return false
+	}
+	if _, _, err := ReadProtocolResponse(directConn); err != nil {
+		directConn.Close()
+		return false
+	}
 	s.guestMu.Lock()
-	alreadyStopped := !s.guestRunning
-	if !alreadyStopped {
-		close(s.guestStopCh)
-		s.guestRunning = false
-		s.guestHeartbeating = false
-		if s.guestConn != nil {
-			s.guestConn.Close()
-			s.guestConn = nil
-		}
-		if s.guestFakeServer != nil {
-			s.guestFakeServer.Stop()
-			s.guestFakeServer = nil
+	s.guestConn = directConn
+	s.guestScaffoldingLocalPort = scaffoldingPort
+	s.guestDirectLocal = true
+	s.guestMu.Unlock()
+	return true
+}
+
+func (s *ScaffoldingService) tryP2PConnect(manager *easytier.EasyTierManager, hostIP string, scaffoldingPort uint16) (uint16, net.Conn, error) {
+	localListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, nil, fmt.Errorf("分配本地端口失败: %w", err)
+	}
+	localPort := uint16(localListener.Addr().(*net.TCPAddr).Port)
+	localListener.Close()
+
+	if err := manager.AddPortForward("tcp",
+		fmt.Sprintf("0.0.0.0:%d", localPort),
+		fmt.Sprintf("%s:%d", hostIP, scaffoldingPort),
+	); err != nil {
+		return 0, nil, fmt.Errorf("添加Scaffolding端口转发失败: %w", err)
+	}
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", localPort), 5*time.Second)
+	if err != nil {
+		return localPort, nil, fmt.Errorf("TCP连接失败 (127.0.0.1:%d -> %s:%d): %w", localPort, hostIP, scaffoldingPort, err)
+	}
+
+	if err := WriteProtocolRequest(conn, ProtocolPing, nil); err != nil {
+		conn.Close()
+		return localPort, nil, fmt.Errorf("P2P隧道验证失败: %w", err)
+	}
+	if _, _, err := ReadProtocolResponse(conn); err != nil {
+		conn.Close()
+		return localPort, nil, fmt.Errorf("P2P隧道验证失败: %w", err)
+	}
+
+	return localPort, conn, nil
+}
+
+func (s *ScaffoldingService) joinHandshake(conn net.Conn, manager *easytier.EasyTierManager, machineID, playerName, easytierID, vendorPrefix string) (bool, uint16, error) {
+	// Send c:player_ping
+	pingData, _ := json.Marshal(PlayerInfo{
+		Name:       playerName,
+		MachineID:  machineID,
+		EasyTierID: easytierID,
+		Vendor:     MakeVendor(vendorPrefix),
+		Kind:       "GUEST",
+	})
+	if err := WriteProtocolRequest(conn, ProtocolPlayerPing, pingData); err != nil {
+		conn.Close()
+		manager.Stop()
+		return false, 0, fmt.Errorf("发送心跳失败: %w", err)
+	}
+	if _, _, err := ReadProtocolResponse(conn); err != nil {
+		conn.Close()
+		manager.Stop()
+		return false, 0, fmt.Errorf("心跳响应失败: %w", err)
+	}
+
+	// Protocol negotiation
+	supportedProtocols := strings.Join([]string{
+		ProtocolPing,
+		ProtocolProtocols,
+		ProtocolServerPort,
+		ProtocolPlayerPing,
+		ProtocolPlayerProfilesList,
+		ProtocolPlayerEasyTierID,
+	}, "\x00")
+	if err := WriteProtocolRequest(conn, ProtocolProtocols, []byte(supportedProtocols)); err != nil {
+		conn.Close()
+		manager.Stop()
+		return false, 0, fmt.Errorf("协议协商失败: %w", err)
+	}
+	status, respBody, err := ReadProtocolResponse(conn)
+	if err != nil || status != StatusOK {
+		conn.Close()
+		manager.Stop()
+		return false, 0, fmt.Errorf("协议协商失败")
+	}
+	negotiated := strings.Split(string(respBody), "\x00")
+	negotiatedEasyTierID := false
+	for _, p := range negotiated {
+		if p == ProtocolPlayerEasyTierID {
+			negotiatedEasyTierID = true
 		}
 	}
-	manager := s.guestManager
-	s.guestManager = nil
-	mcLocalPort := s.guestMCLocalPort
-	mcRemoteAddr := s.guestMCRemoteAddr
 
-	// Reset all guest state so a future JoinRoom starts from a clean slate.
-	s.guestDisconnectReason = ""
-	s.guestPlayers = nil
-	s.guestMCAddr = ""
-	s.guestMCPort = 0
-	s.guestRoomCode = nil
-	s.guestPlayerName = ""
-	s.guestNegotiatedEasyTierID = false
-	s.guestScaffoldingLocalPort = 0
-	s.guestDirectLocal = false
-	s.guestMCLocalPort = 0
-	s.guestMCRemoteAddr = ""
-	s.guestMotd = ""
+	s.reportJoinProgress("handshaking")
+
+	// Get MC server port
+	if err := WriteProtocolRequest(conn, ProtocolServerPort, nil); err != nil {
+		conn.Close()
+		manager.Stop()
+		return false, 0, fmt.Errorf("获取服务器端口失败: %w", err)
+	}
+	status, respBody, err = ReadProtocolResponse(conn)
+	if err != nil {
+		conn.Close()
+		manager.Stop()
+		return false, 0, fmt.Errorf("获取服务器端口失败: %w", err)
+	}
+	if status != StatusOK && status != StatusServerNotStarted {
+		conn.Close()
+		manager.Stop()
+		return false, 0, fmt.Errorf("获取服务器端口失败: 状态=%d", status)
+	}
+
+	var mcPort uint16
+	if status == StatusOK && len(respBody) >= 2 {
+		mcPort = uint16(respBody[0])<<8 | uint16(respBody[1])
+	}
+	return negotiatedEasyTierID, mcPort, nil
+}
+
+func (s *ScaffoldingService) LeaveRoom() error {
+	s.guestMu.Lock()
+	if s.guestRunning {
+		close(s.guestStopCh)
+	}
+	manager, mcLocalPort, mcRemoteAddr := s.resetGuestStateLocked("")
 	s.guestMu.Unlock()
 
-	// Remove MC port-forward rules before stopping EasyTier
+	s.cleanupGuestPortForwards(manager, mcLocalPort, mcRemoteAddr)
+	return nil
+}
+
+func (s *ScaffoldingService) cleanupGuestPortForwards(manager *easytier.EasyTierManager, mcLocalPort uint16, mcRemoteAddr string) {
 	if manager != nil && mcLocalPort != 0 && mcRemoteAddr != "" {
 		localAddr := fmt.Sprintf("0.0.0.0:%d", mcLocalPort)
 		manager.RemovePortForward("tcp", localAddr, mcRemoteAddr)
 		manager.RemovePortForward("udp", localAddr, mcRemoteAddr)
 	}
-
 	if manager != nil {
 		manager.Stop()
 	}
-
-	return nil
 }
 
 func (s *ScaffoldingService) GetConnectionStatus() (*ConnectionStatus, error) {
@@ -1074,6 +1044,14 @@ func (s *ScaffoldingService) setupMCPortForward(hostIP string, mcPort uint16) {
 func (s *ScaffoldingService) autoDisconnect(reason string) {
 	slog.Info("autoDisconnect", "reason", reason)
 	s.guestMu.Lock()
+	manager, mcLocalPort, mcRemoteAddr := s.resetGuestStateLocked(reason)
+	s.guestMu.Unlock()
+
+	s.eventEmitter.Emit("room.disconnected", map[string]string{"reason": reason})
+	s.cleanupGuestPortForwards(manager, mcLocalPort, mcRemoteAddr)
+}
+
+func (s *ScaffoldingService) resetGuestStateLocked(reason string) (*easytier.EasyTierManager, uint16, string) {
 	if s.guestConn != nil {
 		s.guestConn.Close()
 		s.guestConn = nil
@@ -1089,7 +1067,7 @@ func (s *ScaffoldingService) autoDisconnect(reason string) {
 	s.guestManager = nil
 	mcLocalPort := s.guestMCLocalPort
 	mcRemoteAddr := s.guestMCRemoteAddr
-	// Reset remaining guest state to allow a clean re-join.
+
 	s.guestPlayers = nil
 	s.guestMCAddr = ""
 	s.guestMCPort = 0
@@ -1101,20 +1079,8 @@ func (s *ScaffoldingService) autoDisconnect(reason string) {
 	s.guestMCLocalPort = 0
 	s.guestMCRemoteAddr = ""
 	s.guestMotd = ""
-	s.guestMu.Unlock()
-	// Emit room.disconnected event
-	s.eventEmitter.Emit("room.disconnected", map[string]string{"reason": reason})
 
-	// Remove MC port-forward rules before stopping EasyTier
-	if manager != nil && mcLocalPort != 0 && mcRemoteAddr != "" {
-		localAddr := fmt.Sprintf("0.0.0.0:%d", mcLocalPort)
-		manager.RemovePortForward("tcp", localAddr, mcRemoteAddr)
-		manager.RemovePortForward("udp", localAddr, mcRemoteAddr)
-	}
-
-	if manager != nil {
-		manager.Stop()
-	}
+	return manager, mcLocalPort, mcRemoteAddr
 }
 
 func (s *ScaffoldingService) refreshGuestPlayerList() {

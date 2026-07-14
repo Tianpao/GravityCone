@@ -232,13 +232,6 @@ func (s *LanService) VerifyServer(ip string, port int) (string, error) {
 	return resp.Version.Name, nil
 }
 
-func (s *LanService) CreateRoom(ip string, port int) error {
-	if _, err := s.VerifyServer(ip, port); err != nil {
-		return err
-	}
-	return fmt.Errorf("not implemented: starting easytier-core")
-}
-
 func parseMCPacket(data []byte, src *net.UDPAddr) LanServer {
 	msg := strings.TrimRight(string(data), "\x00\n\r")
 	motd := ""
