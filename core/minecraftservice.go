@@ -62,8 +62,6 @@ type xstsAuthResponse struct {
 
 type mcAuthResponse struct {
 	AccessToken string `json:"access_token"`
-	Username    string `json:"username"`
-	ExpiresIn   int    `json:"expires_in"`
 }
 
 type mcProfileResponse struct {
@@ -83,13 +81,15 @@ type minecraftSession struct {
 }
 
 type MinecraftService struct {
-	clientID      string
-	clientSecret  string
+	clientID       string
+	clientSecret   string
 	msAccessToken  string
 	msRefreshToken string
-	codeVerifier  string
-	User          *MinecraftUser
+	client         *http.Client
+	User           *MinecraftUser
 }
+
+var charsetForPKCE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
 
 func generateCodeVerifier() string {
 	b := make([]byte, 32)
@@ -98,8 +98,6 @@ func generateCodeVerifier() string {
 	}
 	return string(b)
 }
-
-var charsetForPKCE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
 
 func generateCodeChallenge(verifier string) string {
 	h := sha256.Sum256([]byte(verifier))
@@ -110,110 +108,77 @@ func NewMinecraftService(clientID, clientSecret string) *MinecraftService {
 	return &MinecraftService{
 		clientID:     clientID,
 		clientSecret: clientSecret,
+		client:       &http.Client{Timeout: msHTTPTimeout},
 	}
 }
 
-func (s *MinecraftService) sessionFilePath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "GravityCone", "minecraft_session.json"), nil
+func (s *MinecraftService) sessionFilePath() string {
+	dir, _ := os.UserConfigDir()
+	return filepath.Join(dir, "GravityCone", "minecraft_session.json")
 }
 
-func (s *MinecraftService) saveSession() error {
-	path, err := s.sessionFilePath()
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
+func (s *MinecraftService) saveSession() {
+	path := s.sessionFilePath()
+	_ = os.MkdirAll(filepath.Dir(path), 0700)
 	data := minecraftSession{
 		MSAccessToken:  s.msAccessToken,
 		MSRefreshToken: s.msRefreshToken,
 		User:           s.User,
 	}
-	b, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, b, 0600)
+	b, _ := json.Marshal(data)
+	_ = os.WriteFile(path, b, 0600)
 }
 
-func (s *MinecraftService) loadSession() error {
-	path, err := s.sessionFilePath()
-	if err != nil {
-		return err
-	}
+func (s *MinecraftService) loadSession() {
+	path := s.sessionFilePath()
 	b, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
+		return
 	}
 	var data minecraftSession
-	if err := json.Unmarshal(b, &data); err != nil {
-		return err
+	if json.Unmarshal(b, &data) != nil {
+		return
 	}
 	if data.MSAccessToken != "" && data.User != nil {
 		s.msAccessToken = data.MSAccessToken
 		s.msRefreshToken = data.MSRefreshToken
 		s.User = data.User
 	}
-	return nil
 }
 
-func (s *MinecraftService) clearSession() error {
-	path, err := s.sessionFilePath()
-	if err != nil {
-		return err
-	}
-	return os.Remove(path)
+func (s *MinecraftService) clearState() {
+	s.msAccessToken = ""
+	s.msRefreshToken = ""
+	s.User = nil
+	_ = os.Remove(s.sessionFilePath())
 }
 
 func (s *MinecraftService) RestoreSession() error {
-	if err := s.loadSession(); err != nil {
-		return err
-	}
+	s.loadSession()
 	if s.msAccessToken == "" || s.User == nil {
 		return nil
 	}
-	// Try the cached Minecraft token directly.
-	_, err := s.fetchMcProfile(s.User.AccessToken)
-	if err == nil {
-		_ = s.saveSession()
+	if _, err := s.fetchMcProfile(s.User.AccessToken); err == nil {
+		s.saveSession()
 		return nil
 	}
-	// Minecraft token expired — try refreshing the MS token and re-running the chain.
-	if refreshErr := s.refreshMsToken(); refreshErr != nil {
-		s.msAccessToken = ""
-		s.msRefreshToken = ""
-		s.User = nil
-		_ = s.clearSession()
+	if err := s.refreshMsToken(); err != nil {
+		s.clearState()
 		return nil
 	}
-	mcToken, chainErr := s.runTokenChain()
-	if chainErr != nil {
-		s.msAccessToken = ""
-		s.msRefreshToken = ""
-		s.User = nil
-		_ = s.clearSession()
+	mcToken, err := s.runTokenChain()
+	if err != nil {
+		s.clearState()
 		return nil
 	}
-	user, profileErr := s.fetchMcProfile(mcToken)
-	if profileErr != nil {
-		s.msAccessToken = ""
-		s.msRefreshToken = ""
-		s.User = nil
-		_ = s.clearSession()
+	user, err := s.fetchMcProfile(mcToken)
+	if err != nil {
+		s.clearState()
 		return nil
 	}
 	user.AccessToken = mcToken
 	s.User = user
-	_ = s.saveSession()
+	s.saveSession()
 	return nil
 }
 
@@ -229,9 +194,8 @@ func (s *MinecraftService) StartLogin() (*MinecraftUser, error) {
 	port := listener.Addr().(*net.TCPAddr).Port
 	redirectURI := fmt.Sprintf("http://localhost:%d/callback", port)
 
-	// Generate PKCE data
-	s.codeVerifier = generateCodeVerifier()
-	codeChallenge := generateCodeChallenge(s.codeVerifier)
+	codeVerifier := generateCodeVerifier()
+	codeChallenge := generateCodeChallenge(codeVerifier)
 
 	resultCh := make(chan string, 1)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -271,7 +235,7 @@ func (s *MinecraftService) StartLogin() (*MinecraftUser, error) {
 	select {
 	case code := <-resultCh:
 		srv.Shutdown(context.Background())
-		if err := s.exchangeCode(code, redirectURI); err != nil {
+		if err := s.exchangeCode(code, redirectURI, codeVerifier); err != nil {
 			return nil, fmt.Errorf("token exchange failed: %w", err)
 		}
 		mcToken, err := s.runTokenChain()
@@ -284,7 +248,7 @@ func (s *MinecraftService) StartLogin() (*MinecraftUser, error) {
 		}
 		user.AccessToken = mcToken
 		s.User = user
-		_ = s.saveSession()
+		s.saveSession()
 		return user, nil
 	case <-time.After(msLoginTimeout):
 		srv.Shutdown(context.Background())
@@ -297,13 +261,39 @@ func (s *MinecraftService) GetCurrentUser() *MinecraftUser {
 }
 
 func (s *MinecraftService) Logout() {
-	s.msAccessToken = ""
-	s.msRefreshToken = ""
-	s.User = nil
-	_ = s.clearSession()
+	s.clearState()
 }
 
-func (s *MinecraftService) exchangeCode(code, redirectURI string) error {
+func (s *MinecraftService) postTokenForm(data url.Values) (*msTokenResponse, error) {
+	req, _ := http.NewRequest("POST", msTokenURL, strings.NewReader(data.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var tokenResp msTokenResponse
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return nil, fmt.Errorf("invalid MS token response: %s", string(body))
+	}
+	if tokenResp.Error != "" {
+		return nil, fmt.Errorf("MS OAuth error: %s - %s", tokenResp.Error, tokenResp.ErrorDesc)
+	}
+	if tokenResp.AccessToken == "" {
+		return nil, fmt.Errorf("empty MS access token in response")
+	}
+	return &tokenResp, nil
+}
+
+func (s *MinecraftService) exchangeCode(code, redirectURI, codeVerifier string) error {
 	data := url.Values{}
 	data.Set("client_id", s.clientID)
 	data.Set("code", code)
@@ -311,39 +301,12 @@ func (s *MinecraftService) exchangeCode(code, redirectURI string) error {
 	data.Set("redirect_uri", redirectURI)
 	data.Set("client_secret", s.clientSecret)
 	data.Set("scope", msScopes)
-	if s.codeVerifier != "" {
-		data.Set("code_verifier", s.codeVerifier)
-	}
+	data.Set("code_verifier", codeVerifier)
 
-	req, err := http.NewRequest("POST", msTokenURL, strings.NewReader(data.Encode()))
+	tokenResp, err := s.postTokenForm(data)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := (&http.Client{Timeout: msHTTPTimeout}).Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	var tokenResp msTokenResponse
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return fmt.Errorf("invalid MS token response: %s", string(body))
-	}
-	if tokenResp.Error != "" {
-		return fmt.Errorf("MS OAuth error: %s - %s", tokenResp.Error, tokenResp.ErrorDesc)
-	}
-	if tokenResp.AccessToken == "" {
-		return fmt.Errorf("empty MS access token in response")
-	}
-
 	s.msAccessToken = tokenResp.AccessToken
 	s.msRefreshToken = tokenResp.RefreshToken
 	return nil
@@ -357,38 +320,43 @@ func (s *MinecraftService) refreshMsToken() error {
 	data.Set("grant_type", "refresh_token")
 	data.Set("scope", msScopes)
 
-	req, err := http.NewRequest("POST", msTokenURL, strings.NewReader(data.Encode()))
+	tokenResp, err := s.postTokenForm(data)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := (&http.Client{Timeout: msHTTPTimeout}).Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
-	var tokenResp msTokenResponse
-	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return fmt.Errorf("invalid MS refresh response: %s", string(body))
-	}
-	if tokenResp.Error != "" {
-		return fmt.Errorf("MS refresh error: %s - %s", tokenResp.Error, tokenResp.ErrorDesc)
-	}
-	if tokenResp.AccessToken == "" {
-		return fmt.Errorf("empty MS access token in refresh response")
-	}
-
 	s.msAccessToken = tokenResp.AccessToken
 	if tokenResp.RefreshToken != "" {
 		s.msRefreshToken = tokenResp.RefreshToken
+	}
+	return nil
+}
+
+func (s *MinecraftService) postJSON(endpoint string, reqBody any, resp any) error {
+	encoded, _ := json.Marshal(reqBody)
+	req, _ := http.NewRequest("POST", endpoint, bytes.NewReader(encoded))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if strings.HasPrefix(endpoint, "https://user.auth.xboxlive.com") || strings.HasPrefix(endpoint, "https://xsts.auth.xboxlive.com") {
+		req.Header.Set("x-xbl-contract-version", "1")
+	}
+
+	httpResp, err := s.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer httpResp.Body.Close()
+
+	body, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return err
+	}
+
+	if httpResp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d from %s: %s", httpResp.StatusCode, endpoint, string(body))
+	}
+
+	if err := json.Unmarshal(body, resp); err != nil {
+		return fmt.Errorf("invalid response from %s: %s", endpoint, string(body))
 	}
 	return nil
 }
@@ -426,37 +394,9 @@ func (s *MinecraftService) exchangeMsTokenForXbl() (string, error) {
 	reqBody.Properties.SiteName = "user.auth.xboxlive.com"
 	reqBody.Properties.RpsTicket = "d=" + s.msAccessToken
 
-	encoded, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", err
-	}
-
-	req, err := http.NewRequest("POST", xblAuthURL, bytes.NewReader(encoded))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("x-xbl-contract-version", "1")
-
-	resp, err := (&http.Client{Timeout: msHTTPTimeout}).Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("XBL auth failed (HTTP %d): %s", resp.StatusCode, string(body))
-	}
-
 	var xblResp xblAuthResponse
-	if err := json.Unmarshal(body, &xblResp); err != nil {
-		return "", fmt.Errorf("invalid XBL response: %s", string(body))
+	if err := s.postJSON(xblAuthURL, &reqBody, &xblResp); err != nil {
+		return "", err
 	}
 	if xblResp.Token == "" {
 		return "", fmt.Errorf("empty XBL token in response")
@@ -464,7 +404,7 @@ func (s *MinecraftService) exchangeMsTokenForXbl() (string, error) {
 	return xblResp.Token, nil
 }
 
-func (s *MinecraftService) exchangeXblForXsts(xblToken string) (xstsToken string, userhash string, err error) {
+func (s *MinecraftService) exchangeXblForXsts(xblToken string) (string, string, error) {
 	reqBody := struct {
 		Properties struct {
 			SandboxId  string   `json:"SandboxId"`
@@ -479,37 +419,9 @@ func (s *MinecraftService) exchangeXblForXsts(xblToken string) (xstsToken string
 	reqBody.Properties.SandboxId = "RETAIL"
 	reqBody.Properties.UserTokens = []string{xblToken}
 
-	encoded, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", "", err
-	}
-
-	req, err := http.NewRequest("POST", xstsAuthURL, bytes.NewReader(encoded))
-	if err != nil {
-		return "", "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("x-xbl-contract-version", "1")
-
-	resp, err := (&http.Client{Timeout: msHTTPTimeout}).Do(req)
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", "", err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("XSTS auth failed (HTTP %d): %s", resp.StatusCode, string(body))
-	}
-
 	var xstsResp xstsAuthResponse
-	if err := json.Unmarshal(body, &xstsResp); err != nil {
-		return "", "", fmt.Errorf("invalid XSTS response: %s", string(body))
+	if err := s.postJSON(xstsAuthURL, &reqBody, &xstsResp); err != nil {
+		return "", "", err
 	}
 	if xstsResp.Token == "" {
 		return "", "", fmt.Errorf("empty XSTS token in response")
@@ -517,49 +429,21 @@ func (s *MinecraftService) exchangeXblForXsts(xblToken string) (xstsToken string
 	if len(xstsResp.DisplayClaims.XUI) == 0 || xstsResp.DisplayClaims.XUI[0].UHS == "" {
 		return "", "", fmt.Errorf("missing user hash (UHS) in XSTS response")
 	}
-
 	return xstsResp.Token, xstsResp.DisplayClaims.XUI[0].UHS, nil
 }
 
 func (s *MinecraftService) exchangeXstsForMcToken(xstsToken, userhash string) (string, error) {
 	reqBody := struct {
-		IdentityToken      string `json:"identityToken"`
-		EnsureLegacyEnabled bool  `json:"ensureLegacyEnabled"`
+		IdentityToken       string `json:"identityToken"`
+		EnsureLegacyEnabled bool   `json:"ensureLegacyEnabled"`
 	}{
-		IdentityToken:      fmt.Sprintf("XBL3.0 x=%s;%s", userhash, xstsToken),
+		IdentityToken:       fmt.Sprintf("XBL3.0 x=%s;%s", userhash, xstsToken),
 		EnsureLegacyEnabled: true,
 	}
 
-	encoded, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", err
-	}
-
-	req, err := http.NewRequest("POST", mcAuthURL, bytes.NewReader(encoded))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := (&http.Client{Timeout: msHTTPTimeout}).Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Minecraft auth failed (HTTP %d): %s", resp.StatusCode, string(body))
-	}
-
 	var mcResp mcAuthResponse
-	if err := json.Unmarshal(body, &mcResp); err != nil {
-		return "", fmt.Errorf("invalid Minecraft auth response: %s", string(body))
+	if err := s.postJSON(mcAuthURL, &reqBody, &mcResp); err != nil {
+		return "", err
 	}
 	if mcResp.AccessToken == "" {
 		return "", fmt.Errorf("empty Minecraft access token in response")
@@ -568,13 +452,10 @@ func (s *MinecraftService) exchangeXstsForMcToken(xstsToken, userhash string) (s
 }
 
 func (s *MinecraftService) fetchMcProfile(accessToken string) (*MinecraftUser, error) {
-	req, err := http.NewRequest("GET", mcProfileURL, nil)
-	if err != nil {
-		return nil, err
-	}
+	req, _ := http.NewRequest("GET", mcProfileURL, nil)
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 
-	resp, err := (&http.Client{Timeout: msHTTPTimeout}).Do(req)
+	resp, err := s.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -611,7 +492,7 @@ func (s *MinecraftService) fetchMcProfile(accessToken string) (*MinecraftUser, e
 
 	var avatarPNG string
 	if skinURL != "" {
-		avatarPNG, _ = cropAvatarFromSkin(skinURL)
+		avatarPNG = cropAvatarFromSkin(skinURL)
 	}
 
 	return &MinecraftUser{
@@ -621,80 +502,61 @@ func (s *MinecraftService) fetchMcProfile(accessToken string) (*MinecraftUser, e
 	}, nil
 }
 
-// cropAvatarFromSkin downloads a Minecraft skin texture and crops the head
-// region into a base64-encoded PNG. The output is 10x8 (scaled) to include
-// the hat/overlay side extensions visible in 3D front view.
-func cropAvatarFromSkin(skinURL string) (string, error) {
+func cropAvatarFromSkin(skinURL string) string {
 	resp, err := (&http.Client{Timeout: msHTTPTimeout}).Get(skinURL)
 	if err != nil {
-		return "", err
+		return ""
 	}
 	defer resp.Body.Close()
 
 	img, err := png.Decode(resp.Body)
 	if err != nil {
-		return "", err
+		return ""
 	}
 
-	bounds := img.Bounds()
-	is64x64 := bounds.Dy() >= 64
-
-	// Output dimensions: 10x8 to include hat side extensions (1px each side)
-	scale := 8
-	faceW, faceH := 10, 8
-	outW := faceW * scale
-	outH := faceH * scale
+	const scale = 8
+	outW := 10 * scale
+	outH := 8 * scale
 	out := image.NewNRGBA(image.Rect(0, 0, outW, outH))
 
-	// Helper to draw a source column to a destination column
-	drawColumn := func(srcX, srcYBase, dstCol int) {
+	drawBlock := func(srcX, srcY, dstCol, w int, skipTransparent bool) {
 		for dy := 0; dy < 8; dy++ {
-			c := color.NRGBAModel.Convert(img.At(srcX, srcYBase+dy)).(color.NRGBA)
-			if c.A == 0 {
-				continue
-			}
-			for sy := 0; sy < scale; sy++ {
-				for sx := 0; sx < scale; sx++ {
-					out.SetNRGBA(dstCol*scale+sx, dy*scale+sy, c)
-				}
-			}
-		}
-	}
-
-	// Helper to draw an 8x8 block at a destination offset
-	drawBlock := func(srcX, srcYBase, dstColOffset int, skipTransparent bool) {
-		for dy := 0; dy < 8; dy++ {
-			for dx := 0; dx < 8; dx++ {
-				c := color.NRGBAModel.Convert(img.At(srcX+dx, srcYBase+dy)).(color.NRGBA)
+			for dx := 0; dx < w; dx++ {
+				c := color.NRGBAModel.Convert(img.At(srcX+dx, srcY+dy)).(color.NRGBA)
 				if skipTransparent && c.A == 0 {
 					continue
 				}
+				// Fill the scale×scale block directly in Pix
+				baseY := (dy * scale) * out.Stride
+				baseX := (dstCol+dx)*scale*4 + baseY
 				for sy := 0; sy < scale; sy++ {
+					rowOff := baseX + sy*out.Stride
 					for sx := 0; sx < scale; sx++ {
-						out.SetNRGBA((dx+dstColOffset)*scale+sx, dy*scale+sy, c)
+						off := rowOff + sx*4
+						out.Pix[off] = c.R
+						out.Pix[off+1] = c.G
+						out.Pix[off+2] = c.B
+						out.Pix[off+3] = c.A
 					}
 				}
 			}
 		}
 	}
 
-	// Base head layer: 8x8 at (8,8), centered in the 10x8 output (offset by 1 col)
-	drawBlock(8, 8, 1, false)
+	// Base head front: 8×8 at (8,8), centered at output column 1
+	drawBlock(8, 8, 1, 8, false)
+	// Hat overlay front: 8×8 at (40,8), over the base head
+	drawBlock(40, 8, 1, 8, true)
 
-	// Hat overlay front: 8x8 at (40,8), centered over the base head
-	drawBlock(40, 8, 1, true)
-
-	// Hat side extensions for 64x64 skins (Modern 1.8+ format)
-	if is64x64 {
-		// Column 0 (left of face): rightmost column of hat right side (x=39)
-		// Column 9 (right of face): leftmost column of hat left side (x=48)
-		drawColumn(39, 8, 0)
-		drawColumn(48, 8, 9)
+	if img.Bounds().Dy() >= 64 {
+		// Hat side extensions (1px wide each)
+		drawBlock(39, 8, 0, 1, true)
+		drawBlock(48, 8, 9, 1, true)
 	}
 
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, out); err != nil {
-		return "", err
+	if png.Encode(&buf, out) != nil {
+		return ""
 	}
-	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 }
