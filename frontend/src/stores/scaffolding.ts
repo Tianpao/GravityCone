@@ -1,6 +1,9 @@
 import { defineStore } from 'pinia'
+import { Events } from '@wailsio/runtime'
 import { CreateRoom, StopRoom, GetRoomStatus, JoinRoom, LeaveRoom, GetConnectionStatus, CancelJoin } from '@/../bindings/gravitycone/core/protocol/scaffolding/scaffoldingservice'
 import type { RoomStatus, ConnectionStatus } from '@/../bindings/gravitycone/core/protocol/scaffolding/models'
+
+type EventUnsubscriber = () => void
 
 export const useScaffoldingStore = defineStore('scaffolding', {
   state: () => ({
@@ -12,6 +15,9 @@ export const useScaffoldingStore = defineStore('scaffolding', {
     connectionStatus: null as ConnectionStatus | null,
     joining: false,
     guestError: '',
+    // Event listeners
+    _hostUnsubscribers: [] as EventUnsubscriber[],
+    _guestUnsubscribers: [] as EventUnsubscriber[],
   }),
 
   getters: {
@@ -27,6 +33,7 @@ export const useScaffoldingStore = defineStore('scaffolding', {
       try {
         const result = await CreateRoom(mcPort, playerName, 'GravityCone v1.0.0', '')
         this.roomStatus = result
+        this.startHostEvents()
       } catch (e: any) {
         this.hostError = e?.message || String(e)
         throw e
@@ -36,6 +43,7 @@ export const useScaffoldingStore = defineStore('scaffolding', {
     },
 
     async stopRoom() {
+      this.stopHostEvents()
       try {
         await StopRoom()
       } catch {}
@@ -53,7 +61,51 @@ export const useScaffoldingStore = defineStore('scaffolding', {
       }
     },
 
+    startHostEvents() {
+      this.stopHostEvents()
+
+      // Wails sends raw event data (not WailsEvent wrapper) at runtime
+      const unsub1 = Events.On('room.player_joined', (player: any) => {
+        if (!this.roomStatus) return
+        const players = this.roomStatus.players ?? []
+        if (!players.find(p => p.machine_id === player.machine_id)) {
+          this.roomStatus = {
+            ...this.roomStatus,
+            players: [...players, player],
+            online_count: players.length + 1,
+          }
+        }
+      }) as unknown as EventUnsubscriber
+
+      const unsub2 = Events.On('room.player_left', (player: any) => {
+        if (!this.roomStatus) return
+        const players = this.roomStatus.players ?? []
+        const filtered = players.filter(p => p.machine_id !== player.machine_id)
+        this.roomStatus = {
+          ...this.roomStatus,
+          players: filtered,
+          online_count: filtered.length,
+        }
+      }) as unknown as EventUnsubscriber
+
+      const unsub3 = Events.On('room.closed', (data: any) => {
+        this.hostError = data.reason
+        this.roomStatus = null
+        this.stopHostEvents()
+      }) as unknown as EventUnsubscriber
+
+      this._hostUnsubscribers = [unsub1, unsub2, unsub3]
+    },
+
+    stopHostEvents() {
+      for (const unsub of this._hostUnsubscribers) {
+        try { unsub() } catch {}
+      }
+      this._hostUnsubscribers = []
+    },
+
     async cancelJoin() {
+      this.stopGuestEvents()
       try {
         await CancelJoin()
       } catch {}
@@ -65,6 +117,7 @@ export const useScaffoldingStore = defineStore('scaffolding', {
       try {
         const result = await JoinRoom(roomCode, playerName, 'GravityCone v1.0.0', '')
         this.connectionStatus = result
+        this.startGuestEvents()
       } catch (e: any) {
         this.guestError = e?.message || String(e)
         throw e
@@ -74,6 +127,7 @@ export const useScaffoldingStore = defineStore('scaffolding', {
     },
 
     async leaveRoom() {
+      this.stopGuestEvents()
       try {
         await LeaveRoom()
       } catch {}
@@ -93,7 +147,32 @@ export const useScaffoldingStore = defineStore('scaffolding', {
       } catch {}
     },
 
+    startGuestEvents() {
+      this.stopGuestEvents()
+
+      const unsub = Events.On('room.disconnected', (data: any) => {
+        if (this.connectionStatus) {
+          this.connectionStatus = {
+            ...this.connectionStatus,
+            connected: false,
+            disconnect_reason: data.reason,
+          }
+        }
+      }) as unknown as EventUnsubscriber
+
+      this._guestUnsubscribers = [unsub]
+    },
+
+    stopGuestEvents() {
+      for (const unsub of this._guestUnsubscribers) {
+        try { unsub() } catch {}
+      }
+      this._guestUnsubscribers = []
+    },
+
     reset() {
+      this.stopHostEvents()
+      this.stopGuestEvents()
       this.$reset()
     },
   },

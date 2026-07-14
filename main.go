@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -27,12 +26,24 @@ var (
 	msClientSecret string
 )
 
+// Naids OAuth2 credentials — same pattern as Microsoft credentials above.
+// Falls back to NAIDS_CLIENT_ID / NAIDS_CLIENT_SECRET env vars (or .env file) if empty.
+var (
+	naidsClientID     string
+	naidsClientSecret string
+)
+
 //go:embed all:frontend/dist
 var assets embed.FS
 
 func init() {
-	application.RegisterEvent[string]("time")
 	application.RegisterEvent[easytier.DownloadProgressData]("download.progress")
+	application.RegisterEvent[scaffolding.PlayerInfo]("room.player_joined")
+	application.RegisterEvent[scaffolding.PlayerInfo]("room.player_left")
+	application.RegisterEvent[map[string]string]("room.closed")
+	application.RegisterEvent[map[string]string]("room.disconnected")
+	application.RegisterEvent[minecraft.LanServer]("lan.server_found")
+	application.RegisterEvent[map[string]interface{}]("lan.server_lost")
 }
 
 func main() {
@@ -50,6 +61,20 @@ func main() {
 	}
 	if clientSecret == "" {
 		clientSecret = os.Getenv("MS_CLIENT_SECRET")
+	}
+
+	// Resolve Naids credentials: ldflags > env vars
+	// client_id "gravitycone" is the public identifier; client_secret must be injected at build time.
+	naidsID := naidsClientID
+	naidsSecret := naidsClientSecret
+	if naidsID == "" {
+		naidsID = os.Getenv("NAIDS_CLIENT_ID")
+		if naidsID == "" {
+			naidsID = "gravitycone"
+		}
+	}
+	if naidsSecret == "" {
+		naidsSecret = os.Getenv("NAIDS_CLIENT_SECRET")
 	}
 
 	// If --service flag is present, run in service-only mode without GUI.
@@ -74,8 +99,9 @@ func main() {
 		easytier.SetEasyTierLogOutput(filepath.Join(logDir, "easytier.log"))
 	}
 
-	natayarkSvc := &account.NatayarkService{}
+	natayarkSvc := account.NewNatayarkService(naidsID, naidsSecret)
 	minecraftSvc := account.NewMinecraftService(clientID, clientSecret)
+	lanSvc := minecraft.NewLanService(nil)
 	scaffoldingSvc := scaffolding.NewScaffoldingService(nil) // nil = NilEventEmitter; Wails frontend polls via method calls
 
 	app := application.New(application.Options{
@@ -83,7 +109,7 @@ func main() {
 		Description: "A demo of using raw HTML & CSS",
 		Services: []application.Service{
 			application.NewService(&easytier.StunService{}),
-			application.NewService(minecraft.NewLanService(nil)),
+			application.NewService(lanSvc),
 			application.NewService(natayarkSvc),
 			application.NewService(minecraftSvc),
 			application.NewService(scaffoldingSvc),
@@ -100,6 +126,7 @@ func main() {
 
 	// Wire up Wails event emitters now that app exists
 	wailsEmitter := &wailsEventEmitter{app: app}
+	lanSvc.SetEventEmitter(wailsEmitter)
 	scaffolding.InitScaffoldingEmitter(scaffoldingSvc, wailsEmitter)
 	easytier.SetEnsureEasyTierEmitter(wailsEmitter)
 
@@ -127,14 +154,6 @@ func main() {
 		BackgroundColour: application.NewRGB(6, 7, 15),
 		URL:              "/",
 	})
-
-	go func() {
-		for {
-			now := time.Now().Format(time.RFC1123)
-			app.Event.Emit("time", now)
-			time.Sleep(time.Second)
-		}
-	}()
 
 	if err := natayarkSvc.RestoreSession(); err != nil {
 		slog.Warn("failed to restore session", "error", err)

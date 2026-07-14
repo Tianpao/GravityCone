@@ -22,8 +22,6 @@ const (
 	natayarkAuthorizeURL = "https://account.naids.com/oauth2/authorize"
 	natayarkTokenURL     = "https://account.naids.com/api/oauth2/token"
 	natayarkUserDataURL  = "https://account.naids.com/api/api/user/data"
-	natayarkClientID     = "gravitycone"
-	natayarkClientSecret = "ec9080b65cd9c5076f964c27da992def"
 )
 
 type NatayarkUser struct {
@@ -44,8 +42,17 @@ type natayarkAPIResponse struct {
 }
 
 type NatayarkService struct {
-	accessToken string
-	User        *NatayarkUser
+	clientID     string
+	clientSecret string
+	accessToken  string
+	User         *NatayarkUser
+}
+
+func NewNatayarkService(clientID, clientSecret string) *NatayarkService {
+	return &NatayarkService{
+		clientID:     clientID,
+		clientSecret: clientSecret,
+	}
 }
 
 func (s *NatayarkService) sessionFilePath() string {
@@ -112,6 +119,10 @@ func (s *NatayarkService) clearSession() {
 }
 
 func (s *NatayarkService) StartLogin() (*NatayarkUser, error) {
+	if s.clientID == "" || s.clientSecret == "" {
+		return nil, fmt.Errorf("Naids OAuth2 credentials not configured")
+	}
+
 	listener, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
 		return nil, fmt.Errorf("failed to start callback server: %w", err)
@@ -139,7 +150,7 @@ func (s *NatayarkService) StartLogin() (*NatayarkUser, error) {
 	go srv.Serve(listener)
 
 	authURL := fmt.Sprintf("%s?response_type=code&redirect_uri=%s&client_id=%s",
-		natayarkAuthorizeURL, redirectURI, natayarkClientID)
+		natayarkAuthorizeURL, redirectURI, s.clientID)
 
 	if err := openBrowser(authURL); err != nil {
 		srv.Shutdown(context.Background())
@@ -178,7 +189,7 @@ func (s *NatayarkService) Logout() {
 }
 
 func (s *NatayarkService) exchangeCode(code string, redirectURI string) (string, error) {
-	hashedSecret, err := bcrypt.GenerateFromPassword([]byte(natayarkClientSecret), bcrypt.DefaultCost)
+	hashedSecret, err := bcrypt.GenerateFromPassword([]byte(s.clientSecret), bcrypt.DefaultCost)
 	if err != nil {
 		return "", fmt.Errorf("failed to hash client_secret: %w", err)
 	}
@@ -191,7 +202,7 @@ func (s *NatayarkService) exchangeCode(code string, redirectURI string) (string,
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("code", code)
-	data.Set("client_id", natayarkClientID)
+	data.Set("client_id", s.clientID)
 	data.Set("client_secret", hashed)
 	data.Set("redirect_uri", redirectURI)
 

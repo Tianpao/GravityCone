@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch, ref } from 'vue'
+import { onMounted, watch, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useScaffoldingStore } from '@/stores/scaffolding'
 import {
@@ -17,21 +17,17 @@ import { CopyOutline, LogOutOutline, CheckmarkOutline } from '@vicons/ionicons5'
 const router = useRouter()
 const scaffold = useScaffoldingStore()
 const { copy, copied } = useClipboard()
-let pollTimer: ReturnType<typeof setInterval> | null = null
 const showDisconnectDialog = ref(false)
 const disconnectReason = ref('')
 
 onMounted(() => {
-  pollTimer = setInterval(() => scaffold.refreshConnectionStatus(), 3000)
-})
-
-onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
+  if (scaffold.connectionStatus) {
+    scaffold.startGuestEvents()
+  }
 })
 
 watch(() => scaffold.connectionStatus?.connected, (connected) => {
   if (connected === false && scaffold.connectionStatus?.disconnect_reason) {
-    if (pollTimer) clearInterval(pollTimer)
     disconnectReason.value = scaffold.connectionStatus.disconnect_reason
     showDisconnectDialog.value = true
   }

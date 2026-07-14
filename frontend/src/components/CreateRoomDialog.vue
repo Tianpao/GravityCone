@@ -26,7 +26,6 @@ const user = useUserStore()
 const router = useRouter()
 const manualPort = ref('')
 const selectedIndex = ref(-1)
-let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const isValidPort = computed(() => {
   const p = parseInt(manualPort.value)
@@ -62,14 +61,9 @@ async function handleCreate() {
 
 function startPolling() {
   lan.startDiscovery()
-  pollTimer = setInterval(() => lan.refresh(), 2000)
 }
 
 function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
   lan.stopDiscovery()
   selectedIndex.value = -1
   manualPort.value = ''

@@ -13,7 +13,6 @@ declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
             "download.progress": easytier$0.DownloadProgressData;
-            "time": string;
         }
     }
 }

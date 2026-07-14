@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch, ref } from 'vue'
+import { onMounted, watch, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useScaffoldingStore } from '@/stores/scaffolding'
 import { useWatermarkStore } from '@/stores/watermark'
@@ -20,22 +20,18 @@ const router = useRouter()
 const scaffold = useScaffoldingStore()
 const watermark = useWatermarkStore()
 const { copy, copied } = useClipboard()
-let pollTimer: ReturnType<typeof setInterval> | null = null
 const showStopDialog = ref(false)
 const stopReason = ref('')
 
 onMounted(() => {
-  pollTimer = setInterval(() => scaffold.refreshRoomStatus(), 3000)
+  if (scaffold.roomStatus) {
+    scaffold.startHostEvents()
+  }
   watermark.loadDemoImages()
-})
-
-onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
 })
 
 watch(() => scaffold.roomStatus, (val) => {
   if (!val && scaffold.hostError) {
-    if (pollTimer) clearInterval(pollTimer)
     stopReason.value = scaffold.hostError
     showStopDialog.value = true
   }

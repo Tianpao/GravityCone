@@ -43,6 +43,13 @@ type LanService struct {
 	localIPs     map[string]bool
 }
 
+func (s *LanService) SetEventEmitter(emitter utils.EventEmitter) {
+	if emitter == nil {
+		emitter = utils.NilEventEmitter{}
+	}
+	s.eventEmitter = emitter
+}
+
 const lanServerTimeout = 30 * time.Second
 
 func (s *LanService) StartDiscovery() error {

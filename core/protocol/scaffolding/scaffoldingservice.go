@@ -706,7 +706,7 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 	// Background reader: like Rust's ClientSession background thread.
 	// Continuously reads responses from the TCP connection and delivers
 	// them via guestReadCh. When the connection breaks, the channel closes.
-	s.guestReadCh = make(chan readResult, 1)
+	s.guestReadCh = make(chan readResult, 32)
 	go s.guestReadLoop(conn)
 
 	go s.guestHeartbeatLoop(machineID, easytierID, playerName, vendorPrefix)
