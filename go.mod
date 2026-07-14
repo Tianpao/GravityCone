@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/andre-carbajal/go-mcstatus v1.0.0
+	github.com/joho/godotenv v1.5.1
 	github.com/kirklin/go-blind-watermark v0.0.1
 	github.com/wailsapp/wails/v3 v3.0.0-alpha2.106
 	golang.org/x/crypto v0.53.0

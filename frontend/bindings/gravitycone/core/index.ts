@@ -3,6 +3,7 @@
 
 import * as GreetService from "./greetservice.js";
 import * as LanService from "./lanservice.js";
+import * as MinecraftService from "./minecraftservice.js";
 import * as NatayarkService from "./natayarkservice.js";
 import * as ScaffoldingService from "./scaffoldingservice.js";
 import * as SettingsService from "./settingsservice.js";
@@ -11,6 +12,7 @@ import * as WatermarkService from "./watermarkservice.js";
 export {
     GreetService,
     LanService,
+    MinecraftService,
     NatayarkService,
     ScaffoldingService,
     SettingsService,
@@ -22,6 +24,7 @@ export type {
     ConnectionStatus,
     DownloadProgressData,
     LanServer,
+    MinecraftUser,
     NatayarkUser,
     PlayerInfo,
     RoomStatus,

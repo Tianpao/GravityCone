@@ -44,6 +44,13 @@ export interface LanServer {
     "port": number;
 }
 
+export interface MinecraftUser {
+    "username": string;
+    "uuid": string;
+    "access_token": string;
+    "avatar_png": string;
+}
+
 export interface NatayarkUser {
     "id": number;
     "username": string;
