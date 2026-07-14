@@ -36,12 +36,8 @@ type WatermarkService struct{}
 // EncodeRoomCode embeds a room code into a source image using blind watermarking.
 // The resulting image looks identical to the original to the naked eye.
 func (w *WatermarkService) EncodeRoomCode(sourcePath string, roomCode string) (*WatermarkResult, error) {
-	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("源图片不存在: %s", sourcePath)
-	}
 	slog.Info("EncodeRoomCode", "source", sourcePath, "roomCode", roomCode)
 
-	// 1. Decode source image
 	srcData, err := os.ReadFile(sourcePath)
 	if err != nil {
 		return nil, fmt.Errorf("读取源图片失败: %w", err)

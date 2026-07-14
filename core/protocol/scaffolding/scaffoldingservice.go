@@ -579,15 +579,13 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 	}
 
 	machineID, _ := utils.GetMachineID()
-	virtualIP, err := manager.Start(easytier.StartOptions{
+	if _, err := manager.Start(easytier.StartOptions{
 		NetworkName:   rc.EasyTierNetworkName(),
 		NetworkSecret: rc.EasyTierNetworkSecret(),
 		IsHost:        false,
-	})
-	if err != nil {
+	}); err != nil {
 		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
 	}
-	_ = virtualIP // used indirectly via DiscoverPeer
 	s.reportJoinProgress("connecting")
 
 	// 3. Discover HOST and wait for P2P connection

@@ -157,40 +157,35 @@ func (h *Handler) handleRoom(req Request, action string) {
 }
 
 func (h *Handler) handleRoomStatus(req Request) {
-	// Try host status first
-	hostStatus, hostErr := h.scaffoldingSvc.GetRoomStatus()
-	if hostErr == nil {
+	if status, err := h.scaffoldingSvc.GetRoomStatus(); err == nil {
 		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
-			"role":  "host",
-			"code":  hostStatus.Code,
-			"mc_address": hostStatus.MCAddress,
-			"mc_port":    hostStatus.MCPort,
-			"online_count": hostStatus.OnlineCount,
-			"players":     hostStatus.Players,
-			"running":     hostStatus.Running,
+			"role":         "host",
+			"code":         status.Code,
+			"mc_address":   status.MCAddress,
+			"mc_port":      status.MCPort,
+			"online_count": status.OnlineCount,
+			"players":      status.Players,
+			"running":      status.Running,
 		}))
 		return
 	}
 
-	// Try guest status
-	guestStatus, guestErr := h.scaffoldingSvc.GetConnectionStatus()
-	if guestErr == nil {
+	if status, err := h.scaffoldingSvc.GetConnectionStatus(); err == nil {
 		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
 			"role":              "guest",
-			"room_code":         guestStatus.RoomCode,
-			"host_address":      guestStatus.HostAddress,
-			"mc_address":        guestStatus.MCAddress,
-			"mc_port":           guestStatus.MCPort,
-			"connected":         guestStatus.Connected,
-			"online_count":      guestStatus.OnlineCount,
-			"players":           guestStatus.Players,
-			"heartbeating":      guestStatus.Heartbeating,
-			"disconnect_reason": guestStatus.DisconnectReason,
+			"room_code":         status.RoomCode,
+			"host_address":      status.HostAddress,
+			"mc_address":        status.MCAddress,
+			"mc_port":           status.MCPort,
+			"connected":         status.Connected,
+			"online_count":      status.OnlineCount,
+			"players":           status.Players,
+			"heartbeating":      status.Heartbeating,
+			"disconnect_reason": status.DisconnectReason,
 		}))
 		return
 	}
 
-	// Not in any room
 	h.writer.WriteResponse(successResponse(req.ID, map[string]string{"role": "none"}))
 }
 

@@ -48,13 +48,9 @@ type NatayarkService struct {
 	User        *NatayarkUser
 }
 
-func (s *NatayarkService) sessionFilePath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	p := filepath.Join(dir, "GravityCone")
-	return filepath.Join(p, "natayark_session.json"), nil
+func (s *NatayarkService) sessionFilePath() string {
+	dir, _ := os.UserConfigDir()
+	return filepath.Join(dir, "GravityCone", "natayark_session.json")
 }
 
 type natayarkSession struct {
@@ -62,28 +58,16 @@ type natayarkSession struct {
 	User        *NatayarkUser `json:"user"`
 }
 
-func (s *NatayarkService) saveSession() error {
-	path, err := s.sessionFilePath()
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
+func (s *NatayarkService) saveSession() {
+	path := s.sessionFilePath()
+	os.MkdirAll(filepath.Dir(path), 0700)
 	data := natayarkSession{AccessToken: s.accessToken, User: s.User}
-	b, err := json.Marshal(data)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, b, 0600)
+	b, _ := json.Marshal(data)
+	os.WriteFile(path, b, 0600)
 }
 
 func (s *NatayarkService) loadSession() error {
-	path, err := s.sessionFilePath()
-	if err != nil {
-		return err
-	}
+	path := s.sessionFilePath()
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -114,21 +98,17 @@ func (s *NatayarkService) RestoreSession() error {
 			// Token is invalid/expired — clear session.
 			s.accessToken = ""
 			s.User = nil
-			_ = s.clearSession()
+			s.clearSession()
 			return nil
 		}
 		s.User = user
-		_ = s.saveSession()
+		s.saveSession()
 	}
 	return nil
 }
 
-func (s *NatayarkService) clearSession() error {
-	path, err := s.sessionFilePath()
-	if err != nil {
-		return err
-	}
-	return os.Remove(path)
+func (s *NatayarkService) clearSession() {
+	os.Remove(s.sessionFilePath())
 }
 
 func (s *NatayarkService) StartLogin() (*NatayarkUser, error) {
@@ -179,7 +159,7 @@ func (s *NatayarkService) StartLogin() (*NatayarkUser, error) {
 			return nil, fmt.Errorf("failed to fetch user data: %w", err)
 		}
 		s.User = user
-		_ = s.saveSession()
+		s.saveSession()
 		return user, nil
 	case <-time.After(5 * time.Minute):
 		srv.Shutdown(context.Background())
@@ -194,7 +174,7 @@ func (s *NatayarkService) GetCurrentUser() *NatayarkUser {
 func (s *NatayarkService) Logout() {
 	s.accessToken = ""
 	s.User = nil
-	_ = s.clearSession()
+	s.clearSession()
 }
 
 func (s *NatayarkService) exchangeCode(code string, redirectURI string) (string, error) {
