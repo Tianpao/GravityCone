@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
-import { CreateRoom, StopRoom, GetRoomStatus, JoinRoom, LeaveRoom, GetConnectionStatus, CancelJoin } from '@/../bindings/gravitycone/core/scaffoldingservice'
-import type { RoomStatus, ConnectionStatus } from '@/../bindings/gravitycone/core/models'
+import { CreateRoom, StopRoom, GetRoomStatus, JoinRoom, LeaveRoom, GetConnectionStatus, CancelJoin } from '@/../bindings/gravitycone/core/protocol/scaffolding/scaffoldingservice'
+import type { RoomStatus, ConnectionStatus } from '@/../bindings/gravitycone/core/protocol/scaffolding/models'
 
 export const useScaffoldingStore = defineStore('scaffolding', {
   state: () => ({

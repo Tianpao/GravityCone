@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"sync"
+
+	"gravitycone/core/utils"
 )
 
 // StdioWriter provides thread-safe JSON line writing to stdout,
@@ -59,10 +61,12 @@ func (w *StdioWriter) writeLocked(v interface{}) {
 	}
 }
 
-// StdioEventEmitter implements core.EventEmitter by writing events to stdout.
+// StdioEventEmitter implements utils.EventEmitter by writing events to stdout.
 type StdioEventEmitter struct {
 	writer *StdioWriter
 }
+
+var _ utils.EventEmitter = (*StdioEventEmitter)(nil)
 
 // NewStdioEventEmitter creates an EventEmitter that pushes CLI events to stdout.
 func NewStdioEventEmitter(writer *StdioWriter) *StdioEventEmitter {

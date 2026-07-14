@@ -21,7 +21,7 @@ export const useWatermarkStore = defineStore('watermark', () => {
     loadingImages.value = true
     error.value = ''
     try {
-      const { ListDemoImages } = await import('@/../bindings/gravitycone/core/watermarkservice')
+      const { ListDemoImages } = await import('@/../bindings/gravitycone/core/app/watermarkservice')
       demoImages.value = await ListDemoImages()
     } catch (e: any) {
       error.value = e?.message || String(e)
@@ -34,7 +34,7 @@ export const useWatermarkStore = defineStore('watermark', () => {
     encoding.value = true
     error.value = ''
     try {
-      const { EncodeRoomCode } = await import('@/../bindings/gravitycone/core/watermarkservice')
+      const { EncodeRoomCode } = await import('@/../bindings/gravitycone/core/app/watermarkservice')
       const result = await EncodeRoomCode(sourcePath, roomCode)
       lastResult.value = result
       return result
@@ -51,7 +51,7 @@ export const useWatermarkStore = defineStore('watermark', () => {
     error.value = ''
     decodedRoomCode.value = ''
     try {
-      const { DecodeRoomCode } = await import('@/../bindings/gravitycone/core/watermarkservice')
+      const { DecodeRoomCode } = await import('@/../bindings/gravitycone/core/app/watermarkservice')
       const code = await DecodeRoomCode(imageBase64)
       decodedRoomCode.value = code
       return code

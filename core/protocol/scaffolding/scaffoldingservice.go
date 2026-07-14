@@ -1,21 +1,24 @@
-package core
+package scaffolding
 
 import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	mcstatus "github.com/andre-carbajal/go-mcstatus"
+
+	"gravitycone/core/easytier"
+	"gravitycone/core/minecraft"
+	"gravitycone/core/utils"
 )
 
 // BaseVendor is the default vendor suffix. Call MakeVendor to append optional prefixes.
-const BaseVendor = "GVC v0.1.0, EasyTier " + EasyTierVersion
+const BaseVendor = "GVC v0.1.0, EasyTier " + easytier.EasyTierVersion
 
 func MakeVendor(prefixes ...string) string {
 	parts := make([]string, 0, len(prefixes)+1)
@@ -54,9 +57,9 @@ type playerEntry struct {
 	lastSeen time.Time
 }
 
-func NewScaffoldingService(emitter EventEmitter) *ScaffoldingService {
+func NewScaffoldingService(emitter utils.EventEmitter) *ScaffoldingService {
 	if emitter == nil {
-		emitter = NilEventEmitter{}
+		emitter = utils.NilEventEmitter{}
 	}
 	return &ScaffoldingService{
 		eventEmitter: emitter,
@@ -66,7 +69,7 @@ func NewScaffoldingService(emitter EventEmitter) *ScaffoldingService {
 // SetEventEmitter replaces the event emitter. Used by Wails to inject
 // the app emitter after the service is created and registered.
 // Not exported to avoid Wails binding generation.
-func (s *ScaffoldingService) setEventEmitter(emitter EventEmitter) {
+func (s *ScaffoldingService) setEventEmitter(emitter utils.EventEmitter) {
 	if emitter != nil {
 		s.eventEmitter = emitter
 	}
@@ -75,16 +78,16 @@ func (s *ScaffoldingService) setEventEmitter(emitter EventEmitter) {
 // InitScaffoldingEmitter sets the event emitter on a ScaffoldingService.
 // This is a package-level helper so main.go can call it without the method
 // appearing in Wails bindings.
-func InitScaffoldingEmitter(svc *ScaffoldingService, emitter EventEmitter) {
+func InitScaffoldingEmitter(svc *ScaffoldingService, emitter utils.EventEmitter) {
 	svc.setEventEmitter(emitter)
 }
 
 type ScaffoldingService struct {
-	eventEmitter    EventEmitter
+	eventEmitter    utils.EventEmitter
 	joinProgressCb  func(string) // set by CLI mode for progress notifications
 
 	// HOST state
-	hostManager    *EasyTierManager
+	hostManager    *easytier.EasyTierManager
 	hostListener   net.Listener
 	hostTCPPort    uint16
 	mcPort         uint16
@@ -100,7 +103,7 @@ type ScaffoldingService struct {
 	hostConnMu     sync.Mutex
 
 	// GUEST state
-	guestManager              *EasyTierManager
+	guestManager              *easytier.EasyTierManager
 	guestConn                 net.Conn
 	guestPlayers              []PlayerInfo
 	guestStopCh               chan struct{}
@@ -117,7 +120,7 @@ type ScaffoldingService struct {
 	guestDirectLocal          bool            // true when guest and host are on the same machine
 	guestIOMu                 sync.Mutex      // serializes writes on guestConn
 	guestReadCh               chan readResult // background reader delivers responses here
-	guestFakeServer           *FakeServer     // LAN broadcaster for Minecraft discovery
+	guestFakeServer           *minecraft.FakeServer     // LAN broadcaster for Minecraft discovery
 	guestMCLocalPort          uint16          // local port forwarded to host's MC server via EasyTier
 	guestMCRemoteAddr         string          // remote addr for port-forward cleanup (host_virtual_ip:mc_port)
 	guestMotd                 string          // custom MOTD for LAN broadcast
@@ -170,14 +173,14 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 	}
 
 	// 3. Start EasyTier
-	manager, err := NewEasyTierManager()
+	manager, err := easytier.NewEasyTierManager()
 	if err != nil {
 		listener.Close()
 		return nil, err
 	}
 
 	hostname := fmt.Sprintf("scaffolding-mc-server-%d", tcpPort)
-	virtualIP, err := manager.Start(StartOptions{
+	virtualIP, err := manager.Start(easytier.StartOptions{
 		NetworkName:   rc.EasyTierNetworkName(),
 		NetworkSecret: rc.EasyTierNetworkSecret(),
 		Hostname:      hostname,
@@ -207,7 +210,7 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 	s.hostMu.Unlock()
 
 	// Add HOST as a player
-	machineID, _ := GetMachineID()
+	machineID, _ := utils.GetMachineID()
 	s.hostPlayerMu.Lock()
 	s.hostPlayers[machineID] = &playerEntry{
 		info: &PlayerInfo{
@@ -570,13 +573,13 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 	}
 
 	// 2. Start EasyTier
-	manager, err := NewEasyTierManager()
+	manager, err := easytier.NewEasyTierManager()
 	if err != nil {
 		return nil, err
 	}
 
-	machineID, _ := GetMachineID()
-	virtualIP, err := manager.Start(StartOptions{
+	machineID, _ := utils.GetMachineID()
+	virtualIP, err := manager.Start(easytier.StartOptions{
 		NetworkName:   rc.EasyTierNetworkName(),
 		NetworkSecret: rc.EasyTierNetworkSecret(),
 		IsHost:        false,
@@ -714,7 +717,7 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 	return s.buildConnectionStatus(), nil
 }
 
-func (s *ScaffoldingService) discoverHostAndConnect(manager *EasyTierManager, timeout time.Duration) (string, uint16, error) {
+func (s *ScaffoldingService) discoverHostAndConnect(manager *easytier.EasyTierManager, timeout time.Duration) (string, uint16, error) {
 	deadline := time.Now().Add(timeout)
 	prefix := "scaffolding-mc-server-"
 
@@ -735,7 +738,7 @@ func (s *ScaffoldingService) discoverHostAndConnect(manager *EasyTierManager, ti
 		}
 
 		// Find HOST by scanning peers
-		hostIP, scaffoldingPort, err := findHostPeer(manager, prefix)
+		hostIP, scaffoldingPort, err := manager.FindPeerByHostnamePrefix(prefix)
 		if err != nil {
 			lastErr = err
 			time.Sleep(2 * time.Second)
@@ -827,32 +830,6 @@ func (s *ScaffoldingService) discoverHostAndConnect(manager *EasyTierManager, ti
 	}
 
 	return "", 0, lastErr
-}
-
-func findHostPeer(manager *EasyTierManager, prefix string) (string, uint16, error) {
-	out, err := manager.runCli("-o", "json", "-p", manager.RPCPortal(), "peer", "list")
-	if err != nil {
-		return "", 0, fmt.Errorf("查询对等节点失败: %w", err)
-	}
-
-	var peers []peerInfo
-	if err := json.Unmarshal([]byte(out), &peers); err != nil {
-		return "", 0, fmt.Errorf("解析对等节点列表失败: %w", err)
-	}
-
-	for _, p := range peers {
-		if !strings.HasPrefix(p.Hostname, prefix) || p.VirtualIP == "" {
-			continue
-		}
-		portStr := p.Hostname[len(prefix):]
-		port, err := strconv.ParseUint(portStr, 10, 16)
-		if err != nil || port <= 1024 || port > 65535 {
-			continue
-		}
-		return p.VirtualIP, uint16(port), nil
-	}
-
-	return "", 0, fmt.Errorf("未找到联机中心，请确认房间代码正确且房主已开启房间")
 }
 
 func (s *ScaffoldingService) LeaveRoom() error {
@@ -1091,7 +1068,7 @@ func (s *ScaffoldingService) setupMCPortForward(hostIP string, mcPort uint16) {
 		if motd == "" {
 			motd = "§6§l双击进入联机房间（请保持GravityCone运行）"
 		}
-		s.guestFakeServer = NewFakeServer(mcLocalPort, motd)
+		s.guestFakeServer = minecraft.NewFakeServer(mcLocalPort, motd)
 	}
 	s.guestMu.Unlock()
 }
@@ -1175,5 +1152,5 @@ func (s *ScaffoldingService) Cleanup() {
 
 // AddPeers appends peer addresses so they are included when EasyTier starts.
 func (s *ScaffoldingService) AddPeers(addrs []string) {
-	AddPublicPeers(addrs)
+	easytier.AddPublicPeers(addrs)
 }

@@ -1,14 +1,13 @@
-package core
+package scaffolding
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"time"
 )
-
-import "errors"
 
 var ErrMCProxyConnection = errors.New("mc proxy connection")
 

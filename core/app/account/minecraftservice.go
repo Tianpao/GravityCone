@@ -1,4 +1,4 @@
-package core
+package account
 
 import (
 	"bytes"
@@ -368,7 +368,7 @@ func (s *MinecraftService) runTokenChain() (string, error) {
 	}
 	xstsToken, userhash, err := s.exchangeXblForXsts(xblToken)
 	if err != nil {
-		return "", fmt.Errorf("XSTS exchange failed: %w", err)
+		return "", fmt.Errorf("Xsts exchange failed: %w", err)
 	}
 	mcToken, err := s.exchangeXstsForMcToken(xstsToken, userhash)
 	if err != nil {

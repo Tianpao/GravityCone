@@ -13,43 +13,43 @@ import * as $models from "./models.js";
  * AddPeers appends peer addresses so they are included when EasyTier starts.
  */
 export function AddPeers(addrs: string[] | null): $CancellablePromise<void> {
-    return $Call.ByID(111594907, addrs);
+    return $Call.ByID(261516947, addrs);
 }
 
 /**
  * CancelJoin aborts a running JoinRoom call. Safe to call even if no join is in progress.
  */
 export function CancelJoin(): $CancellablePromise<void> {
-    return $Call.ByID(1094851085);
+    return $Call.ByID(455884165);
 }
 
 /**
  * Cleanup stops any running room or connection (called on app shutdown)
  */
 export function Cleanup(): $CancellablePromise<void> {
-    return $Call.ByID(2877413657);
+    return $Call.ByID(4022543137);
 }
 
 export function CreateRoom(mcPort: number, playerName: string, vendorPrefix: string, motd: string): $CancellablePromise<$models.RoomStatus | null> {
-    return $Call.ByID(668317184, mcPort, playerName, vendorPrefix, motd);
+    return $Call.ByID(2148368552, mcPort, playerName, vendorPrefix, motd);
 }
 
 export function GetConnectionStatus(): $CancellablePromise<$models.ConnectionStatus | null> {
-    return $Call.ByID(1169126479);
+    return $Call.ByID(489009207);
 }
 
 export function GetRoomStatus(): $CancellablePromise<$models.RoomStatus | null> {
-    return $Call.ByID(3873649912);
+    return $Call.ByID(2796168464);
 }
 
 export function JoinRoom(code: string, playerName: string, vendorPrefix: string, motd: string): $CancellablePromise<$models.ConnectionStatus | null> {
-    return $Call.ByID(1312253032, code, playerName, vendorPrefix, motd);
+    return $Call.ByID(2051558256, code, playerName, vendorPrefix, motd);
 }
 
 export function LeaveRoom(): $CancellablePromise<void> {
-    return $Call.ByID(3396570265);
+    return $Call.ByID(619442881);
 }
 
 export function StopRoom(): $CancellablePromise<void> {
-    return $Call.ByID(695010240);
+    return $Call.ByID(2325174264);
 }

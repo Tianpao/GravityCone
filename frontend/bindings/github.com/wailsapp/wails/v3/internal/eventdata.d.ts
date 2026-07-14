@@ -7,12 +7,12 @@ import type { Events } from "@wailsio/runtime";
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import type * as core$0 from "../../../../../gravitycone/core/models.js";
+import type * as easytier$0 from "../../../../../gravitycone/core/easytier/models.js";
 
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
-            "download.progress": core$0.DownloadProgressData;
+            "download.progress": easytier$0.DownloadProgressData;
             "time": string;
         }
     }

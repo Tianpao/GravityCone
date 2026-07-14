@@ -13,7 +13,7 @@ import * as $models from "./models.js";
  * DecodeRoomCode extracts a room code from a blind-watermarked image (base64 encoded).
  */
 export function DecodeRoomCode(imageBase64: string): $CancellablePromise<string> {
-    return $Call.ByID(931984855, imageBase64);
+    return $Call.ByID(2754020915, imageBase64);
 }
 
 /**
@@ -21,12 +21,12 @@ export function DecodeRoomCode(imageBase64: string): $CancellablePromise<string>
  * The resulting image looks identical to the original to the naked eye.
  */
 export function EncodeRoomCode(sourcePath: string, roomCode: string): $CancellablePromise<$models.WatermarkResult | null> {
-    return $Call.ByID(3515003603, sourcePath, roomCode);
+    return $Call.ByID(239701887, sourcePath, roomCode);
 }
 
 /**
  * ListDemoImages returns absolute paths to images in the images directory.
  */
 export function ListDemoImages(): $CancellablePromise<string[] | null> {
-    return $Call.ByID(3390894506);
+    return $Call.ByID(3334707414);
 }

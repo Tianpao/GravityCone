@@ -3,7 +3,10 @@ package cli
 import (
 	"bufio"
 	"encoding/json"
-	"gravitycone/core"
+	"gravitycone/core/easytier"
+	"gravitycone/core/minecraft"
+	"gravitycone/core/protocol/scaffolding"
+	"gravitycone/core/utils"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -38,31 +41,31 @@ func Run(peers []string, vendorPrefix string, motd string) {
 		os.Exit(1)
 	}
 	defer gccoreLog.Close()
-	core.InitLogger(gccoreLog, &slog.HandlerOptions{AddSource: false})
+	utils.InitLogger(gccoreLog, &slog.HandlerOptions{AddSource: false})
 
 	// Redirect EasyTier logs to file
-	core.SetEasyTierLogOutput(etLogPath)
+	easytier.SetEasyTierLogOutput(etLogPath)
 
 	// Override EasyTier peers if provided
 	if len(peers) > 0 {
-		core.SetPublicPeers(peers)
+		easytier.SetPublicPeers(peers)
 		slog.Info("Using custom peers", "peers", peers)
 	}
 
 	// Set up writer and emitter early so download progress can be reported
 	writer := NewStdioWriter()
 	emitter := NewStdioEventEmitter(writer)
-	core.SetEnsureEasyTierEmitter(emitter)
+	easytier.SetEnsureEasyTierEmitter(emitter)
 
 	// Ensure EasyTier binaries are available (auto-download if missing)
-	if err := core.EnsureEasyTier(); err != nil {
+	if err := easytier.EnsureEasyTier(); err != nil {
 		slog.Warn("EasyTier auto-download failed", "error", err)
 	}
 
 	// Set up services
-	stunSvc := &core.StunService{}
-	lanSvc := core.NewLanService(emitter)
-	scaffoldingSvc := core.NewScaffoldingService(emitter)
+	stunSvc := &easytier.StunService{}
+	lanSvc := minecraft.NewLanService(emitter)
+	scaffoldingSvc := scaffolding.NewScaffoldingService(emitter)
 
 	shutdownCh := make(chan struct{})
 	handler := NewHandler(stunSvc, lanSvc, scaffoldingSvc, writer, shutdownCh, vendorPrefix, motd)

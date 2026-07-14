@@ -10,17 +10,17 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 export function GetCurrentUser(): $CancellablePromise<$models.MinecraftUser | null> {
-    return $Call.ByID(1314052116);
+    return $Call.ByID(584329380);
 }
 
 export function Logout(): $CancellablePromise<void> {
-    return $Call.ByID(1702342572);
+    return $Call.ByID(3250259644);
 }
 
 export function RestoreSession(): $CancellablePromise<void> {
-    return $Call.ByID(221513524);
+    return $Call.ByID(2614873572);
 }
 
 export function StartLogin(): $CancellablePromise<$models.MinecraftUser | null> {
-    return $Call.ByID(221955759);
+    return $Call.ByID(1540359423);
 }

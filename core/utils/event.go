@@ -1,4 +1,4 @@
-package core
+package utils
 
 // EventEmitter allows services to emit events without depending on
 // Wails or CLI-specific transport mechanisms.

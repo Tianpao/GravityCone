@@ -10,21 +10,21 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 export function CreateRoom(ip: string, port: number): $CancellablePromise<void> {
-    return $Call.ByID(582146917, ip, port);
+    return $Call.ByID(3350645637, ip, port);
 }
 
 export function GetDiscoveredServers(): $CancellablePromise<$models.LanServer[] | null> {
-    return $Call.ByID(4280778120);
+    return $Call.ByID(384771432);
 }
 
 export function StartDiscovery(): $CancellablePromise<void> {
-    return $Call.ByID(4117431716);
+    return $Call.ByID(3810941764);
 }
 
 export function StopDiscovery(): $CancellablePromise<void> {
-    return $Call.ByID(798628260);
+    return $Call.ByID(44299972);
 }
 
 export function VerifyServer(ip: string, port: number): $CancellablePromise<string> {
-    return $Call.ByID(3359030800, ip, port);
+    return $Call.ByID(3900159792, ip, port);
 }

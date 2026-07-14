@@ -2,16 +2,18 @@ package cli
 
 import (
 	"fmt"
-	"gravitycone/core"
+	"gravitycone/core/easytier"
+	"gravitycone/core/minecraft"
+	"gravitycone/core/protocol/scaffolding"
 	"strings"
 	"sync"
 )
 
 // Handler dispatches CLI requests to core service methods.
 type Handler struct {
-	stunSvc        *core.StunService
-	lanSvc         *core.LanService
-	scaffoldingSvc *core.ScaffoldingService
+	stunSvc        *easytier.StunService
+	lanSvc         *minecraft.LanService
+	scaffoldingSvc *scaffolding.ScaffoldingService
 	writer         *StdioWriter
 	shutdownCh     chan struct{}
 	shutdownOnce   sync.Once
@@ -21,9 +23,9 @@ type Handler struct {
 
 // NewHandler creates a Handler with the given services and writer.
 func NewHandler(
-	stunSvc *core.StunService,
-	lanSvc *core.LanService,
-	scaffoldingSvc *core.ScaffoldingService,
+	stunSvc *easytier.StunService,
+	lanSvc *minecraft.LanService,
+	scaffoldingSvc *scaffolding.ScaffoldingService,
 	writer *StdioWriter,
 	shutdownCh chan struct{},
 	vendorPrefix string,
@@ -119,13 +121,13 @@ func (h *Handler) handleRoom(req Request, action string) {
 		}
 
 		// Set progress callback that writes progress responses
-		core.SetScaffoldingJoinProgress(h.scaffoldingSvc, func(step string) {
+		scaffolding.SetScaffoldingJoinProgress(h.scaffoldingSvc, func(step string) {
 			h.writer.WriteResponse(progressResponse(req.ID, map[string]string{
 				"step":    step,
 				"message": progressMessage(step),
 			}))
 		})
-		defer core.SetScaffoldingJoinProgress(h.scaffoldingSvc, nil)
+		defer scaffolding.SetScaffoldingJoinProgress(h.scaffoldingSvc, nil)
 
 		result, err := h.scaffoldingSvc.JoinRoom(code, playerName, h.vendorPrefix, h.motd)
 		if err != nil {

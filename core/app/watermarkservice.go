@@ -1,4 +1,4 @@
-package core
+package app
 
 import (
 	"bytes"
@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/kirklin/go-blind-watermark/bwm"
+
+	"gravitycone/core/protocol/scaffolding"
 )
 
 const demoImagesDir = "images"
@@ -124,12 +126,12 @@ func (w *WatermarkService) DecodeRoomCode(imageBase64 string) (string, error) {
 	slog.Info("unpad result", "code", code)
 
 	// Validate the room code
-	if _, err := ParseRoomCode(code); err != nil {
+	if _, err := scaffolding.ParseRoomCode(code); err != nil {
 		// Try without U/ prefix
 		if !strings.HasPrefix(strings.ToUpper(code), "U/") {
 			code = "U/" + code
 			slog.Info("added U/ prefix", "code", code)
-			if _, err := ParseRoomCode(code); err != nil {
+			if _, err := scaffolding.ParseRoomCode(code); err != nil {
 				return "", fmt.Errorf("图片中的房间代码无效，可能图片未包含房间信息或被过度压缩")
 			}
 		} else {

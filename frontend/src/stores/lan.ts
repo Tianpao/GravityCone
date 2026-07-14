@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
-import { StartDiscovery, StopDiscovery, GetDiscoveredServers, CreateRoom } from '@/../bindings/gravitycone/core/lanservice'
-import type { LanServer } from '@/../bindings/gravitycone/core/models'
+import { StartDiscovery, StopDiscovery, GetDiscoveredServers, CreateRoom } from '@/../bindings/gravitycone/core/minecraft/lanservice'
+import type { LanServer } from '@/../bindings/gravitycone/core/minecraft/models'
 
 export const useLanStore = defineStore('lan', {
   state: () => ({

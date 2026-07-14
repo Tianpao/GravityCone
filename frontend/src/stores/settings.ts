@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { SetCustomPeers } from '@/../bindings/gravitycone/core/settingsservice'
+import { SetCustomPeers } from '@/../bindings/gravitycone/core/easytier/settingsservice'
 
 const STORAGE_KEY = 'gravitycone-custom-peers'
 

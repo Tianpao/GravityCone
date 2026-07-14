@@ -1,4 +1,4 @@
-package core
+package account
 
 import (
 	"context"
@@ -58,7 +58,7 @@ func (s *NatayarkService) sessionFilePath() (string, error) {
 }
 
 type natayarkSession struct {
-	AccessToken string       `json:"access_token"`
+	AccessToken string        `json:"access_token"`
 	User        *NatayarkUser `json:"user"`
 }
 

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { StartLogin, Logout, GetCurrentUser } from '@/../bindings/gravitycone/core/minecraftservice'
+import { StartLogin, Logout, GetCurrentUser } from '@/../bindings/gravitycone/core/app/account/minecraftservice'
 
 export interface MinecraftUser {
   username: string

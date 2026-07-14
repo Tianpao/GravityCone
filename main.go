@@ -4,7 +4,12 @@ package main
 
 import (
 	"embed"
-	"gravitycone/core"
+	"gravitycone/core/app"
+	"gravitycone/core/app/account"
+	"gravitycone/core/easytier"
+	"gravitycone/core/minecraft"
+	"gravitycone/core/protocol/scaffolding"
+	"gravitycone/core/utils"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -27,7 +32,7 @@ var assets embed.FS
 
 func init() {
 	application.RegisterEvent[string]("time")
-	application.RegisterEvent[core.DownloadProgressData]("download.progress")
+	application.RegisterEvent[easytier.DownloadProgressData]("download.progress")
 }
 
 func main() {
@@ -60,31 +65,30 @@ func main() {
 		logDir := filepath.Join(filepath.Dir(exe), "logs")
 		os.MkdirAll(logDir, 0755)
 		if f, err := os.OpenFile(filepath.Join(logDir, "gravitycone.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
-			core.InitLogger(f, nil)
+			utils.InitLogger(f, nil)
 		}
 	}
 	// Redirect EasyTier logs to file too
 	if exe, err := os.Executable(); err == nil {
 		logDir := filepath.Join(filepath.Dir(exe), "logs")
-		core.SetEasyTierLogOutput(filepath.Join(logDir, "easytier.log"))
+		easytier.SetEasyTierLogOutput(filepath.Join(logDir, "easytier.log"))
 	}
 
-	natayarkSvc := &core.NatayarkService{}
-	minecraftSvc := core.NewMinecraftService(clientID, clientSecret)
-	scaffoldingSvc := core.NewScaffoldingService(nil) // nil = NilEventEmitter; Wails frontend polls via method calls
+	natayarkSvc := &account.NatayarkService{}
+	minecraftSvc := account.NewMinecraftService(clientID, clientSecret)
+	scaffoldingSvc := scaffolding.NewScaffoldingService(nil) // nil = NilEventEmitter; Wails frontend polls via method calls
 
 	app := application.New(application.Options{
 		Name:        "GravityCone",
 		Description: "A demo of using raw HTML & CSS",
 		Services: []application.Service{
-			application.NewService(&core.GreetService{}),
-			application.NewService(&core.StunService{}),
-			application.NewService(core.NewLanService(nil)),
+			application.NewService(&easytier.StunService{}),
+			application.NewService(minecraft.NewLanService(nil)),
 			application.NewService(natayarkSvc),
 			application.NewService(minecraftSvc),
 			application.NewService(scaffoldingSvc),
-			application.NewService(&core.WatermarkService{}),
-			application.NewService(&core.SettingsService{}),
+			application.NewService(&app.WatermarkService{}),
+			application.NewService(&easytier.SettingsService{}),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -96,13 +100,13 @@ func main() {
 
 	// Wire up Wails event emitters now that app exists
 	wailsEmitter := &wailsEventEmitter{app: app}
-	core.InitScaffoldingEmitter(scaffoldingSvc, wailsEmitter)
-	core.SetEnsureEasyTierEmitter(wailsEmitter)
+	scaffolding.InitScaffoldingEmitter(scaffoldingSvc, wailsEmitter)
+	easytier.SetEnsureEasyTierEmitter(wailsEmitter)
 
 	// Ensure EasyTier binaries are available (auto-download if missing).
 	// Run in background so the window appears immediately.
 	go func() {
-		if err := core.EnsureEasyTier(); err != nil {
+		if err := easytier.EnsureEasyTier(); err != nil {
 			slog.Warn("EasyTier auto-download failed", "error", err)
 		}
 	}()
@@ -150,7 +154,7 @@ func main() {
 	}
 }
 
-// wailsEventEmitter adapts Wails app.Event.Emit to core.EventEmitter.
+// wailsEventEmitter adapts Wails app.Event.Emit to utils.EventEmitter.
 type wailsEventEmitter struct {
 	app *application.App
 }

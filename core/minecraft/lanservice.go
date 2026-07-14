@@ -1,4 +1,4 @@
-package core
+package minecraft
 
 import (
 	"fmt"
@@ -10,6 +10,8 @@ import (
 
 	"github.com/andre-carbajal/go-mcstatus"
 	"golang.org/x/net/ipv4"
+
+	"gravitycone/core/utils"
 )
 
 type LanServer struct {
@@ -23,15 +25,15 @@ type lanServerEntry struct {
 	lastSeen time.Time
 }
 
-func NewLanService(emitter EventEmitter) *LanService {
+func NewLanService(emitter utils.EventEmitter) *LanService {
 	if emitter == nil {
-		emitter = NilEventEmitter{}
+		emitter = utils.NilEventEmitter{}
 	}
 	return &LanService{eventEmitter: emitter}
 }
 
 type LanService struct {
-	eventEmitter EventEmitter
+	eventEmitter utils.EventEmitter
 	mu           sync.Mutex
 	entries      []lanServerEntry
 	conns        []*net.UDPConn

@@ -1,4 +1,4 @@
-package core
+package minecraft
 
 import (
 	"fmt"
@@ -39,7 +39,7 @@ func (fs *FakeServer) Stop() {
 }
 
 type fakeServerConn struct {
-	conn *net.UDPConn
+	conn  *net.UDPConn
 	pconn *ipv4.PacketConn
 }
 
@@ -77,7 +77,7 @@ func (fs *FakeServer) run(port uint16, motd string) {
 			bindAddr := &net.UDPAddr{IP: ip, Port: 0}
 			conn, err := net.ListenPacket("udp4", bindAddr.String())
 			if err != nil {
-					slog.Warn("bind failed", "ip", ip, "error", err)
+				slog.Warn("bind failed", "ip", ip, "error", err)
 				continue
 			}
 			udpConn := conn.(*net.UDPConn)
