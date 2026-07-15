@@ -6,7 +6,8 @@ import { useSettingsStore } from "@/stores/settings"
 import { useDownloadStore } from "@/stores/download"
 import { useGlobalDrop } from "@/composables/useGlobalDrop"
 import { Button } from "@/components/ui/button"
-import { onMounted, computed } from "vue"
+import { formatSize, formatSpeed } from "@/lib/utils"
+import { onMounted, onUnmounted, computed } from "vue"
 
 const user = useUserStore()
 user.refreshUser()
@@ -16,22 +17,9 @@ settings.loadPeers()
 
 const download = useDownloadStore()
 onMounted(() => download.startListening())
+onUnmounted(() => download.stopListening())
 
 const { showDropOverlay, dropStatus, dropRoomCode, dropError, cancel } = useGlobalDrop()
-
-function formatSize(bytes: number): string {
-  if (bytes <= 0) return ''
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
-function formatSpeed(bytesPerSec: number): string {
-  if (bytesPerSec <= 0) return ''
-  if (bytesPerSec < 1024) return `${bytesPerSec} B/s`
-  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(0)} KB/s`
-  return `${(bytesPerSec / 1024 / 1024).toFixed(1)} MB/s`
-}
 
 const progressLabel = computed(() => {
   if (!download.progress) return ''

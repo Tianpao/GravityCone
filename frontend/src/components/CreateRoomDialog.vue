@@ -17,6 +17,9 @@ import { useScaffoldingStore } from '@/stores/scaffolding'
 import { useUserStore } from '@/stores/user'
 import { useRouter } from 'vue-router'
 
+const PORT_MIN = 1025
+const PORT_MAX = 65535
+
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 
@@ -29,7 +32,7 @@ const selectedIndex = ref(-1)
 
 const isValidPort = computed(() => {
   const p = parseInt(manualPort.value)
-  return !isNaN(p) && p > 1024 && p <= 65535
+  return !isNaN(p) && p >= PORT_MIN && p <= PORT_MAX
 })
 
 function selectServer(index: number) {

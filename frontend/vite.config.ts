@@ -17,4 +17,15 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (id.includes('reka-ui')) return 'reka-ui'
+          if (id.includes('@vueuse/core')) return 'vueuse'
+          if (id.includes('@vicons/ionicons5')) return 'vicons'
+        },
+      },
+    },
+  },
 });

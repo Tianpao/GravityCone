@@ -1,11 +1,8 @@
 <script setup lang="ts">
 import { useUserStore } from '@/stores/user'
-import { useMinecraftStore } from '@/stores/minecraft'
 import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
 
 const user = useUserStore()
-const mc = useMinecraftStore()
 </script>
 
 <template>
@@ -54,37 +51,6 @@ const mc = useMinecraftStore()
       </div>
     </div>
 
-    <!-- Temporarily disabled: Microsoft login
-    <Separator />
 
-    <div class="flex items-center gap-3 rounded-lg border border-border p-3">
-      <div class="flex shrink-0 items-center justify-center bg-muted overflow-hidden" style="width: 40px; height: 32px;">
-        <img v-if="mc.isLoggedIn && mc.user?.avatar_png" :src="mc.user.avatar_png" :alt="mc.user.username" class="size-full" style="image-rendering: pixelated" />
-        <svg v-else viewBox="0 0 24 24" class="size-4.5 text-muted-foreground" fill="none" stroke="currentColor" stroke-width="1.5">
-          <rect x="3" y="3" width="18" height="18" rx="2" />
-          <rect x="8" y="3" width="4" height="4" />
-          <rect x="16" y="3" width="2" height="4" />
-          <rect x="8" y="11" width="4" height="4" />
-          <rect x="14" y="11" width="4" height="4" />
-          <rect x="3" y="17" width="4" height="4" />
-          <rect x="11" y="17" width="4" height="4" />
-        </svg>
-      </div>
-      <div class="min-w-0 flex-1">
-        <div class="text-sm font-medium">Microsoft登录（在线）</div>
-        <div v-if="mc.loading" class="text-xs text-muted-foreground">正在登录...</div>
-        <div v-else-if="mc.isLoggedIn && mc.user" class="truncate text-xs text-muted-foreground">{{ mc.user.username }}</div>
-        <div v-else-if="mc.error" class="truncate text-xs text-red-500">{{ mc.error }}</div>
-        <div v-else class="text-xs text-muted-foreground">未登录</div>
-      </div>
-      <div class="shrink-0">
-        <Button v-if="mc.loading" size="sm" variant="ghost" disabled>
-          <div class="size-4 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" />
-        </Button>
-        <Button v-else-if="mc.isLoggedIn" size="sm" variant="ghost" @click="mc.logout()">退出</Button>
-        <Button v-else size="sm" @click="mc.login()">登录</Button>
-      </div>
-    </div>
-    -->
   </div>
 </template>

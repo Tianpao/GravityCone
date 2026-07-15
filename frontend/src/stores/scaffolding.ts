@@ -5,6 +5,8 @@ import type { RoomStatus, ConnectionStatus } from '@/../bindings/gravitycone/cor
 
 type EventUnsubscriber = () => void
 
+const APP_VERSION = 'GravityCone v1.0.0'
+
 export const useScaffoldingStore = defineStore('scaffolding', {
   state: () => ({
     // HOST
@@ -31,7 +33,7 @@ export const useScaffoldingStore = defineStore('scaffolding', {
       this.creating = true
       this.hostError = ''
       try {
-        const result = await CreateRoom(mcPort, playerName, 'GravityCone v1.0.0', '')
+        const result = await CreateRoom(mcPort, playerName, APP_VERSION, '')
         this.roomStatus = result
         this.startHostEvents()
       } catch (e: any) {
@@ -116,7 +118,7 @@ export const useScaffoldingStore = defineStore('scaffolding', {
       this.joining = true
       this.guestError = ''
       try {
-        const result = await JoinRoom(roomCode, playerName, 'GravityCone v1.0.0', '')
+        const result = await JoinRoom(roomCode, playerName, APP_VERSION, '')
         this.connectionStatus = result
         this.startGuestEvents()
       } catch (e: any) {
