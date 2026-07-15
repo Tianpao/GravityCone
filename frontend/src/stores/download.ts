@@ -8,7 +8,7 @@ type DownloadStatus = 'idle' | 'downloading' | 'extracting' | 'error'
 export interface DownloadProgress {
   step: 'downloading' | 'extracting'
   percent: number
-  totalSize: number
+  total_size: number
   speed: number
 }
 
