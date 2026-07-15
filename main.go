@@ -132,7 +132,7 @@ func main() {
 	}()
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title: "GravityCone",
+		Title:     "GravityCone",
 		Width:     420,
 		Height:    680,
 		Frameless: true,

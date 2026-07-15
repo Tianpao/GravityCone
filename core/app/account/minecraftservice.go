@@ -69,9 +69,9 @@ type mcProfileResponse struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
 	Skins []struct {
-		ID     string `json:"id"`
-		State  string `json:"state"`
-		URL    string `json:"url"`
+		ID    string `json:"id"`
+		State string `json:"state"`
+		URL   string `json:"url"`
 	} `json:"skins"`
 }
 

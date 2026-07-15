@@ -9,8 +9,8 @@ type Request struct {
 
 // Response represents an outgoing JSON response to stdout.
 type Response struct {
-	ID     int        `json:"id"`
-	Status string     `json:"status"` // "success", "error", "progress"
+	ID     int         `json:"id"`
+	Status string      `json:"status"` // "success", "error", "progress"
 	Data   interface{} `json:"data,omitempty"`
 	Error  *ErrorInfo  `json:"error,omitempty"`
 }

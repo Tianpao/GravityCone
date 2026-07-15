@@ -1,0 +1,323 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install build tools
+        shell: bash
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.117
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+
+      - name: Build Windows GUI
+        shell: bash
+        run: |
+          task build ARCH=${{ matrix.arch }} \
+            MS_CLIENT_ID="${{ secrets.MS_CLIENT_ID || '' }}" \
+            MS_CLIENT_SECRET="${{ secrets.MS_CLIENT_SECRET || '' }}" \
+            NAIDS_CLIENT_ID="${{ secrets.NAIDS_CLIENT_ID || '' }}" \
+            NAIDS_CLIENT_SECRET="${{ secrets.NAIDS_CLIENT_SECRET || '' }}"
+
+      - name: Package
+        shell: bash
+        run: |
+          cd bin
+          zip "gravitycone-windows-${{ matrix.arch }}.zip" gravitycone.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-${{ matrix.arch }}
+          path: bin/gravitycone-windows-${{ matrix.arch }}.zip
+          if-no-files-found: error
+
+  build-linux:
+    runs-on: ${{ matrix.runs-on }}
+    # Wails Linux GUI needs CGO so linux_cgo.go (defines `pointer`) is compiled.
+    env:
+      CGO_ENABLED: "1"
+      CC: gcc
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runs-on: ubuntu-24.04
+          - arch: arm64
+            runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install system deps
+        run: |
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libgtk-4-dev \
+            libwebkitgtk-6.0-dev \
+            libglib2.0-dev \
+            libsoup-3.0-dev \
+            libgcc-s1
+          echo "=== pkg-config modules ==="
+          pkg-config --list-all | grep -E '^(gtk|webkit|glib|soup|gio)' || true
+          for m in gtk4 webkitgtk-6.0 glib-2.0 gio-unix-2.0 libsoup-3.0; do
+            if ! pkg-config --exists "$m"; then
+              echo "ERROR: required pkg-config module missing: $m"
+              pkg-config --print-errors --exists "$m" || true
+              exit 1
+            fi
+            echo "$m: $(pkg-config --modversion "$m")"
+          done
+
+      - name: Install build tools
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.117
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+
+      # Wails Linux GUI requires CGO so linux_cgo.go is compiled (defines `pointer`).
+      - name: Build Linux GUI
+        env:
+          CGO_ENABLED: "1"
+          CC: gcc
+        run: |
+          set -euo pipefail
+          export CGO_ENABLED=1
+          export CC=gcc
+          echo "=== pre-build diagnostics ==="
+          command -v gcc
+          gcc --version | head -1
+          command -v wails3
+          command -v task
+          go env CGO_ENABLED CC GOOS GOARCH
+          wails3 tool has "gcc|clang" || true
+          if [ "$(go env CGO_ENABLED)" != "1" ]; then
+            echo "ERROR: CGO_ENABLED is not 1"
+            exit 1
+          fi
+          task build ARCH=${{ matrix.arch }} \
+            MS_CLIENT_ID="${{ secrets.MS_CLIENT_ID || '' }}" \
+            MS_CLIENT_SECRET="${{ secrets.MS_CLIENT_SECRET || '' }}" \
+            NAIDS_CLIENT_ID="${{ secrets.NAIDS_CLIENT_ID || '' }}" \
+            NAIDS_CLIENT_SECRET="${{ secrets.NAIDS_CLIENT_SECRET || '' }}"
+
+      - name: Package
+        run: |
+          cd bin
+          tar czf "gravitycone-linux-${{ matrix.arch }}.tar.gz" gravitycone
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: bin/gravitycone-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install build tools
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.117
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+
+      - name: Build & package macOS GUI
+        run: |
+          task darwin:package ARCH=${{ matrix.arch }} \
+            MS_CLIENT_ID="${{ secrets.MS_CLIENT_ID || '' }}" \
+            MS_CLIENT_SECRET="${{ secrets.MS_CLIENT_SECRET || '' }}" \
+            NAIDS_CLIENT_ID="${{ secrets.NAIDS_CLIENT_ID || '' }}" \
+            NAIDS_CLIENT_SECRET="${{ secrets.NAIDS_CLIENT_SECRET || '' }}"
+          cd bin
+          zip -r "gravitycone-macos-${{ matrix.arch }}.zip" gravitycone.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-${{ matrix.arch }}
+          path: bin/gravitycone-macos-${{ matrix.arch }}.zip
+          if-no-files-found: error
+
+  build-macos-universal:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install build tools
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.117
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+
+      - name: Build universal macOS binary
+        run: |
+          task darwin:build:universal \
+            MS_CLIENT_ID="${{ secrets.MS_CLIENT_ID || '' }}" \
+            MS_CLIENT_SECRET="${{ secrets.MS_CLIENT_SECRET || '' }}" \
+            NAIDS_CLIENT_ID="${{ secrets.NAIDS_CLIENT_ID || '' }}" \
+            NAIDS_CLIENT_SECRET="${{ secrets.NAIDS_CLIENT_SECRET || '' }}"
+
+      - name: Package .app bundle
+        run: |
+          task darwin:create:app:bundle
+          cd bin
+          zip -r "gravitycone-macos-universal.zip" gravitycone.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-universal
+          path: bin/gravitycone-macos-universal.zip
+          if-no-files-found: error
+
+  # CLI is pure Go (build tag: cli), no Wails/CGO/GTK required.
+  build-cli:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [windows, linux, darwin]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Build CLI
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          ext=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
+          binary="gravitycone-cli-${{ matrix.goos }}-${{ matrix.goarch }}${ext}"
+          mkdir -p bin
+          go build -tags cli -trimpath -buildvcs=false \
+            -ldflags="-w -s" \
+            -o "bin/${binary}" .
+
+          cd bin
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip "gravitycone-cli-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "${binary}"
+          else
+            tar czf "gravitycone-cli-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" "${binary}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-cli-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: bin/gravitycone-cli-${{ matrix.goos }}-${{ matrix.goarch }}.*
+          if-no-files-found: error
+
+  release:
+    needs:
+      - build-windows
+      - build-linux
+      - build-macos
+      - build-macos-universal
+      - build-cli
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts
+        run: |
+          find artifacts -mindepth 2 -type f -exec mv {} artifacts/ \;
+          find artifacts -type d -empty -delete
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum * > checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

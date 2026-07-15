@@ -14,7 +14,7 @@
     "@tailwindcss/vite": "^4.3.1",
     "@vicons/ionicons5": "^0.13.0",
     "@vueuse/core": "^14.3.0",
-    "@wailsio/runtime": "latest",
+    "@wailsio/runtime": "3.0.0-alpha.97",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "pinia": "^3.0.4",

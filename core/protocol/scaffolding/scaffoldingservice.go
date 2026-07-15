@@ -83,8 +83,8 @@ func InitScaffoldingEmitter(svc *ScaffoldingService, emitter utils.EventEmitter)
 }
 
 type ScaffoldingService struct {
-	eventEmitter    utils.EventEmitter
-	joinProgressCb  func(string) // set by CLI mode for progress notifications
+	eventEmitter   utils.EventEmitter
+	joinProgressCb func(string) // set by CLI mode for progress notifications
 
 	// HOST state
 	hostManager    *easytier.EasyTierManager
@@ -96,10 +96,10 @@ type ScaffoldingService struct {
 	hostPlayerMu   sync.Mutex
 	hostStopCh     chan struct{}
 	hostRunning    bool
-	hostMu            sync.Mutex
-	hostPlayerName    string
-	hostStopReason    string // reason the room was auto-stopped (e.g. MC server gone)
-	hostConns         map[net.Conn]struct{} // track active connections for shutdown
+	hostMu         sync.Mutex
+	hostPlayerName string
+	hostStopReason string                // reason the room was auto-stopped (e.g. MC server gone)
+	hostConns      map[net.Conn]struct{} // track active connections for shutdown
 	hostConnMu     sync.Mutex
 
 	// GUEST state
@@ -115,15 +115,15 @@ type ScaffoldingService struct {
 	guestRoomCode             *RoomCode
 	guestPlayerName           string
 	guestNegotiatedEasyTierID bool
-	guestScaffoldingLocalPort uint16          // local port forwarded to host's scaffolding port
-	guestDisconnectReason     string          // set when connection is lost (e.g. host closed room)
-	guestDirectLocal          bool            // true when guest and host are on the same machine
-	guestIOMu                 sync.Mutex      // serializes writes on guestConn
-	guestReadCh               chan readResult // background reader delivers responses here
-	guestFakeServer           *minecraft.FakeServer     // LAN broadcaster for Minecraft discovery
-	guestMCLocalPort          uint16          // local port forwarded to host's MC server via EasyTier
-	guestMCRemoteAddr         string          // remote addr for port-forward cleanup (host_virtual_ip:mc_port)
-	guestMotd                 string          // custom MOTD for LAN broadcast
+	guestScaffoldingLocalPort uint16                // local port forwarded to host's scaffolding port
+	guestDisconnectReason     string                // set when connection is lost (e.g. host closed room)
+	guestDirectLocal          bool                  // true when guest and host are on the same machine
+	guestIOMu                 sync.Mutex            // serializes writes on guestConn
+	guestReadCh               chan readResult       // background reader delivers responses here
+	guestFakeServer           *minecraft.FakeServer // LAN broadcaster for Minecraft discovery
+	guestMCLocalPort          uint16                // local port forwarded to host's MC server via EasyTier
+	guestMCRemoteAddr         string                // remote addr for port-forward cleanup (host_virtual_ip:mc_port)
+	guestMotd                 string                // custom MOTD for LAN broadcast
 
 	joinCancelled atomic.Bool // set to true to abort a running JoinRoom
 }

@@ -22,7 +22,7 @@ export const useWatermarkStore = defineStore('watermark', () => {
     loadingImages.value = true
     error.value = ''
     try {
-      demoImages.value = await ListDemoImages()
+      demoImages.value = (await ListDemoImages()) ?? []
     } catch (e: any) {
       error.value = e?.message || String(e)
     } finally {
