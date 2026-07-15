@@ -17,6 +17,7 @@ export const useUserStore = defineStore('user', {
     loading: false,
     initialized: false,
     error: '',
+    loginRequired: false,
   }),
   getters: {
     isLoggedIn: (state) => state.user !== null,
@@ -28,6 +29,7 @@ export const useUserStore = defineStore('user', {
       try {
         const user = await StartLogin()
         this.user = user as NatayarkUser
+        this.loginRequired = false
       } catch (e: any) {
         this.error = e?.toString() || 'Login failed'
       } finally {

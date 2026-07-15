@@ -41,6 +41,7 @@ router.beforeEach(async (to) => {
   }
 
   if (!user.isLoggedIn) {
+    user.loginRequired = true
     return { name: "user" };
   }
 

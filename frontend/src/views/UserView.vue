@@ -10,6 +10,20 @@ const mc = useMinecraftStore()
 
 <template>
   <div class="flex flex-1 flex-col gap-4 px-5 py-6">
+    <!-- Login required alert -->
+    <div
+      v-if="user.loginRequired"
+      class="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4"
+    >
+      <svg class="mt-0.5 size-5 shrink-0 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M12 3a9 9 0 100 18 9 9 0 000-18z" />
+      </svg>
+      <div class="min-w-0">
+        <p class="text-sm font-medium text-amber-600 dark:text-amber-400">需要登录</p>
+        <p class="text-xs text-amber-600/80 dark:text-amber-400/80">请先登录 Natayark 账号以使用 GravityCone 的全部功能</p>
+      </div>
+    </div>
+
     <!-- Natayark ID -->
     <div class="flex items-center gap-3 rounded-lg border border-border p-3">
       <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-bold text-muted-foreground">
