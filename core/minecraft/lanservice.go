@@ -1,15 +1,19 @@
 package minecraft
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/andre-carbajal/go-mcstatus"
 	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 
 	"gravitycone/core/utils"
 )
@@ -38,6 +42,7 @@ type LanService struct {
 	entries      []lanServerEntry
 	conns        []*net.UDPConn
 	pconns       []*ipv4.PacketConn
+	pconnsV6     []*ipv6.PacketConn
 	stopCh       chan struct{}
 	running      bool
 	localIPs     map[string]bool
@@ -63,98 +68,140 @@ func (s *LanService) StartDiscovery() error {
 	s.mu.Unlock()
 
 	group := net.IPv4(224, 0, 2, 60)
+	groupV6 := net.ParseIP("ff75:230::60")
 
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return fmt.Errorf("failed to list interfaces: %w", err)
 	}
 
-	var conns []*net.UDPConn
-	var pconns []*ipv4.PacketConn
-	localIPs := make(map[string]bool)
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagMulticast == 0 {
-			continue
-		}
+	localIPs := map[string]bool{"127.0.0.1": true}
+	var bindAddresses []string
+	for i := range ifaces {
+		iface := &ifaces[i]
 		addrs, err := iface.Addrs()
 		if err != nil {
+			slog.Warn("failed to inspect LAN discovery interface", "interface", iface.Name, "error", err)
 			continue
 		}
+
 		for _, addr := range addrs {
 			ipNet, ok := addr.(*net.IPNet)
-			if !ok || ipNet.IP.To4() == nil {
+			if !ok || ipNet.IP.IsUnspecified() {
 				continue
 			}
-			localIPs[ipNet.IP.To4().String()] = true
-			bindAddr := &net.UDPAddr{IP: ipNet.IP.To4(), Port: 4445}
-			conn, err := net.ListenPacket("udp4", bindAddr.String())
-			if err != nil {
-				continue
+			ip := ipNet.IP
+			localIPs[ip.String()] = true
+			if ip.To4() != nil && iface.Flags&net.FlagUp != 0 && iface.Flags&net.FlagLoopback == 0 && iface.Flags&net.FlagMulticast != 0 {
+				bindAddresses = append(bindAddresses, ip.String())
 			}
-			udpConn := conn.(*net.UDPConn)
-			pc := ipv4.NewPacketConn(udpConn)
-			if err := pc.JoinGroup(&iface, &net.UDPAddr{IP: group}); err != nil {
-				pc.Close()
-				continue
-			}
-			udpConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-			conns = append(conns, udpConn)
-			pconns = append(pconns, pc)
 		}
 	}
+	bindAddresses = append(bindAddresses, "0.0.0.0")
 
+	listenConfig := net.ListenConfig{
+		Control: func(_ string, _ string, rawConn syscall.RawConn) error {
+			var controlErr error
+			if err := rawConn.Control(func(fd uintptr) {
+				controlErr = setReuseAddr(fd)
+			}); err != nil {
+				return err
+			}
+			return controlErr
+		},
+	}
+	var conns []*net.UDPConn
+	var pconns []*ipv4.PacketConn
+	var pconnsV6 []*ipv6.PacketConn
+	for _, address := range bindAddresses {
+		conn, err := listenConfig.ListenPacket(context.Background(), "udp4", net.JoinHostPort(address, "4445"))
+		if err != nil {
+			slog.Warn("failed to bind LAN discovery socket", "address", address, "error", err)
+			continue
+		}
+		udpConn := conn.(*net.UDPConn)
+		pc := ipv4.NewPacketConn(udpConn)
+		if err := pc.JoinGroup(nil, &net.UDPAddr{IP: group}); err != nil {
+			pc.Close()
+			slog.Warn("failed to join LAN multicast group", "address", address, "group", group, "error", err)
+			continue
+		}
+		slog.Info("joined LAN multicast group", "address", address, "group", group)
+		conns = append(conns, udpConn)
+		pconns = append(pconns, pc)
+	}
+	if conn, err := listenConfig.ListenPacket(context.Background(), "udp6", "[::]:4445"); err != nil {
+		slog.Warn("failed to bind IPv6 LAN discovery socket", "error", err)
+	} else {
+		udpConn := conn.(*net.UDPConn)
+		pc := ipv6.NewPacketConn(udpConn)
+		if err := pc.JoinGroup(nil, &net.UDPAddr{IP: groupV6}); err != nil {
+			pc.Close()
+			slog.Warn("failed to join IPv6 LAN multicast group", "group", groupV6, "error", err)
+		} else {
+			slog.Info("joined IPv6 LAN multicast group", "address", udpConn.LocalAddr(), "group", groupV6)
+			conns = append(conns, udpConn)
+			pconnsV6 = append(pconnsV6, pc)
+		}
+	}
 	if len(conns) == 0 {
-		return fmt.Errorf("no suitable network interface found for multicast")
+		return fmt.Errorf("failed to join LAN discovery multicast group")
 	}
 
 	s.mu.Lock()
 	s.conns = conns
 	s.pconns = pconns
+	s.pconnsV6 = pconnsV6
 	s.localIPs = localIPs
 	s.running = true
 	s.mu.Unlock()
 
-	go s.listen(conns, s.stopCh, localIPs)
+	for _, conn := range conns {
+		go s.listen(conn, s.stopCh, localIPs)
+	}
 	go s.cleanupLoop(s.stopCh)
 	return nil
 }
 
-func (s *LanService) listen(conns []*net.UDPConn, stopCh chan struct{}, localIPs map[string]bool) {
+func (s *LanService) listen(conn *net.UDPConn, stopCh chan struct{}, localIPs map[string]bool) {
 	buf := make([]byte, 8192)
 	for {
-		for _, conn := range conns {
-			conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-			n, src, err := conn.ReadFromUDP(buf)
-			if err != nil {
-				continue
+		conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		n, src, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			select {
+			case <-stopCh:
+				return
+			default:
 			}
-
-			server := parseMCPacket(buf[:n], src)
-			if !localIPs[server.IP] {
-				continue
+			if netErr, ok := err.(net.Error); !ok || !netErr.Timeout() {
+				slog.Warn("LAN discovery socket read failed", "error", err)
 			}
-			s.mu.Lock()
-			found := false
-			for i := range s.entries {
-				if s.entries[i].server.IP == server.IP && s.entries[i].server.Port == server.Port {
-					s.entries[i].server.MOTD = server.MOTD
-					s.entries[i].lastSeen = time.Now()
-					found = true
-					break
-				}
-			}
-			if !found {
-				s.entries = append(s.entries, lanServerEntry{server: server, lastSeen: time.Now()})
-				s.eventEmitter.Emit("lan.server_found", server)
-			}
-			s.mu.Unlock()
+			continue
 		}
 
-		select {
-		case <-stopCh:
-			return
-		default:
+		server := parseMCPacket(buf[:n], src)
+		isLocal := localIPs[server.IP]
+		slog.Info("received LAN discovery packet", "source", src.String(), "local", isLocal, "motd", server.MOTD, "port", server.Port, "payload", logPayload(buf[:n]))
+		if !isLocal {
+			slog.Info("discarded non-local LAN discovery packet", "source", src.String())
+			continue
 		}
+		s.mu.Lock()
+		found := false
+		for i := range s.entries {
+			if s.entries[i].server.IP == server.IP && s.entries[i].server.Port == server.Port {
+				s.entries[i].server.MOTD = server.MOTD
+				s.entries[i].lastSeen = time.Now()
+				found = true
+				break
+			}
+		}
+		if !found {
+			s.entries = append(s.entries, lanServerEntry{server: server, lastSeen: time.Now()})
+			s.eventEmitter.Emit("lan.server_found", server)
+		}
+		s.mu.Unlock()
 	}
 }
 
@@ -193,10 +240,14 @@ func (s *LanService) StopDiscovery() {
 	for _, pc := range s.pconns {
 		pc.Close()
 	}
+	for _, pc := range s.pconnsV6 {
+		pc.Close()
+	}
 	for _, conn := range s.conns {
 		conn.Close()
 	}
 	s.pconns = nil
+	s.pconnsV6 = nil
 	s.conns = nil
 	s.localIPs = nil
 	s.running = false
@@ -230,6 +281,14 @@ func (s *LanService) VerifyServer(ip string, port int) (string, error) {
 	}
 
 	return resp.Version.Name, nil
+}
+
+func logPayload(data []byte) string {
+	const maxLength = 256
+	if len(data) > maxLength {
+		return string(data[:maxLength]) + "..."
+	}
+	return string(data)
 }
 
 func parseMCPacket(data []byte, src *net.UDPAddr) LanServer {

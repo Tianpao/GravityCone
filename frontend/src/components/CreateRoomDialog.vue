@@ -29,6 +29,9 @@ const user = useUserStore()
 const router = useRouter()
 const manualPort = ref('')
 const selectedIndex = ref(-1)
+const initialScanTimeout = ref<ReturnType<typeof setTimeout> | undefined>()
+const initialScanComplete = ref(false)
+const refreshing = ref(false)
 
 const isValidPort = computed(() => {
   const p = parseInt(manualPort.value)
@@ -62,11 +65,35 @@ async function handleCreate() {
   }
 }
 
-function startPolling() {
-  lan.startDiscovery()
+function clearInitialScanTimeout() {
+  if (initialScanTimeout.value) {
+    clearTimeout(initialScanTimeout.value)
+    initialScanTimeout.value = undefined
+  }
+}
+
+async function startPolling() {
+  initialScanComplete.value = false
+  clearInitialScanTimeout()
+  await lan.startDiscovery()
+  initialScanTimeout.value = setTimeout(() => {
+    initialScanComplete.value = true
+  }, 3000)
+}
+
+async function refreshDiscovery() {
+  refreshing.value = true
+  try {
+    await lan.stopDiscovery()
+    await startPolling()
+  } finally {
+    refreshing.value = false
+  }
 }
 
 function stopPolling() {
+  clearInitialScanTimeout()
+  initialScanComplete.value = false
   lan.stopDiscovery()
   selectedIndex.value = -1
   manualPort.value = ''
@@ -98,14 +125,14 @@ onUnmounted(() => {
       <div class="space-y-2">
         <div class="flex items-center justify-between">
           <span class="text-sm font-medium">局域网游戏</span>
-          <Button variant="ghost" size="xs" @click="lan.refresh()" :disabled="lan.discovering">
-            <ReloadOutline class="size-3.5" :class="{ 'animate-spin': lan.discovering }" />
+          <Button variant="ghost" size="xs" @click="refreshDiscovery" :disabled="refreshing">
+            <ReloadOutline class="size-3.5" :class="{ 'animate-spin': lan.discovering || refreshing }" />
           </Button>
         </div>
 
         <!-- Loading -->
         <div
-          v-if="lan.discovering && lan.servers.length === 0"
+          v-if="lan.discovering && !initialScanComplete && lan.servers.length === 0"
           class="flex items-center justify-center py-6 text-sm text-muted-foreground"
         >
           正在扫描局域网...
