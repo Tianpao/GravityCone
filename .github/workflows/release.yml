@@ -34,7 +34,7 @@ jobs:
       - name: Install build tools
         shell: bash
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.106
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.117
           go install github.com/go-task/task/v3/cmd/task@latest
           echo "$HOME/go/bin" >> $GITHUB_PATH
 
@@ -114,7 +114,7 @@ jobs:
 
       - name: Install build tools
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.106
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.117
           go install github.com/go-task/task/v3/cmd/task@latest
           echo "$HOME/go/bin" >> $GITHUB_PATH
 
@@ -179,7 +179,7 @@ jobs:
 
       - name: Install build tools
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.106
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.117
           go install github.com/go-task/task/v3/cmd/task@latest
           echo "$HOME/go/bin" >> $GITHUB_PATH
 
@@ -219,7 +219,7 @@ jobs:
 
       - name: Install build tools
         run: |
-          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.106
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.117
           go install github.com/go-task/task/v3/cmd/task@latest
           echo "$HOME/go/bin" >> $GITHUB_PATH
 
