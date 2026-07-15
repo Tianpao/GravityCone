@@ -1,0 +1,218 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Gofmt check
+        run: |
+          fmt=$(gofmt -l .)
+          if [ -n "$fmt" ]; then
+            echo "Files not formatted with gofmt:"
+            echo "$fmt"
+            exit 1
+          fi
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend deps & type-check
+        run: |
+          pnpm install --dir frontend
+          pnpm --dir frontend exec tsc --noEmit
+
+  build-windows:
+    needs: lint
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install build tools
+        shell: bash
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.106
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+
+      - name: Build Windows GUI
+        shell: bash
+        run: |
+          task build ARCH=${{ matrix.arch }} \
+            MS_CLIENT_ID="${{ secrets.MS_CLIENT_ID || '' }}" \
+            MS_CLIENT_SECRET="${{ secrets.MS_CLIENT_SECRET || '' }}" \
+            NAIDS_CLIENT_ID="${{ secrets.NAIDS_CLIENT_ID || '' }}" \
+            NAIDS_CLIENT_SECRET="${{ secrets.NAIDS_CLIENT_SECRET || '' }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gravitycone-windows-${{ matrix.arch }}
+          path: bin/gravitycone.exe
+          if-no-files-found: error
+
+  build-linux:
+    needs: lint
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runs-on: ubuntu-latest
+          - arch: arm64
+            runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Install build tools
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.106
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+
+      - name: Build Linux GUI
+        run: |
+          task build ARCH=${{ matrix.arch }} \
+            MS_CLIENT_ID="${{ secrets.MS_CLIENT_ID || '' }}" \
+            MS_CLIENT_SECRET="${{ secrets.MS_CLIENT_SECRET || '' }}" \
+            NAIDS_CLIENT_ID="${{ secrets.NAIDS_CLIENT_ID || '' }}" \
+            NAIDS_CLIENT_SECRET="${{ secrets.NAIDS_CLIENT_SECRET || '' }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gravitycone-linux-${{ matrix.arch }}
+          path: bin/gravitycone
+          if-no-files-found: error
+
+  build-macos:
+    needs: lint
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install build tools
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha2.106
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+
+      - name: Build macOS GUI
+        run: |
+          task build ARCH=${{ matrix.arch }} \
+            MS_CLIENT_ID="${{ secrets.MS_CLIENT_ID || '' }}" \
+            MS_CLIENT_SECRET="${{ secrets.MS_CLIENT_SECRET || '' }}" \
+            NAIDS_CLIENT_ID="${{ secrets.NAIDS_CLIENT_ID || '' }}" \
+            NAIDS_CLIENT_SECRET="${{ secrets.NAIDS_CLIENT_SECRET || '' }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gravitycone-macos-${{ matrix.arch }}
+          path: bin/gravitycone
+          if-no-files-found: error
+
+  build-cli:
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [windows, linux, darwin]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Build CLI
+        run: |
+          ext=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then ext=".exe"; fi
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+            go build -tags cli -trimpath -buildvcs=false \
+            -ldflags="-w -s" \
+            -o "bin/gravitycone-cli-${{ matrix.goos }}-${{ matrix.goarch }}${ext}" .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gravitycone-cli-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: bin/gravitycone-cli-*
+          if-no-files-found: error
