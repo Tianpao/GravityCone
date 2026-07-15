@@ -99,6 +99,10 @@ jobs:
   build-linux:
     needs: lint
     runs-on: ${{ matrix.runs-on }}
+    # Wails Linux GUI needs CGO so linux_cgo.go (defines `pointer`) is compiled.
+    env:
+      CGO_ENABLED: "1"
+      CC: gcc
     strategy:
       fail-fast: false
       matrix:
@@ -153,10 +157,26 @@ jobs:
           go install github.com/go-task/task/v3/cmd/task@latest
           echo "$HOME/go/bin" >> $GITHUB_PATH
 
+      # Wails Linux GUI requires CGO so linux_cgo.go is compiled (defines `pointer`).
       - name: Build Linux GUI
         env:
           CGO_ENABLED: "1"
+          CC: gcc
         run: |
+          set -euo pipefail
+          export CGO_ENABLED=1
+          export CC=gcc
+          echo "=== pre-build diagnostics ==="
+          command -v gcc
+          gcc --version | head -1
+          command -v wails3
+          command -v task
+          go env CGO_ENABLED CC GOOS GOARCH
+          wails3 tool has "gcc|clang" || true
+          if [ "$(go env CGO_ENABLED)" != "1" ]; then
+            echo "ERROR: CGO_ENABLED is not 1"
+            exit 1
+          fi
           task build ARCH=${{ matrix.arch }} \
             MS_CLIENT_ID="${{ secrets.MS_CLIENT_ID || '' }}" \
             MS_CLIENT_SECRET="${{ secrets.MS_CLIENT_SECRET || '' }}" \
