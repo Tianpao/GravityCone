@@ -7,14 +7,18 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as $models from "./models.js";
+import * as utils$0 from "../utils/models.js";
 
-export function CreateRoom(ip: string, port: number): $CancellablePromise<void> {
-    return $Call.ByID(3350645637, ip, port);
-}
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
 
 export function GetDiscoveredServers(): $CancellablePromise<$models.LanServer[] | null> {
     return $Call.ByID(384771432);
+}
+
+export function SetEventEmitter(emitter: utils$0.EventEmitter): $CancellablePromise<void> {
+    return $Call.ByID(1309808372, emitter);
 }
 
 export function StartDiscovery(): $CancellablePromise<void> {
