@@ -30,13 +30,17 @@ export const useDownloadStore = defineStore('download', {
     startListening() {
       if (this._progressUnsubscriber) return
 
-      this._progressUnsubscriber = Events.On('download.progress', (event: { data: DownloadProgress }) => {
+      this._progressUnsubscriber = Events.On('download.progress', (event) => {
         const data = event.data
+        if (data.step !== 'downloading' && data.step !== 'extracting') return
         if (this._timeoutId) {
           clearTimeout(this._timeoutId)
           this._timeoutId = null
         }
-        this.progress = data
+        this.progress = {
+          ...data,
+          step: data.step,
+        }
         this.status = data.step
         this.errorMessage = ''
         if (data.step === 'extracting' && data.percent >= 100) {
