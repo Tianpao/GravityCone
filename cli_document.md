@@ -485,10 +485,11 @@ CLI 会主动推送以下事件，宿主进程无需发送请求即可接收。
 | event | data 结构 | 说明 |
 |-------|----------|------|
 | `system.ready` | `{"version": "1.0.0"}` | CLI 启动就绪 |
-| `room.player_joined` | `PlayerInfo` | 新玩家加入房间 |
-| `room.player_left` | `PlayerInfo` | 玩家离开房间（超时） |
-| `room.closed` | `{"reason": "..."}` | 房间被关闭 |
-| `room.disconnected` | `{"reason": "..."}` | 与房间断开连接 |
+| `room.player_joined` | `PlayerInfo` | 仅房主模式：有新客人加入时推送 |
+| `room.player_left` | `PlayerInfo` | 仅房主模式：客人心跳超时时推送 |
+| `room.closed` | `{"reason": "..."}` | 仅房主模式：房间被关闭 |
+| `room.disconnected` | `{"reason": "..."}` | 仅客人模式：与房间断开连接 |
+| `room.guest_player_list_updated` | `PlayerInfo[]` | 仅客人模式：从房主同步到最新玩家列表时推送 |
 | `lan.server_found` | `{"motd": "...", "ip": "...", "port": 25565}` | 发现新的局域网服务器 |
 | `lan.server_lost` | `{"ip": "...", "port": 25565}` | 局域网服务器消失（30秒无广播） |
 
