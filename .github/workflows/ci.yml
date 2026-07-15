@@ -2,7 +2,6 @@ name: CI
 
 on:
   push:
-  pull_request:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -44,7 +43,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
@@ -54,6 +53,7 @@ jobs:
           pnpm --dir frontend exec tsc --noEmit
 
   build-windows:
+    if: github.ref == 'refs/heads/main'
     needs: lint
     runs-on: windows-latest
     strategy:
@@ -74,7 +74,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
@@ -101,6 +101,7 @@ jobs:
           if-no-files-found: error
 
   build-linux:
+    if: github.ref == 'refs/heads/main'
     needs: lint
     runs-on: ${{ matrix.runs-on }}
     # Wails Linux GUI needs CGO so linux_cgo.go (defines `pointer`) is compiled.
@@ -129,7 +130,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
@@ -196,6 +197,7 @@ jobs:
           if-no-files-found: error
 
   build-macos:
+    if: github.ref == 'refs/heads/main'
     needs: lint
     runs-on: macos-latest
     strategy:
@@ -216,7 +218,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
@@ -242,6 +244,7 @@ jobs:
 
   # CLI is pure Go (build tag: cli), no Wails/CGO/GTK required.
   build-cli:
+    if: github.ref == 'refs/heads/main'
     needs: lint
     runs-on: ubuntu-24.04
     strategy:
