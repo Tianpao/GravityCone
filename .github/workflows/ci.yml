@@ -20,7 +20,10 @@ jobs:
           cache: true
 
       - name: Go vet
-        run: go vet ./...
+        run: |
+          mkdir -p frontend/dist
+          touch frontend/dist/.gitkeep
+          go vet ./...
 
       - name: Gofmt check
         run: |
