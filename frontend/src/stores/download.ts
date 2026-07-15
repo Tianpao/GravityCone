@@ -16,7 +16,8 @@ export const useDownloadStore = defineStore('download', {
 
   actions: {
     startListening() {
-      Events.On('download.progress', (data: DownloadProgress) => {
+      Events.On('download.progress', (event: any) => {
+        const data: DownloadProgress = event.data
         this.progress = data
         this.downloading = true
         if (data.step === 'extracting' && data.percent >= 100) {

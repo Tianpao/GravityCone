@@ -23,6 +23,7 @@ declare module "@wailsio/runtime" {
             "lan.server_lost": { [_ in string]?: any } | null;
             "room.closed": { [_ in string]?: string } | null;
             "room.disconnected": { [_ in string]?: string } | null;
+            "room.guest_player_list_updated": scaffolding$0.PlayerInfo[] | null;
             "room.player_joined": scaffolding$0.PlayerInfo;
             "room.player_left": scaffolding$0.PlayerInfo;
         }

@@ -115,7 +115,7 @@ export function useGlobalDrop() {
 
       dropRoomCode.value = code
 
-      const playerName = user.user?.username || 'Player'
+      const playerName = user.user!.username
       await scaffold.joinRoom(code, playerName)
 
       // joinRoom completed — check if user cancelled while waiting

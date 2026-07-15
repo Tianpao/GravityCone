@@ -1,4 +1,5 @@
 import { createRouter, createWebHashHistory } from "vue-router";
+import { useUserStore } from "@/stores/user";
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -29,6 +30,21 @@ const router = createRouter({
       component: () => import("@/views/JoinedRoomView.vue"),
     },
   ],
+});
+
+router.beforeEach(async (to) => {
+  if (to.name === "user") return true;
+
+  const user = useUserStore();
+  if (!user.initialized) {
+    await user.refreshUser();
+  }
+
+  if (!user.isLoggedIn) {
+    return { name: "user" };
+  }
+
+  return true;
 });
 
 export default router;

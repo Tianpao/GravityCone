@@ -48,7 +48,7 @@ async function handleCreate() {
     ? lan.servers[selectedIndex.value]?.ip ?? '127.0.0.1'
     : '127.0.0.1'
 
-  const playerName = user.user?.username || 'Player'
+  const playerName = user.user!.username
 
   try {
     await scaffold.createRoom(port, playerName)

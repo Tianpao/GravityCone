@@ -15,6 +15,7 @@ export const useUserStore = defineStore('user', {
   state: () => ({
     user: null as NatayarkUser | null,
     loading: false,
+    initialized: false,
     error: '',
   }),
   getters: {
@@ -43,7 +44,11 @@ export const useUserStore = defineStore('user', {
       try {
         const user = await GetCurrentUser()
         this.user = user as NatayarkUser | null
-      } catch {}
+      } catch {
+        this.user = null
+      } finally {
+        this.initialized = true
+      }
     },
   },
 })

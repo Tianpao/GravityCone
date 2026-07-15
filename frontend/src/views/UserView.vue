@@ -40,9 +40,9 @@ const mc = useMinecraftStore()
       </div>
     </div>
 
+    <!-- Temporarily disabled: Microsoft login
     <Separator />
 
-    <!-- Minecraft -->
     <div class="flex items-center gap-3 rounded-lg border border-border p-3">
       <div class="flex shrink-0 items-center justify-center bg-muted overflow-hidden" style="width: 40px; height: 32px;">
         <img v-if="mc.isLoggedIn && mc.user?.avatar_png" :src="mc.user.avatar_png" :alt="mc.user.username" class="size-full" style="image-rendering: pixelated" />
@@ -57,7 +57,7 @@ const mc = useMinecraftStore()
         </svg>
       </div>
       <div class="min-w-0 flex-1">
-        <div class="text-sm font-medium">Minecraft 正版账号</div>
+        <div class="text-sm font-medium">Microsoft登录（在线）</div>
         <div v-if="mc.loading" class="text-xs text-muted-foreground">正在登录...</div>
         <div v-else-if="mc.isLoggedIn && mc.user" class="truncate text-xs text-muted-foreground">{{ mc.user.username }}</div>
         <div v-else-if="mc.error" class="truncate text-xs text-red-500">{{ mc.error }}</div>
@@ -71,5 +71,6 @@ const mc = useMinecraftStore()
         <Button v-else size="sm" @click="mc.login()">登录</Button>
       </div>
     </div>
+    -->
   </div>
 </template>

@@ -643,6 +643,7 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 	go s.guestHeartbeatLoop(machineID, easytierID, playerName, vendorPrefix)
 
 	s.reportJoinProgress("ready")
+	s.refreshGuestPlayerList()
 	return s.buildConnectionStatus(), nil
 }
 
@@ -978,6 +979,7 @@ func (s *ScaffoldingService) guestHeartbeatLoop(machineID, easytierID, playerNam
 				s.autoDisconnect("房主已关闭房间")
 				return
 			}
+			s.refreshGuestPlayerList()
 
 		case <-s.guestStopCh:
 			slog.Info("Heartbeat exiting on stopCh")
@@ -1106,6 +1108,8 @@ func (s *ScaffoldingService) refreshGuestPlayerList() {
 	s.guestMu.Lock()
 	s.guestPlayers = players
 	s.guestMu.Unlock()
+
+	s.eventEmitter.Emit("room.guest_player_list_updated", players)
 }
 
 // Cleanup stops any running room or connection (called on app shutdown)

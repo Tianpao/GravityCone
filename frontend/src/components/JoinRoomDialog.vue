@@ -76,7 +76,7 @@ function handlePaste(e: ClipboardEvent) {
 async function handleJoin() {
   if (!isComplete.value) return
   const code = 'U/' + formatDisplay(rawInput.value)
-  const playerName = user.user?.username || 'Player'
+  const playerName = user.user!.username
   try {
     await scaffold.joinRoom(code, playerName)
     emit('update:open', false)

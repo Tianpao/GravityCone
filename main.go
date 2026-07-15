@@ -42,6 +42,7 @@ func init() {
 	application.RegisterEvent[scaffolding.PlayerInfo]("room.player_left")
 	application.RegisterEvent[map[string]string]("room.closed")
 	application.RegisterEvent[map[string]string]("room.disconnected")
+	application.RegisterEvent[[]scaffolding.PlayerInfo]("room.guest_player_list_updated")
 	application.RegisterEvent[minecraft.LanServer]("lan.server_found")
 	application.RegisterEvent[map[string]interface{}]("lan.server_lost")
 }

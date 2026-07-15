@@ -48,7 +48,8 @@ export const useLanStore = defineStore('lan', {
     startEvents() {
       this.stopEvents()
 
-      const unsub1 = Events.On('lan.server_found', (server: any) => {
+      const unsub1 = Events.On('lan.server_found', (event: any) => {
+        const server = event.data
         const idx = this.servers.findIndex(s => s.ip === server.ip && s.port === server.port)
         if (idx >= 0) {
           this.servers[idx] = server
@@ -57,7 +58,8 @@ export const useLanStore = defineStore('lan', {
         }
       }) as unknown as EventUnsubscriber
 
-      const unsub2 = Events.On('lan.server_lost', (data: any) => {
+      const unsub2 = Events.On('lan.server_lost', (event: any) => {
+        const data = event.data
         this.servers = this.servers.filter(s => !(s.ip === data.ip && s.port === data.port))
       }) as unknown as EventUnsubscriber
 

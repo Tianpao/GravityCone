@@ -64,9 +64,9 @@ export const useScaffoldingStore = defineStore('scaffolding', {
     startHostEvents() {
       this.stopHostEvents()
 
-      // Wails sends raw event data (not WailsEvent wrapper) at runtime
-      const unsub1 = Events.On('room.player_joined', (player: any) => {
+      const unsub1 = Events.On('room.player_joined', (event: any) => {
         if (!this.roomStatus) return
+        const player = event.data
         const players = this.roomStatus.players ?? []
         if (!players.find(p => p.machine_id === player.machine_id)) {
           this.roomStatus = {
@@ -77,8 +77,9 @@ export const useScaffoldingStore = defineStore('scaffolding', {
         }
       }) as unknown as EventUnsubscriber
 
-      const unsub2 = Events.On('room.player_left', (player: any) => {
+      const unsub2 = Events.On('room.player_left', (event: any) => {
         if (!this.roomStatus) return
+        const player = event.data
         const players = this.roomStatus.players ?? []
         const filtered = players.filter(p => p.machine_id !== player.machine_id)
         this.roomStatus = {
@@ -88,8 +89,8 @@ export const useScaffoldingStore = defineStore('scaffolding', {
         }
       }) as unknown as EventUnsubscriber
 
-      const unsub3 = Events.On('room.closed', (data: any) => {
-        this.hostError = data.reason
+      const unsub3 = Events.On('room.closed', (event: any) => {
+        this.hostError = event.data?.reason
         this.roomStatus = null
         this.stopHostEvents()
       }) as unknown as EventUnsubscriber
@@ -150,17 +151,28 @@ export const useScaffoldingStore = defineStore('scaffolding', {
     startGuestEvents() {
       this.stopGuestEvents()
 
-      const unsub = Events.On('room.disconnected', (data: any) => {
+      const unsub1 = Events.On('room.disconnected', (event: any) => {
         if (this.connectionStatus) {
           this.connectionStatus = {
             ...this.connectionStatus,
             connected: false,
-            disconnect_reason: data.reason,
+            disconnect_reason: event.data?.reason,
           }
         }
       }) as unknown as EventUnsubscriber
 
-      this._guestUnsubscribers = [unsub]
+      const unsub2 = Events.On('room.guest_player_list_updated', (event: any) => {
+        if (this.connectionStatus) {
+          const players = event.data ?? []
+          this.connectionStatus = {
+            ...this.connectionStatus,
+            players,
+            online_count: players.length,
+          }
+        }
+      }) as unknown as EventUnsubscriber
+
+      this._guestUnsubscribers = [unsub1, unsub2]
     },
 
     stopGuestEvents() {

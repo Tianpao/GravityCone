@@ -73,7 +73,7 @@ function copyCode() {
       <!-- Player List -->
       <div class="rounded-xl border border-border bg-card p-4 space-y-3">
         <div class="flex items-center justify-between">
-          <p class="text-xs text-muted-foreground uppercase tracking-wider">在线玩家</p>
+          <p class="text-xs text-muted-foreground uppercase tracking-wider">玩家列表</p>
           <span class="text-xs text-muted-foreground">{{ scaffold.roomStatus.online_count ?? 0 }} 人</span>
         </div>
 
