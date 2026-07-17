@@ -17,8 +17,8 @@ const copied = ref(false)
 const hasDemoImages = computed(() => watermark.demoImages.length > 0)
 const currentImageName = computed(() => {
   if (!watermark.demoImages[selectedIndex.value]) return ''
-  const parts = watermark.demoImages[selectedIndex.value].replace(/\\/g, '/').split('/')
-  return parts[parts.length - 1]
+  const id = watermark.demoImages[selectedIndex.value]
+  return id.startsWith('embedded:') ? id.slice(9) : id.replace(/\\/g, '/').split('/').pop()!
 })
 
 async function generate() {
@@ -87,7 +87,7 @@ async function copyToClipboard() {
       v-if="!hasDemoImages && !watermark.loadingImages"
       class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400"
     >
-      未检测到演示图片。请在项目根目录创建 <code class="rounded bg-amber-500/20 px-1">images</code> 文件夹并放入图片。
+      未检测到内置演示图片
     </div>
 
     <!-- Image selector -->

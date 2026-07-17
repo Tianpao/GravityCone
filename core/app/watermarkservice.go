@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"embed"
 	"encoding/base64"
 	"fmt"
 	"image"
@@ -17,7 +18,10 @@ import (
 	"gravitycone/core/protocol/scaffolding"
 )
 
-const demoImagesDir = "images"
+//go:embed images/*
+var embeddedImages embed.FS
+
+const embeddedPrefix = "embedded:"
 
 // Fixed seeds — same seeds mean anyone with the app can decode room codes.
 const seedImg = 12345
@@ -38,7 +42,15 @@ type WatermarkService struct{}
 func (w *WatermarkService) EncodeRoomCode(sourcePath string, roomCode string) (*WatermarkResult, error) {
 	slog.Info("EncodeRoomCode", "source", sourcePath, "roomCode", roomCode)
 
-	srcData, err := os.ReadFile(sourcePath)
+	var srcData []byte
+	var err error
+
+	if strings.HasPrefix(sourcePath, embeddedPrefix) {
+		name := strings.TrimPrefix(sourcePath, embeddedPrefix)
+		srcData, err = embeddedImages.ReadFile("images/" + name)
+	} else {
+		srcData, err = os.ReadFile(sourcePath)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("读取源图片失败: %w", err)
 	}
@@ -68,7 +80,11 @@ func (w *WatermarkService) EncodeRoomCode(sourcePath string, roomCode string) (*
 	outputData := buf.Bytes()
 
 	// 5. Save to persistent location
-	baseName := filepath.Base(sourcePath)
+	baseName := sourcePath
+	if strings.HasPrefix(sourcePath, embeddedPrefix) {
+		baseName = strings.TrimPrefix(sourcePath, embeddedPrefix)
+	}
+	baseName = filepath.Base(baseName)
 	ext := filepath.Ext(baseName)
 	nameWithoutExt := strings.TrimSuffix(baseName, ext)
 	outputName := nameWithoutExt + "_watermarked.png"
@@ -139,11 +155,11 @@ func (w *WatermarkService) DecodeRoomCode(imageBase64 string) (string, error) {
 	return code, nil
 }
 
-// ListDemoImages returns absolute paths to images in the images directory.
+// ListDemoImages returns resource identifiers for embedded demo images.
 func (w *WatermarkService) ListDemoImages() ([]string, error) {
-	entries, err := os.ReadDir(demoImagesDir)
+	entries, err := embeddedImages.ReadDir("images")
 	if err != nil {
-		return nil, fmt.Errorf("images 目录不存在，请在项目根目录创建 images 文件夹并放入演示图片")
+		return nil, fmt.Errorf("读取内置图片失败: %w", err)
 	}
 
 	var images []string
@@ -153,15 +169,12 @@ func (w *WatermarkService) ListDemoImages() ([]string, error) {
 		}
 		name := strings.ToLower(entry.Name())
 		if strings.HasSuffix(name, ".png") || strings.HasSuffix(name, ".jpg") || strings.HasSuffix(name, ".jpeg") {
-			absPath, err := filepath.Abs(filepath.Join(demoImagesDir, entry.Name()))
-			if err == nil {
-				images = append(images, absPath)
-			}
+			images = append(images, embeddedPrefix+entry.Name())
 		}
 	}
 
 	if len(images) == 0 {
-		return nil, fmt.Errorf("images 目录中没有找到图片文件（支持 PNG/JPG/JPEG）")
+		return nil, fmt.Errorf("未找到内置演示图片")
 	}
 
 	return images, nil
