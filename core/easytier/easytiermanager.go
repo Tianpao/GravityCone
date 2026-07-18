@@ -18,7 +18,7 @@ import (
 	"gravitycone/core/utils"
 )
 
-const hostVirtualIP = "10.114.51.41"
+const hostVirtualIP = "10.144.144.1"
 
 var publicPeers = []string{
 	"https://etnode.zkitefly.eu.org/node1",
@@ -123,14 +123,15 @@ func allocateRPCPort() (string, error) {
 }
 
 type StartOptions struct {
-	NetworkName   string
-	NetworkSecret string
-	Hostname      string // HOST only; GUEST leaves empty
-	IsHost        bool
-	TCPPort       uint16   // HOST only: scaffolding TCP port, used for whitelist
-	MCPort        uint16   // HOST only: MC server port, used for whitelist
-	ConfigPath    string   // Path to TOML ACL config file (adds -c flag)
-	PortForwards  []string // Port forward entries (e.g. "tcp://0.0.0.0:12345/10.144.144.1:12345")
+	NetworkName        string
+	NetworkSecret      string
+	Hostname           string // HOST only; GUEST leaves empty
+	IsHost             bool
+	TCPPort            uint16   // HOST only: scaffolding TCP port, used for whitelist
+	MCPort             uint16   // HOST only: MC server port, used for whitelist
+	ConfigPath         string   // Path to TOML ACL config file (adds -c flag)
+	PortForwards       []string // Port forward entries (e.g. "tcp://0.0.0.0:12345/10.144.144.1:12345")
+	UpstreamCompatible bool     // Use the original PaperConnect EasyTier argument profile.
 }
 
 func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
@@ -150,39 +151,51 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 	args := []string{
 		"--network-name", opts.NetworkName,
 		"--network-secret", opts.NetworkSecret,
-		"--no-tun",
 		"--multi-thread",
-		"--enable-kcp-proxy",
-		"--enable-quic-proxy",
-		"--latency-first",
-		"--encryption-algorithm", "aes-gcm",
-		"--compression", "zstd",
-		"--default-protocol", "tcp",
-		"--private-mode", "true",
-		"--p2p-only",
 		"--rpc-portal", rpcPortal,
 		"--console-log-level", "info",
+	}
+	if opts.UpstreamCompatible {
+		args = append(args, "--disable-p2p", "false")
+	} else {
+		args = append(args,
+			"--no-tun",
+			"--enable-kcp-proxy",
+			"--enable-quic-proxy",
+			"--latency-first",
+			"--encryption-algorithm", "aes-gcm",
+			"--compression", "zstd",
+			"--default-protocol", "tcp",
+			"--private-mode", "true",
+			"--p2p-only",
+		)
 	}
 
 	if opts.IsHost {
 		args = append(args,
 			"-i", hostVirtualIP,
 			"--hostname", opts.Hostname,
-			"--tcp-whitelist", fmt.Sprintf("%d", opts.TCPPort),
-			"--udp-whitelist", fmt.Sprintf("%d", opts.TCPPort),
 		)
-		if opts.MCPort != 0 {
+		if !opts.UpstreamCompatible {
 			args = append(args,
-				"--tcp-whitelist", fmt.Sprintf("%d", opts.MCPort),
-				"--udp-whitelist", fmt.Sprintf("%d", opts.MCPort),
+				"--tcp-whitelist", fmt.Sprintf("%d", opts.TCPPort),
+				"--udp-whitelist", fmt.Sprintf("%d", opts.TCPPort),
 			)
+			if opts.MCPort != 0 {
+				args = append(args,
+					"--tcp-whitelist", fmt.Sprintf("%d", opts.MCPort),
+					"--udp-whitelist", fmt.Sprintf("%d", opts.MCPort),
+				)
+			}
 		}
 	} else {
-		args = append(args,
-			"--dhcp",
-			"--tcp-whitelist", "0",
-			"--udp-whitelist", "0",
-		)
+		args = append(args, "--dhcp")
+		if !opts.UpstreamCompatible {
+			args = append(args,
+				"--tcp-whitelist", "0",
+				"--udp-whitelist", "0",
+			)
+		}
 	}
 
 	args = append(args, "-l=tcp://0.0.0.0:0", "-l=udp://0.0.0.0:0")

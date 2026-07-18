@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"gravitycone/core/easytier"
-	"gravitycone/core/minecraft"
 	"gravitycone/core/protocol/scaffolding"
 	"gravitycone/core/utils"
 )
@@ -74,7 +73,6 @@ type PaperConnectService struct {
 	guestHostTCPPort      uint16
 	guestTCPLocalPort     uint16
 	guestMCLocalPort      uint16
-	guestFakeServer       *minecraft.FakeServer
 	guestPlayers          []PCPlayerEntry
 
 	joinCancelled atomic.Bool
@@ -145,13 +143,14 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 
 	hostname := fmt.Sprintf("%s%d", pcHostnamePrefix, tcpPort)
 	virtualIP, err := manager.Start(easytier.StartOptions{
-		NetworkName:   rc.EasyTierNetworkName(),
-		NetworkSecret: rc.EasyTierNetworkSecret(),
-		Hostname:      hostname,
-		IsHost:        true,
-		TCPPort:       tcpPort,
-		MCPort:        gamePort,
-		ConfigPath:    "./config.toml",
+		NetworkName:        rc.EasyTierNetworkName(),
+		NetworkSecret:      rc.EasyTierNetworkSecret(),
+		Hostname:           hostname,
+		IsHost:             true,
+		TCPPort:            tcpPort,
+		MCPort:             gamePort,
+		ConfigPath:         "./config.toml",
+		UpstreamCompatible: true,
 	})
 	if err != nil {
 		listener.Close()
@@ -455,10 +454,11 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	}
 
 	virtualIP, err := manager.Start(easytier.StartOptions{
-		NetworkName:   rc.EasyTierNetworkName(),
-		NetworkSecret: rc.EasyTierNetworkSecret(),
-		IsHost:        false,
-		ConfigPath:    "./config.toml",
+		NetworkName:        rc.EasyTierNetworkName(),
+		NetworkSecret:      rc.EasyTierNetworkSecret(),
+		IsHost:             false,
+		ConfigPath:         "./config.toml",
+		UpstreamCompatible: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
@@ -503,13 +503,14 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		return nil, err
 	}
 
-	tcpForward := fmt.Sprintf("tcp://0.0.0.0:%d/%s:%d", tcpLocalPort, PCHostVIP, serverPort)
+	tcpForward := fmt.Sprintf("tcp://0.0.0.0:%d/%s:%d", tcpLocalPort, hostIP, serverPort)
 	_, err = manager.Start(easytier.StartOptions{
-		NetworkName:   rc.EasyTierNetworkName(),
-		NetworkSecret: rc.EasyTierNetworkSecret(),
-		IsHost:        false,
-		ConfigPath:    "./config.toml",
-		PortForwards:  []string{tcpForward},
+		NetworkName:        rc.EasyTierNetworkName(),
+		NetworkSecret:      rc.EasyTierNetworkSecret(),
+		IsHost:             false,
+		ConfigPath:         "./config.toml",
+		PortForwards:       []string{tcpForward},
+		UpstreamCompatible: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("启动虚拟网络(TCP)失败: %w", err)
@@ -581,16 +582,17 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	mcListener.Close()
 
 	portForwards := []string{
-		fmt.Sprintf("tcp://0.0.0.0:%d/%s:%d", tcpLocalPort, PCHostVIP, serverPort),
-		fmt.Sprintf("udp://0.0.0.0:%d/%s:%d", mcLocalPort, PCHostVIP, gamePort),
+		fmt.Sprintf("tcp://0.0.0.0:%d/%s:%d", tcpLocalPort, hostIP, serverPort),
+		fmt.Sprintf("udp://0.0.0.0:%d/%s:%d", mcLocalPort, hostIP, gamePort),
 	}
 
 	_, err = manager.Start(easytier.StartOptions{
-		NetworkName:   rc.EasyTierNetworkName(),
-		NetworkSecret: rc.EasyTierNetworkSecret(),
-		IsHost:        false,
-		ConfigPath:    "./config.toml",
-		PortForwards:  portForwards,
+		NetworkName:        rc.EasyTierNetworkName(),
+		NetworkSecret:      rc.EasyTierNetworkSecret(),
+		IsHost:             false,
+		ConfigPath:         "./config.toml",
+		PortForwards:       portForwards,
+		UpstreamCompatible: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("启动虚拟网络(TCP+UDP)失败: %w", err)
@@ -684,7 +686,6 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	s.guestHostTCPPort = uint16(serverPort)
 	s.guestTCPLocalPort = tcpLocalPort
 	s.guestMCLocalPort = mcLocalPort
-	s.guestFakeServer = minecraft.NewFakeServer(mcLocalPort, "§6§l双击进入基岩版联机房间")
 	s.guestMu.Unlock()
 
 	go s.pcGuestHeartbeatLoop(clientId, playerName)
@@ -807,10 +808,6 @@ func (s *PaperConnectService) LeaveRoom() error {
 		close(s.guestStopCh)
 		s.guestRunning = false
 		s.guestHeartbeating = false
-		if s.guestFakeServer != nil {
-			s.guestFakeServer.Stop()
-			s.guestFakeServer = nil
-		}
 	}
 	manager := s.guestManager
 	s.guestManager = nil
@@ -877,10 +874,6 @@ func (s *PaperConnectService) pcAutoDisconnect(reason string) {
 	s.guestRunning = false
 	s.guestHeartbeating = false
 	s.guestDisconnectReason = reason
-	if s.guestFakeServer != nil {
-		s.guestFakeServer.Stop()
-		s.guestFakeServer = nil
-	}
 	manager := s.guestManager
 	s.guestManager = nil
 	s.guestPlayers = nil
