@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { ListDemoImages, EncodeRoomCode, DecodeRoomCode } from '@/../bindings/gravitycone/core/app/watermarkservice'
 
 // This interface matches the Go WatermarkResult struct - it will also be in auto-generated bindings
 interface WatermarkResult {
@@ -21,8 +22,7 @@ export const useWatermarkStore = defineStore('watermark', () => {
     loadingImages.value = true
     error.value = ''
     try {
-      const { ListDemoImages } = await import('@/../bindings/gravitycone/core/watermarkservice')
-      demoImages.value = await ListDemoImages()
+      demoImages.value = (await ListDemoImages()) ?? []
     } catch (e: any) {
       error.value = e?.message || String(e)
     } finally {
@@ -34,7 +34,6 @@ export const useWatermarkStore = defineStore('watermark', () => {
     encoding.value = true
     error.value = ''
     try {
-      const { EncodeRoomCode } = await import('@/../bindings/gravitycone/core/watermarkservice')
       const result = await EncodeRoomCode(sourcePath, roomCode)
       lastResult.value = result
       return result
@@ -51,7 +50,6 @@ export const useWatermarkStore = defineStore('watermark', () => {
     error.value = ''
     decodedRoomCode.value = ''
     try {
-      const { DecodeRoomCode } = await import('@/../bindings/gravitycone/core/watermarkservice')
       const code = await DecodeRoomCode(imageBase64)
       decodedRoomCode.value = code
       return code

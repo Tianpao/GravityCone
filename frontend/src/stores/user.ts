@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { StartLogin, Logout, GetCurrentUser } from '@/../bindings/gravitycone/core/natayarkservice'
+import { StartLogin, Logout, GetCurrentUser } from '@/../bindings/gravitycone/core/app/account/natayarkservice'
 
 export interface NatayarkUser {
   id: number
@@ -15,7 +15,9 @@ export const useUserStore = defineStore('user', {
   state: () => ({
     user: null as NatayarkUser | null,
     loading: false,
+    initialized: false,
     error: '',
+    loginRequired: false,
   }),
   getters: {
     isLoggedIn: (state) => state.user !== null,
@@ -27,6 +29,7 @@ export const useUserStore = defineStore('user', {
       try {
         const user = await StartLogin()
         this.user = user as NatayarkUser
+        this.loginRequired = false
       } catch (e: any) {
         this.error = e?.toString() || 'Login failed'
       } finally {
@@ -43,7 +46,11 @@ export const useUserStore = defineStore('user', {
       try {
         const user = await GetCurrentUser()
         this.user = user as NatayarkUser | null
-      } catch {}
+      } catch {
+        this.user = null
+      } finally {
+        this.initialized = true
+      }
     },
   },
 })

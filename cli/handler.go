@@ -3,31 +3,36 @@ package cli
 import (
 	"fmt"
 	"gravitycone/core"
+	"gravitycone/core/easytier"
+	"gravitycone/core/minecraft"
+	"gravitycone/core/protocol/scaffolding"
 	"strings"
 	"sync"
 )
 
 // Handler dispatches CLI requests to core service methods.
 type Handler struct {
-	stunSvc          *core.StunService
-	lanSvc           *core.LanService
-	scaffoldingSvc   *core.ScaffoldingService
+	stunSvc          *easytier.StunService
+	lanSvc           *minecraft.LanService
+	scaffoldingSvc   *scaffolding.ScaffoldingService
 	paperConnectSvc  *core.PaperConnectService
 	writer           *StdioWriter
 	shutdownCh       chan struct{}
 	shutdownOnce     sync.Once
 	vendorPrefix     string
+	motd             string
 }
 
 // NewHandler creates a Handler with the given services and writer.
 func NewHandler(
-	stunSvc *core.StunService,
-	lanSvc *core.LanService,
-	scaffoldingSvc *core.ScaffoldingService,
+	stunSvc *easytier.StunService,
+	lanSvc *minecraft.LanService,
+	scaffoldingSvc *scaffolding.ScaffoldingService,
 	paperConnectSvc *core.PaperConnectService,
 	writer *StdioWriter,
 	shutdownCh chan struct{},
 	vendorPrefix string,
+	motd string,
 ) *Handler {
 	return &Handler{
 		stunSvc:         stunSvc,
@@ -37,8 +42,9 @@ func NewHandler(
 		writer:          writer,
 		shutdownCh:      shutdownCh,
 		vendorPrefix:    vendorPrefix,
-	}
-}
+		motd:            motd,
+		}
+	}}
 
 // Handle processes a single request and writes the response.
 func (h *Handler) Handle(req Request) {
@@ -88,7 +94,7 @@ func (h *Handler) handleRoom(req Request, action string) {
 	case "join":
 		h.handleRoomJoin(req)
 
-	case "cancel_join":
+	case "cancel_join":	case "cancel_join":
 		// Cancel both — whichever is active will respond
 		h.scaffoldingSvc.CancelJoin()
 		h.paperConnectSvc.CancelJoin()
@@ -132,10 +138,6 @@ func (h *Handler) handleRoomCreate(req Request) {
 			"players":      result.Players,
 			"running":      result.Running,
 			"protocol":     "paperconnect",
-		}))
-		return
-	}
-
 	// Default: Scaffolding (Java Edition)
 	mcPort, err := req.getInt("mc_port")
 	if err != nil {
@@ -143,7 +145,7 @@ func (h *Handler) handleRoomCreate(req Request) {
 		return
 	}
 
-	result, err := h.scaffoldingSvc.CreateRoom(uint16(mcPort), playerName, h.vendorPrefix)
+	result, err := h.scaffoldingSvc.CreateRoom(uint16(mcPort), playerName, h.vendorPrefix, h.motd)
 	if err != nil {
 		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
 		return
@@ -198,15 +200,15 @@ func (h *Handler) handleRoomJoin(req Request) {
 	}
 
 	// Scaffolding (U/) join with progress callback
-	core.SetScaffoldingJoinProgress(h.scaffoldingSvc, func(step string) {
+	scaffolding.SetScaffoldingJoinProgress(h.scaffoldingSvc, func(step string) {
 		h.writer.WriteResponse(progressResponse(req.ID, map[string]string{
 			"step":    step,
 			"message": progressMessage(step),
 		}))
 	})
-	defer core.SetScaffoldingJoinProgress(h.scaffoldingSvc, nil)
+	defer scaffolding.SetScaffoldingJoinProgress(h.scaffoldingSvc, nil)
 
-	result, err := h.scaffoldingSvc.JoinRoom(code, playerName, h.vendorPrefix)
+	result, err := h.scaffoldingSvc.JoinRoom(code, playerName, h.vendorPrefix, h.motd)
 	if err != nil {
 		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
 		return
@@ -295,7 +297,6 @@ func (h *Handler) handleRoomStatus(req Request) {
 		return
 	}
 
-	// Not in any room
 	h.writer.WriteResponse(successResponse(req.ID, map[string]string{"role": "none"}))
 }
 

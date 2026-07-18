@@ -5,6 +5,14 @@ vars:
   BIN_DIR: "bin"
   PACKAGE_MANAGER: '{{.PACKAGE_MANAGER | default "pnpm"}}'
   VITE_PORT: '{{.WAILS_VITE_PORT | default 9245}}'
+  # Microsoft OAuth2 credentials — set these at build time to embed in the binary.
+  # Example: task build MS_CLIENT_ID=xxx MS_CLIENT_SECRET=yyy
+  # In GitHub Actions, use secrets: MS_CLIENT_ID=${{ secrets.MS_CLIENT_ID }} MS_CLIENT_SECRET=${{ secrets.MS_CLIENT_SECRET }}
+  MS_CLIENT_ID: ""
+  MS_CLIENT_SECRET: ""
+  # Naids OAuth2 credentials — same pattern as Microsoft above.
+  NAIDS_CLIENT_ID: ""
+  NAIDS_CLIENT_SECRET: ""
 
 includes:
   common: ./build/Taskfile.yml
@@ -43,7 +51,7 @@ tasks:
   build:cli:
     summary: Builds the CLI version (no GUI, stdio JSON protocol)
     cmds:
-      - go build -tags cli -trimpath -ldflags="-w -s" -o "{{.BIN_DIR}}/{{.APP_NAME}}-cli{{exeExt}}" .
+      - go build -tags cli -trimpath -ldflags="-w -s{{if .MS_CLIENT_ID}} -X main.msClientID={{.MS_CLIENT_ID}}{{end}}{{if .MS_CLIENT_SECRET}} -X main.msClientSecret={{.MS_CLIENT_SECRET}}{{end}}{{if .NAIDS_CLIENT_ID}} -X main.naidsClientID={{.NAIDS_CLIENT_ID}}{{end}}{{if .NAIDS_CLIENT_SECRET}} -X main.naidsClientSecret={{.NAIDS_CLIENT_SECRET}}{{end}}" -o "{{.BIN_DIR}}/{{.APP_NAME}}-cli{{exeExt}}" .
 
   build:cli:dev:
     summary: Builds the CLI version in development mode

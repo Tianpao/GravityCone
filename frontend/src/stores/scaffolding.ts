@@ -1,6 +1,11 @@
 import { defineStore } from 'pinia'
-import { CreateRoom, StopRoom, GetRoomStatus, JoinRoom, LeaveRoom, GetConnectionStatus, CancelJoin } from '@/../bindings/gravitycone/core/scaffoldingservice'
-import type { RoomStatus, ConnectionStatus } from '@/../bindings/gravitycone/core/models'
+import { Events } from '@wailsio/runtime'
+import { CreateRoom, StopRoom, GetRoomStatus, JoinRoom, LeaveRoom, GetConnectionStatus, CancelJoin } from '@/../bindings/gravitycone/core/protocol/scaffolding/scaffoldingservice'
+import type { RoomStatus, ConnectionStatus } from '@/../bindings/gravitycone/core/protocol/scaffolding/models'
+
+type EventUnsubscriber = () => void
+
+const APP_VERSION = 'GravityCone v1.0.0'
 
 export const useScaffoldingStore = defineStore('scaffolding', {
   state: () => ({
@@ -12,6 +17,9 @@ export const useScaffoldingStore = defineStore('scaffolding', {
     connectionStatus: null as ConnectionStatus | null,
     joining: false,
     guestError: '',
+    // Event listeners
+    _hostUnsubscribers: [] as EventUnsubscriber[],
+    _guestUnsubscribers: [] as EventUnsubscriber[],
   }),
 
   getters: {
@@ -25,8 +33,9 @@ export const useScaffoldingStore = defineStore('scaffolding', {
       this.creating = true
       this.hostError = ''
       try {
-        const result = await CreateRoom(mcPort, playerName, 'GravityCone v1.0.0')
+        const result = await CreateRoom(mcPort, playerName, APP_VERSION, '')
         this.roomStatus = result
+        this.startHostEvents()
       } catch (e: any) {
         this.hostError = e?.message || String(e)
         throw e
@@ -36,6 +45,7 @@ export const useScaffoldingStore = defineStore('scaffolding', {
     },
 
     async stopRoom() {
+      this.stopHostEvents()
       try {
         await StopRoom()
       } catch {}
@@ -53,7 +63,52 @@ export const useScaffoldingStore = defineStore('scaffolding', {
       }
     },
 
+    startHostEvents() {
+      this.stopHostEvents()
+
+      const unsub1 = Events.On('room.player_joined', (event: any) => {
+        if (!this.roomStatus) return
+        const player = event.data
+        const players = this.roomStatus.players ?? []
+        if (!players.find(p => p.machine_id === player.machine_id)) {
+          this.roomStatus = {
+            ...this.roomStatus,
+            players: [...players, player],
+            online_count: players.length + 1,
+          }
+        }
+      }) as unknown as EventUnsubscriber
+
+      const unsub2 = Events.On('room.player_left', (event: any) => {
+        if (!this.roomStatus) return
+        const player = event.data
+        const players = this.roomStatus.players ?? []
+        const filtered = players.filter(p => p.machine_id !== player.machine_id)
+        this.roomStatus = {
+          ...this.roomStatus,
+          players: filtered,
+          online_count: filtered.length,
+        }
+      }) as unknown as EventUnsubscriber
+
+      const unsub3 = Events.On('room.closed', (event: any) => {
+        this.hostError = event.data?.reason
+        this.roomStatus = null
+        this.stopHostEvents()
+      }) as unknown as EventUnsubscriber
+
+      this._hostUnsubscribers = [unsub1, unsub2, unsub3]
+    },
+
+    stopHostEvents() {
+      for (const unsub of this._hostUnsubscribers) {
+        try { unsub() } catch {}
+      }
+      this._hostUnsubscribers = []
+    },
+
     async cancelJoin() {
+      this.stopGuestEvents()
       try {
         await CancelJoin()
       } catch {}
@@ -63,8 +118,9 @@ export const useScaffoldingStore = defineStore('scaffolding', {
       this.joining = true
       this.guestError = ''
       try {
-        const result = await JoinRoom(roomCode, playerName, 'GravityCone v1.0.0')
+        const result = await JoinRoom(roomCode, playerName, APP_VERSION, '')
         this.connectionStatus = result
+        this.startGuestEvents()
       } catch (e: any) {
         this.guestError = e?.message || String(e)
         throw e
@@ -74,6 +130,7 @@ export const useScaffoldingStore = defineStore('scaffolding', {
     },
 
     async leaveRoom() {
+      this.stopGuestEvents()
       try {
         await LeaveRoom()
       } catch {}
@@ -93,7 +150,43 @@ export const useScaffoldingStore = defineStore('scaffolding', {
       } catch {}
     },
 
+    startGuestEvents() {
+      this.stopGuestEvents()
+
+      const unsub1 = Events.On('room.disconnected', (event: any) => {
+        if (this.connectionStatus) {
+          this.connectionStatus = {
+            ...this.connectionStatus,
+            connected: false,
+            disconnect_reason: event.data?.reason,
+          }
+        }
+      }) as unknown as EventUnsubscriber
+
+      const unsub2 = Events.On('room.guest_player_list_updated', (event: any) => {
+        if (this.connectionStatus) {
+          const players = event.data ?? []
+          this.connectionStatus = {
+            ...this.connectionStatus,
+            players,
+            online_count: players.length,
+          }
+        }
+      }) as unknown as EventUnsubscriber
+
+      this._guestUnsubscribers = [unsub1, unsub2]
+    },
+
+    stopGuestEvents() {
+      for (const unsub of this._guestUnsubscribers) {
+        try { unsub() } catch {}
+      }
+      this._guestUnsubscribers = []
+    },
+
     reset() {
+      this.stopHostEvents()
+      this.stopGuestEvents()
       this.$reset()
     },
   },

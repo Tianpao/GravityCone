@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch, ref } from 'vue'
+import { onMounted, watch, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useScaffoldingStore } from '@/stores/scaffolding'
 import { useWatermarkStore } from '@/stores/watermark'
@@ -15,27 +15,24 @@ import {
 import { useClipboard } from '@vueuse/core'
 import { CopyOutline, StopCircleOutline, CheckmarkOutline } from '@vicons/ionicons5'
 import WatermarkShare from '@/components/WatermarkShare.vue'
+import PlayerList from '@/components/PlayerList.vue'
 
 const router = useRouter()
 const scaffold = useScaffoldingStore()
 const watermark = useWatermarkStore()
 const { copy, copied } = useClipboard()
-let pollTimer: ReturnType<typeof setInterval> | null = null
 const showStopDialog = ref(false)
 const stopReason = ref('')
 
 onMounted(() => {
-  pollTimer = setInterval(() => scaffold.refreshRoomStatus(), 3000)
+  if (scaffold.roomStatus) {
+    scaffold.startHostEvents()
+  }
   watermark.loadDemoImages()
-})
-
-onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
 })
 
 watch(() => scaffold.roomStatus, (val) => {
   if (!val && scaffold.hostError) {
-    if (pollTimer) clearInterval(pollTimer)
     stopReason.value = scaffold.hostError
     showStopDialog.value = true
   }
@@ -75,32 +72,7 @@ function copyCode() {
       </div>
 
       <!-- Player List -->
-      <div class="rounded-xl border border-border bg-card p-4 space-y-3">
-        <div class="flex items-center justify-between">
-          <p class="text-xs text-muted-foreground uppercase tracking-wider">在线玩家</p>
-          <span class="text-xs text-muted-foreground">{{ scaffold.roomStatus.online_count ?? 0 }} 人</span>
-        </div>
-
-        <div v-if="!scaffold.roomStatus.players || scaffold.roomStatus.players.length === 0" class="py-4 text-center text-sm text-muted-foreground">
-          等待玩家加入...
-        </div>
-
-        <ul v-else class="space-y-2">
-          <li
-            v-for="player in scaffold.roomStatus.players"
-            :key="player.machine_id"
-            class="flex items-center gap-3 rounded-lg px-3 py-2 bg-muted/50"
-          >
-            <div class="flex size-8 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
-              {{ player.name.charAt(0).toUpperCase() }}
-            </div>
-            <div class="flex-1 min-w-0">
-              <p class="text-sm font-medium truncate">{{ player.name }}</p>
-              <p class="text-xs text-muted-foreground">{{ player.kind === 'HOST' ? '房主' : '玩家' }}</p>
-            </div>
-          </li>
-        </ul>
-      </div>
+      <PlayerList :players="scaffold.roomStatus.players ?? []" />
 
       <!-- Watermark Share -->
       <WatermarkShare

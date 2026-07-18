@@ -9,11 +9,11 @@ import (
 )
 
 func main() {
-	peers, vendorPrefix := parseArgs(os.Args[1:])
-	cli.Run(peers, vendorPrefix)
+	peers, vendorPrefix, motd := parseArgs(os.Args[1:])
+	cli.Run(peers, vendorPrefix, motd)
 }
 
-// parseArgs extracts --peers/-p and --vendor/-v flags from command-line arguments.
+// parseArgs extracts --peers/-p, --vendor/-v and --motd/-m flags from command-line arguments.
 // Supports space-separated values only:
 //
 //	--peers addr1 --peers addr2
@@ -21,7 +21,9 @@ func main() {
 //	--peers addr1,addr2  (comma-separated)
 //	--vendor MyPrefix
 //	-v MyPrefix
-func parseArgs(args []string) (peers []string, vendorPrefix string) {
+//	--motd "Custom MOTD"
+//	-m "Custom MOTD"
+func parseArgs(args []string) (peers []string, vendorPrefix string, motd string) {
 	for i := 0; i < len(args); i++ {
 		if val, ok := matchFlag(args, &i, "--peers", "-p"); ok {
 			for _, p := range strings.Split(val, ",") {
@@ -31,6 +33,8 @@ func parseArgs(args []string) (peers []string, vendorPrefix string) {
 			}
 		} else if val, ok := matchFlag(args, &i, "--vendor", "-v"); ok {
 			vendorPrefix = val
+		} else if val, ok := matchFlag(args, &i, "--motd", "-m"); ok {
+			motd = val
 		}
 	}
 	return

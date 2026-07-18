@@ -5,10 +5,27 @@
 // @ts-ignore: Unused imports
 import type { Events } from "@wailsio/runtime";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import type * as easytier$0 from "../../../../../gravitycone/core/easytier/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import type * as minecraft$0 from "../../../../../gravitycone/core/minecraft/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import type * as scaffolding$0 from "../../../../../gravitycone/core/protocol/scaffolding/models.js";
+
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
-            "time": string;
+            "download.progress": easytier$0.DownloadProgressData;
+            "lan.server_found": minecraft$0.LanServer;
+            "lan.server_lost": { [_ in string]?: any } | null;
+            "room.closed": { [_ in string]?: string } | null;
+            "room.disconnected": { [_ in string]?: string } | null;
+            "room.guest_player_list_updated": scaffolding$0.PlayerInfo[] | null;
+            "room.player_joined": scaffolding$0.PlayerInfo;
+            "room.player_left": scaffolding$0.PlayerInfo;
         }
     }
 }

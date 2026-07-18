@@ -11,12 +11,15 @@ build/android/overlay.json
 build/android/gen/
 
 *.log
-easytier/
+bin/easytier/
+./easytier/
 CLAUDE.md
 .mcp.json
 images/
+.env
 
 *.exe
 *.zip
 
 config.toml
+review.md

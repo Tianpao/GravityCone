@@ -3,8 +3,11 @@ package cli
 import (
 	"bufio"
 	"encoding/json"
-	"gravitycone/core"
-	"log"
+	"gravitycone/core/easytier"
+	"gravitycone/core/minecraft"
+	"gravitycone/core/protocol/scaffolding"
+	"gravitycone/core/utils"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -18,50 +21,60 @@ const version = "1.0.0"
 // dispatches them to core services, and writes responses/events to stdout.
 // peers overrides the default EasyTier public peer list.
 // vendorPrefix is prepended to the vendor string in room operations.
-func Run(peers []string, vendorPrefix string) {
+// motd is the custom MOTD for LAN broadcast (empty uses the default).
+func Run(peers []string, vendorPrefix string, motd string) {
 	// Resolve logs directory next to the CLI executable
 	logsDir, stdioLogPath, etLogPath, gccoreLogPath, err := resolveLogPaths()
 	if err != nil {
-		log.Fatalf("Failed to resolve log paths: %v", err)
+		slog.Error("failed to resolve log paths", "error", err)
+		os.Exit(1)
 	}
 	if err := os.MkdirAll(logsDir, 0755); err != nil {
-		log.Fatalf("Failed to create logs directory: %v", err)
+		slog.Error("failed to create logs directory", "error", err)
+		os.Exit(1)
 	}
 
-	// Redirect Go log to gccore.log (no terminal output)
+	// Redirect Go slog to gccore.log (no terminal output)
 	gccoreLog, err := os.OpenFile(gccoreLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		log.Fatalf("Failed to open gccore.log: %v", err)
+		slog.Error("failed to open gccore.log", "error", err)
+		os.Exit(1)
 	}
 	defer gccoreLog.Close()
-	log.SetOutput(gccoreLog)
-	log.SetPrefix("[gravitycone-cli] ")
+	utils.InitLogger(gccoreLog, &slog.HandlerOptions{AddSource: false})
 
 	// Redirect EasyTier logs to file
-	core.SetEasyTierLogOutput(etLogPath)
+	easytier.SetEasyTierLogOutput(etLogPath)
 
 	// Override EasyTier peers if provided
 	if len(peers) > 0 {
-		core.SetPublicPeers(peers)
-		log.Printf("Using custom peers: %v", peers)
+		easytier.SetPublicPeers(peers)
+		slog.Info("Using custom peers", "peers", peers)
+	}
+
+	// Set up writer and emitter early so download progress can be reported
+	writer := NewStdioWriter()
+	emitter := NewStdioEventEmitter(writer)
+	easytier.SetEnsureEasyTierEmitter(emitter)
+
+	// Ensure EasyTier binaries are available (auto-download if missing)
+	if err := easytier.EnsureEasyTier(); err != nil {
+		slog.Warn("EasyTier auto-download failed", "error", err)
 	}
 
 	// Set up services
-	writer := NewStdioWriter()
-	emitter := NewStdioEventEmitter(writer)
-
-	stunSvc := &core.StunService{}
-	lanSvc := core.NewLanService(emitter)
-	scaffoldingSvc := core.NewScaffoldingService(emitter)
+	stunSvc := &easytier.StunService{}
+	lanSvc := minecraft.NewLanService(emitter)
+	scaffoldingSvc := scaffolding.NewScaffoldingService(emitter)
 	paperConnectSvc := core.NewPaperConnectService(emitter)
 
 	shutdownCh := make(chan struct{})
-	handler := NewHandler(stunSvc, lanSvc, scaffoldingSvc, paperConnectSvc, writer, shutdownCh, vendorPrefix)
+	handler := NewHandler(stunSvc, lanSvc, scaffoldingSvc, paperConnectSvc, writer, shutdownCh, vendorPrefix, motd)
 
 	// Open stdio log file
 	stdioLog, err := os.OpenFile(stdioLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		log.Printf("Warning: failed to open stdio.log: %v", err)
+		slog.Warn("failed to open stdio.log", "error", err)
 	} else {
 		defer stdioLog.Close()
 		writer.SetTee(stdioLog)

@@ -5,22 +5,21 @@ import (
 	"io"
 	"os"
 	"sync"
+
+	"gravitycone/core/utils"
 )
 
 // StdioWriter provides thread-safe JSON line writing to stdout,
 // with optional tee to a log file.
 type StdioWriter struct {
 	mu  sync.Mutex
-	enc *json.Encoder
 	out *os.File
-	tee io.Writer // optional additional writer for logging
+	tee io.Writer
 }
 
 // NewStdioWriter creates a StdioWriter that writes JSON lines to stdout.
 func NewStdioWriter() *StdioWriter {
-	w := &StdioWriter{out: os.Stdout}
-	w.enc = json.NewEncoder(w.out)
-	return w
+	return &StdioWriter{out: os.Stdout}
 }
 
 // SetTee sets an additional writer that receives a copy of all output.
@@ -46,10 +45,7 @@ func (w *StdioWriter) WriteEvent(evt Event) {
 
 // writeLocked marshals and writes a message. Caller must hold w.mu.
 func (w *StdioWriter) writeLocked(v interface{}) {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return
-	}
+	data, _ := json.Marshal(v)
 	w.out.Write(data)
 	w.out.Write([]byte{'\n'})
 
@@ -59,10 +55,12 @@ func (w *StdioWriter) writeLocked(v interface{}) {
 	}
 }
 
-// StdioEventEmitter implements core.EventEmitter by writing events to stdout.
+// StdioEventEmitter implements utils.EventEmitter by writing events to stdout.
 type StdioEventEmitter struct {
 	writer *StdioWriter
 }
+
+var _ utils.EventEmitter = (*StdioEventEmitter)(nil)
 
 // NewStdioEventEmitter creates an EventEmitter that pushes CLI events to stdout.
 func NewStdioEventEmitter(writer *StdioWriter) *StdioEventEmitter {

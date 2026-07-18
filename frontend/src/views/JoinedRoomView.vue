@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch, ref } from 'vue'
+import { onMounted, watch, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useScaffoldingStore } from '@/stores/scaffolding'
 import {
@@ -11,27 +11,24 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import PlayerList from '@/components/PlayerList.vue'
 import { useClipboard } from '@vueuse/core'
 import { CopyOutline, LogOutOutline, CheckmarkOutline } from '@vicons/ionicons5'
 
 const router = useRouter()
 const scaffold = useScaffoldingStore()
 const { copy, copied } = useClipboard()
-let pollTimer: ReturnType<typeof setInterval> | null = null
 const showDisconnectDialog = ref(false)
 const disconnectReason = ref('')
 
 onMounted(() => {
-  pollTimer = setInterval(() => scaffold.refreshConnectionStatus(), 3000)
-})
-
-onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
+  if (scaffold.connectionStatus) {
+    scaffold.startGuestEvents()
+  }
 })
 
 watch(() => scaffold.connectionStatus?.connected, (connected) => {
   if (connected === false && scaffold.connectionStatus?.disconnect_reason) {
-    if (pollTimer) clearInterval(pollTimer)
     disconnectReason.value = scaffold.connectionStatus.disconnect_reason
     showDisconnectDialog.value = true
   }
@@ -100,32 +97,7 @@ function copyAddress() {
       </div>
 
       <!-- Player List -->
-      <div class="rounded-xl border border-border bg-card p-4 space-y-3">
-        <div class="flex items-center justify-between">
-          <p class="text-xs text-muted-foreground uppercase tracking-wider">在线玩家</p>
-          <span class="text-xs text-muted-foreground">{{ scaffold.connectionStatus.online_count ?? 0 }} 人</span>
-        </div>
-
-        <div v-if="!scaffold.connectionStatus.players || scaffold.connectionStatus.players.length === 0" class="py-4 text-center text-sm text-muted-foreground">
-          加载中...
-        </div>
-
-        <ul v-else class="space-y-2">
-          <li
-            v-for="player in scaffold.connectionStatus.players"
-            :key="player.machine_id"
-            class="flex items-center gap-3 rounded-lg px-3 py-2 bg-muted/50"
-          >
-            <div class="flex size-8 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
-              {{ player.name.charAt(0).toUpperCase() }}
-            </div>
-            <div class="flex-1 min-w-0">
-              <p class="text-sm font-medium truncate">{{ player.name }}</p>
-              <p class="text-xs text-muted-foreground">{{ player.kind === 'HOST' ? '房主' : '玩家' }}</p>
-            </div>
-          </li>
-        </ul>
-      </div>
+      <PlayerList :players="scaffold.connectionStatus.players ?? []" />
 
       <!-- Leave Button -->
       <Button variant="destructive" class="w-full gap-2" @click="handleLeave">

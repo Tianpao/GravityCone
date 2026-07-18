@@ -108,6 +108,7 @@ export function useGlobalDrop() {
       }
 
       dropRoomCode.value = code
+
       const playerName = user.user?.username || 'Player'
       const isBedrock = code.toUpperCase().startsWith('P/')
 

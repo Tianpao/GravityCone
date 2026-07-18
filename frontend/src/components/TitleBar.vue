@@ -1,14 +1,9 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue"
+import { ref } from "vue"
 import { Window as thisWindow } from "@wailsio/runtime"
 import { RemoveOutline, CloseOutline, PinOutline } from "@vicons/ionicons5"
 
-const isMaximised = ref(false)
 const isAlwaysOnTop = ref(false)
-
-onMounted(async () => {
-  isMaximised.value = await thisWindow.IsMaximised()
-})
 
 async function handleMinimise() {
   await thisWindow.Minimise()

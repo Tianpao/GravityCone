@@ -17,6 +17,9 @@ import { useScaffoldingStore } from '@/stores/scaffolding'
 import { useUserStore } from '@/stores/user'
 import { useRouter } from 'vue-router'
 
+const PORT_MIN = 1025
+const PORT_MAX = 65535
+
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()
 
@@ -26,11 +29,10 @@ const user = useUserStore()
 const router = useRouter()
 const manualPort = ref('')
 const selectedIndex = ref(-1)
-let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const isValidPort = computed(() => {
   const p = parseInt(manualPort.value)
-  return !isNaN(p) && p > 1024 && p <= 65535
+  return !isNaN(p) && p >= PORT_MIN && p <= PORT_MAX
 })
 
 function selectServer(index: number) {
@@ -49,7 +51,7 @@ async function handleCreate() {
     ? lan.servers[selectedIndex.value]?.ip ?? '127.0.0.1'
     : '127.0.0.1'
 
-  const playerName = user.user?.username || 'Player'
+  const playerName = user.user!.username
 
   try {
     await scaffold.createRoom(port, playerName)
@@ -62,14 +64,9 @@ async function handleCreate() {
 
 function startPolling() {
   lan.startDiscovery()
-  pollTimer = setInterval(() => lan.refresh(), 2000)
 }
 
 function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
   lan.stopDiscovery()
   selectedIndex.value = -1
   manualPort.value = ''

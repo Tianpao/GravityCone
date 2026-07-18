@@ -25,13 +25,16 @@ const inputRef = ref<HTMLInputElement | null>(null)
 
 // Allowed charset: 0-9, A-H, J-N, P-Z (no I, O)
 const DATA_CHARS = '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ'
+const ROOM_CODE_PREFIX = 'U/'
+const ROOM_CODE_PREFIX_ALT = 'U：'
+const ROOM_CODE_LENGTH = 16
 
 function extractDataChars(val: string): string {
   let s = val.toUpperCase()
-  if (s.startsWith('U/') || s.startsWith('U：')) {
+  if (s.startsWith(ROOM_CODE_PREFIX) || s.startsWith(ROOM_CODE_PREFIX_ALT)) {
     s = s.slice(2)
   }
-  return s.replace(/[^0-9A-HJ-NP-Z]/g, '').slice(0, 16)
+  return s.replace(/[^0-9A-HJ-NP-Z]/g, '').slice(0, ROOM_CODE_LENGTH)
 }
 
 function formatDisplay(data: string): string {
@@ -44,7 +47,7 @@ function formatDisplay(data: string): string {
 }
 
 const displayValue = computed(() => formatDisplay(rawInput.value))
-const isComplete = computed(() => rawInput.value.length === 16)
+const isComplete = computed(() => rawInput.value.length === ROOM_CODE_LENGTH)
 
 function handleInput(e: Event) {
   const target = e.target as HTMLInputElement
@@ -64,7 +67,7 @@ function handlePaste(e: ClipboardEvent) {
   const existing = rawInput.value
   const pastedData = extractDataChars(pasted)
   const combined = existing + pastedData
-  rawInput.value = combined.slice(0, 16)
+  rawInput.value = combined.slice(0, ROOM_CODE_LENGTH)
   nextTick(() => {
     if (inputRef.value) {
       const formatted = formatDisplay(rawInput.value)
@@ -75,8 +78,8 @@ function handlePaste(e: ClipboardEvent) {
 
 async function handleJoin() {
   if (!isComplete.value) return
-  const code = 'U/' + formatDisplay(rawInput.value)
-  const playerName = user.user?.username || 'Player'
+  const code = ROOM_CODE_PREFIX + formatDisplay(rawInput.value)
+  const playerName = user.user!.username
   try {
     await scaffold.joinRoom(code, playerName)
     emit('update:open', false)
@@ -121,7 +124,7 @@ watch(() => props.open, (val) => {
           />
         </div>
         <p v-if="!isComplete && rawInput.length > 0 && !scaffold.joining" class="text-xs text-muted-foreground text-center">
-          还需输入 {{ 16 - rawInput.length }} 个字符
+          还需输入 {{ ROOM_CODE_LENGTH - rawInput.length }} 个字符
         </p>
         <!-- Joining progress -->
         <div v-if="scaffold.joining" class="flex items-center justify-center gap-2 text-sm text-muted-foreground">
