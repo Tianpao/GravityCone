@@ -3,9 +3,19 @@ import {
   CreateRoom, StopRoom, GetRoomStatus,
   JoinRoom, LeaveRoom, GetConnectionStatus, CancelJoin
 } from '../../bindings/gravitycone/core/protocol/paperconnect/paperconnectservice.js'
+import type { PaperConnectRoomStatus, PaperConnectConnectionStatus } from '../../bindings/gravitycone/core/protocol/paperconnect/models.js'
+
+interface PcState {
+  pcRoomStatus: PaperConnectRoomStatus | null
+  pcCreating: boolean
+  pcHostError: string
+  pcConnectionStatus: PaperConnectConnectionStatus | null
+  pcJoining: boolean
+  pcGuestError: string
+}
 
 export const usePaperConnectStore = defineStore('paperconnect', {
-  state: () => ({
+  state: (): PcState => ({
     // HOST
     pcRoomStatus: null,
     pcCreating: false,
@@ -23,14 +33,14 @@ export const usePaperConnectStore = defineStore('paperconnect', {
   },
 
   actions: {
-    async pcCreateRoom(playerName) {
+    async pcCreateRoom(playerName: string) {
       this.pcCreating = true
       this.pcHostError = ''
       try {
         const result = await CreateRoom(playerName, '')
         this.pcRoomStatus = result
         return result
-      } catch (e) {
+      } catch (e: any) {
         this.pcHostError = e?.message || String(e)
         throw e
       } finally {
@@ -41,7 +51,7 @@ export const usePaperConnectStore = defineStore('paperconnect', {
     async pcStopRoom() {
       try {
         await StopRoom()
-      } catch (e) {
+      } catch (e: any) {
         this.pcHostError = e?.message || String(e)
       }
       this.pcRoomStatus = null
@@ -50,19 +60,19 @@ export const usePaperConnectStore = defineStore('paperconnect', {
     async pcRefreshRoomStatus() {
       try {
         this.pcRoomStatus = await GetRoomStatus()
-      } catch (e) {
+      } catch (e: any) {
         this.pcHostError = e?.message || String(e)
       }
     },
 
-    async pcJoinRoom(roomCode, playerName) {
+    async pcJoinRoom(roomCode: string, playerName: string) {
       this.pcJoining = true
       this.pcGuestError = ''
       try {
         const result = await JoinRoom(roomCode, playerName, '')
         this.pcConnectionStatus = result
         return result
-      } catch (e) {
+      } catch (e: any) {
         this.pcGuestError = e?.message || String(e)
         throw e
       } finally {
