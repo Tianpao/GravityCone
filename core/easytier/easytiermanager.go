@@ -125,7 +125,7 @@ func allocateRPCPort() (string, error) {
 type StartOptions struct {
 	NetworkName   string
 	NetworkSecret string
-	Hostname      string   // HOST only; GUEST leaves empty
+	Hostname      string // HOST only; GUEST leaves empty
 	IsHost        bool
 	TCPPort       uint16   // HOST only: scaffolding TCP port, used for whitelist
 	MCPort        uint16   // HOST only: MC server port, used for whitelist
@@ -346,7 +346,6 @@ type peerInfo struct {
 	VirtualIP string          `json:"ipv4"`
 	Hostname  string          `json:"hostname"`
 }
-
 
 func (m *EasyTierManager) DiscoverPeer(hostname string) (string, error) {
 	out, err := m.runCli("-o", "json", "-p", m.rpcPortal, "peer", "list")

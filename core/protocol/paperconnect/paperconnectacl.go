@@ -26,8 +26,8 @@ const (
 
 // Bedrock app protocol IDs
 const (
-	AppProtoRakNet    = 10
-	AppProtoWebRtc    = 20
+	AppProtoRakNet     = 10
+	AppProtoWebRtc     = 20
 	AppProtoWebRtcStun = 21
 	AppProtoWebRtcDtls = 22
 	AppProtoWebRtcRtp  = 23
@@ -49,40 +49,40 @@ type PCACLSection struct {
 }
 
 type PCACLV1 struct {
-	Chains []PCChain     `toml:"chains"`
+	Chains []PCChain      `toml:"chains"`
 	Group  PCGroupSection `toml:"group"`
 }
 
 type PCChain struct {
-	Name          string    `toml:"name"`
-	ChainType     int       `toml:"chain_type"`
-	Description   string    `toml:"description"`
-	Enabled       bool      `toml:"enabled"`
-	DefaultAction int       `toml:"default_action"`
-	Rules         []PCRule  `toml:"rules"`
+	Name          string   `toml:"name"`
+	ChainType     int      `toml:"chain_type"`
+	Description   string   `toml:"description"`
+	Enabled       bool     `toml:"enabled"`
+	DefaultAction int      `toml:"default_action"`
+	Rules         []PCRule `toml:"rules"`
 }
 
 type PCRule struct {
-	Name             string   `toml:"name"`
-	Description      string   `toml:"description"`
-	Priority         int      `toml:"priority"`
-	Enabled          bool     `toml:"enabled"`
-	Protocol         int      `toml:"protocol"`
-	Ports            []string `toml:"ports"`
-	SourceIPs        []string `toml:"source_ips"`
-	DestinationIPs   []string `toml:"destination_ips"`
-	SourcePorts      []string `toml:"source_ports"`
-	AppProtocols     []int    `toml:"app_protocols"`
-	PayloadPrefixHex []string `toml:"payload_prefix_hex"`
-	PayloadMinLen    *int     `toml:"payload_min_len"`
-	PayloadMaxLen    *int     `toml:"payload_max_len"`
-	DstIsBroadcast   *bool    `toml:"dst_is_broadcast"`
-	DstIsMulticast   *bool    `toml:"dst_is_multicast"`
-	Action           int      `toml:"action"`
-	RateLimit        int      `toml:"rate_limit"`
-	BurstLimit       int      `toml:"burst_limit"`
-	Stateful         bool     `toml:"stateful"`
-	SourceGroups     []string `toml:"source_groups"`
+	Name              string   `toml:"name"`
+	Description       string   `toml:"description"`
+	Priority          int      `toml:"priority"`
+	Enabled           bool     `toml:"enabled"`
+	Protocol          int      `toml:"protocol"`
+	Ports             []string `toml:"ports"`
+	SourceIPs         []string `toml:"source_ips"`
+	DestinationIPs    []string `toml:"destination_ips"`
+	SourcePorts       []string `toml:"source_ports"`
+	AppProtocols      []int    `toml:"app_protocols"`
+	PayloadPrefixHex  []string `toml:"payload_prefix_hex"`
+	PayloadMinLen     *int     `toml:"payload_min_len"`
+	PayloadMaxLen     *int     `toml:"payload_max_len"`
+	DstIsBroadcast    *bool    `toml:"dst_is_broadcast"`
+	DstIsMulticast    *bool    `toml:"dst_is_multicast"`
+	Action            int      `toml:"action"`
+	RateLimit         int      `toml:"rate_limit"`
+	BurstLimit        int      `toml:"burst_limit"`
+	Stateful          bool     `toml:"stateful"`
+	SourceGroups      []string `toml:"source_groups"`
 	DestinationGroups []string `toml:"destination_groups"`
 }
 
@@ -93,26 +93,26 @@ type PCGroupSection struct {
 
 func newPCRule(name string, priority int, protocol int, ports []string, srcIPs []string, dstIPs []string, appProtos []int) PCRule {
 	return PCRule{
-		Name:             name,
-		Description:      "",
-		Priority:         priority,
-		Enabled:          true,
-		Protocol:         protocol,
-		Ports:            ports,
-		SourceIPs:        srcIPs,
-		DestinationIPs:   dstIPs,
-		SourcePorts:      []string{},
-		AppProtocols:     appProtos,
-		PayloadPrefixHex: []string{},
-		PayloadMinLen:    nil,
-		PayloadMaxLen:    nil,
-		DstIsBroadcast:   nil,
-		DstIsMulticast:   nil,
-		Action:           ACLActionAllow,
-		RateLimit:        0,
-		BurstLimit:       0,
-		Stateful:         false,
-		SourceGroups:     []string{},
+		Name:              name,
+		Description:       "",
+		Priority:          priority,
+		Enabled:           true,
+		Protocol:          protocol,
+		Ports:             ports,
+		SourceIPs:         srcIPs,
+		DestinationIPs:    dstIPs,
+		SourcePorts:       []string{},
+		AppProtocols:      appProtos,
+		PayloadPrefixHex:  []string{},
+		PayloadMinLen:     nil,
+		PayloadMaxLen:     nil,
+		DstIsBroadcast:    nil,
+		DstIsMulticast:    nil,
+		Action:            ACLActionAllow,
+		RateLimit:         0,
+		BurstLimit:        0,
+		Stateful:          false,
+		SourceGroups:      []string{},
 		DestinationGroups: []string{},
 	}
 }

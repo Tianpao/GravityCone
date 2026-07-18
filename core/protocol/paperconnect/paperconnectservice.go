@@ -45,20 +45,20 @@ type PaperConnectService struct {
 	eventEmitter utils.EventEmitter
 
 	// HOST state
-	hostManager     *easytier.EasyTierManager
-	hostListener    net.Listener
-	hostTCPPort     uint16
-	gamePort        uint16
-	roomCode        *PaperConnectRoomCode
-	hostPlayers     map[string]*PCPlayerEntry // keyed by playerName
-	hostPlayerMu    sync.Mutex
-	hostStopCh      chan struct{}
-	hostRunning     bool
-	hostMu          sync.Mutex
-	hostPlayerName  string
-	hostStopReason  string
-	hostConns       map[net.Conn]struct{}
-	hostConnMu      sync.Mutex
+	hostManager    *easytier.EasyTierManager
+	hostListener   net.Listener
+	hostTCPPort    uint16
+	gamePort       uint16
+	roomCode       *PaperConnectRoomCode
+	hostPlayers    map[string]*PCPlayerEntry // keyed by playerName
+	hostPlayerMu   sync.Mutex
+	hostStopCh     chan struct{}
+	hostRunning    bool
+	hostMu         sync.Mutex
+	hostPlayerName string
+	hostStopReason string
+	hostConns      map[net.Conn]struct{}
+	hostConnMu     sync.Mutex
 
 	// GUEST state
 	guestManager          *easytier.EasyTierManager
@@ -178,9 +178,9 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	// Add HOST as a player
 	s.hostPlayerMu.Lock()
 	s.hostPlayers[playerName] = &PCPlayerEntry{
-		PlayerName: playerName,
-		ClientId:   clientId,
-		IsRoomHost: true,
+		PlayerName:    playerName,
+		ClientId:      clientId,
+		IsRoomHost:    true,
 		lastHeartbeat: time.Now(),
 	}
 	s.hostPlayerMu.Unlock()
