@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"gravitycone/core/easytier"
 	"gravitycone/core/minecraft"
+	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
 	"gravitycone/core/utils"
 	"log/slog"
@@ -66,7 +67,7 @@ func Run(peers []string, vendorPrefix string, motd string) {
 	stunSvc := &easytier.StunService{}
 	lanSvc := minecraft.NewLanService(emitter)
 	scaffoldingSvc := scaffolding.NewScaffoldingService(emitter)
-	paperConnectSvc := core.NewPaperConnectService(emitter)
+	paperConnectSvc := paperconnect.NewPaperConnectService(emitter)
 
 	shutdownCh := make(chan struct{})
 	handler := NewHandler(stunSvc, lanSvc, scaffoldingSvc, paperConnectSvc, writer, shutdownCh, vendorPrefix, motd)

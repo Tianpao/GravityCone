@@ -1,4 +1,4 @@
-package core
+package paperconnect
 
 import (
 	"encoding/json"

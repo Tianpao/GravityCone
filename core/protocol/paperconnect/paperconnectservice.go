@@ -1,4 +1,4 @@
-package core
+package paperconnect
 
 import (
 	"encoding/json"
@@ -10,6 +10,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"gravitycone/core/easytier"
+	"gravitycone/core/minecraft"
+	"gravitycone/core/protocol/scaffolding"
+	"gravitycone/core/utils"
 )
 
 const pcHostnamePrefix = "paper-connect-server-"
@@ -37,10 +42,10 @@ type PaperConnectConnectionStatus struct {
 }
 
 type PaperConnectService struct {
-	eventEmitter EventEmitter
+	eventEmitter utils.EventEmitter
 
 	// HOST state
-	hostManager     *EasyTierManager
+	hostManager     *easytier.EasyTierManager
 	hostListener    net.Listener
 	hostTCPPort     uint16
 	gamePort        uint16
@@ -56,7 +61,7 @@ type PaperConnectService struct {
 	hostConnMu      sync.Mutex
 
 	// GUEST state
-	guestManager          *EasyTierManager
+	guestManager          *easytier.EasyTierManager
 	guestStopCh           chan struct{}
 	guestMu               sync.Mutex
 	guestRunning          bool
@@ -69,28 +74,28 @@ type PaperConnectService struct {
 	guestHostTCPPort      uint16
 	guestTCPLocalPort     uint16
 	guestMCLocalPort      uint16
-	guestFakeServer       *FakeServer
+	guestFakeServer       *minecraft.FakeServer
 	guestPlayers          []PCPlayerEntry
 
 	joinCancelled atomic.Bool
 }
 
-func NewPaperConnectService(emitter EventEmitter) *PaperConnectService {
+func NewPaperConnectService(emitter utils.EventEmitter) *PaperConnectService {
 	if emitter == nil {
-		emitter = NilEventEmitter{}
+		emitter = utils.NilEventEmitter{}
 	}
 	return &PaperConnectService{
 		eventEmitter: emitter,
 	}
 }
 
-func (s *PaperConnectService) setEventEmitter(emitter EventEmitter) {
+func (s *PaperConnectService) setEventEmitter(emitter utils.EventEmitter) {
 	if emitter != nil {
 		s.eventEmitter = emitter
 	}
 }
 
-func InitPaperConnectEmitter(svc *PaperConnectService, emitter EventEmitter) {
+func InitPaperConnectEmitter(svc *PaperConnectService, emitter utils.EventEmitter) {
 	svc.setEventEmitter(emitter)
 }
 
@@ -132,14 +137,14 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	}
 
 	// Start EasyTier
-	manager, err := NewEasyTierManager()
+	manager, err := easytier.NewEasyTierManager()
 	if err != nil {
 		listener.Close()
 		return nil, err
 	}
 
 	hostname := fmt.Sprintf("%s%d", pcHostnamePrefix, tcpPort)
-	virtualIP, err := manager.Start(StartOptions{
+	virtualIP, err := manager.Start(easytier.StartOptions{
 		NetworkName:   rc.EasyTierNetworkName(),
 		NetworkSecret: rc.EasyTierNetworkSecret(),
 		Hostname:      hostname,
@@ -168,7 +173,7 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	s.hostConns = make(map[net.Conn]struct{})
 	s.hostMu.Unlock()
 
-	clientId := MakeVendor(vendorPrefix)
+	clientId := scaffolding.MakeVendor(vendorPrefix)
 
 	// Add HOST as a player
 	s.hostPlayerMu.Lock()
@@ -444,12 +449,12 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	}
 
 	// 3. Start EasyTier (Phase 1: no port forwards yet, just discover the host)
-	manager, err := NewEasyTierManager()
+	manager, err := easytier.NewEasyTierManager()
 	if err != nil {
 		return nil, err
 	}
 
-	virtualIP, err := manager.Start(StartOptions{
+	virtualIP, err := manager.Start(easytier.StartOptions{
 		NetworkName:   rc.EasyTierNetworkName(),
 		NetworkSecret: rc.EasyTierNetworkSecret(),
 		IsHost:        false,
@@ -493,13 +498,13 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	// Stop the initial EasyTier and restart with TCP port-forward
 	manager.Stop()
 
-	manager, err = NewEasyTierManager()
+	manager, err = easytier.NewEasyTierManager()
 	if err != nil {
 		return nil, err
 	}
 
 	tcpForward := fmt.Sprintf("tcp://0.0.0.0:%d/%s:%d", tcpLocalPort, PCHostVIP, serverPort)
-	_, err = manager.Start(StartOptions{
+	_, err = manager.Start(easytier.StartOptions{
 		NetworkName:   rc.EasyTierNetworkName(),
 		NetworkSecret: rc.EasyTierNetworkSecret(),
 		IsHost:        false,
@@ -559,7 +564,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	// 6. Phase 2: TCP+UDP connection
 	manager.Stop()
 
-	manager, err = NewEasyTierManager()
+	manager, err = easytier.NewEasyTierManager()
 	if err != nil {
 		return nil, err
 	}
@@ -580,7 +585,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		fmt.Sprintf("udp://0.0.0.0:%d/%s:%d", mcLocalPort, PCHostVIP, gamePort),
 	}
 
-	_, err = manager.Start(StartOptions{
+	_, err = manager.Start(easytier.StartOptions{
 		NetworkName:   rc.EasyTierNetworkName(),
 		NetworkSecret: rc.EasyTierNetworkSecret(),
 		IsHost:        false,
@@ -624,7 +629,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		break
 	}
 
-	clientId := MakeVendor(vendorPrefix)
+	clientId := scaffolding.MakeVendor(vendorPrefix)
 
 	playerReq := PCPlayerRequest{
 		ClientId:   clientId,
@@ -679,7 +684,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	s.guestHostTCPPort = uint16(serverPort)
 	s.guestTCPLocalPort = tcpLocalPort
 	s.guestMCLocalPort = mcLocalPort
-	s.guestFakeServer = NewFakeServer(mcLocalPort, "§6§l双击进入基岩版联机房间")
+	s.guestFakeServer = minecraft.NewFakeServer(mcLocalPort, "§6§l双击进入基岩版联机房间")
 	s.guestMu.Unlock()
 
 	go s.pcGuestHeartbeatLoop(clientId, playerName)
@@ -687,7 +692,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	return s.pcBuildConnectionStatus(), nil
 }
 
-func (s *PaperConnectService) pcDiscoverHost(manager *EasyTierManager, timeout time.Duration) (hostname string, virtualIP string, err error) {
+func (s *PaperConnectService) pcDiscoverHost(manager *easytier.EasyTierManager, timeout time.Duration) (hostname string, virtualIP string, err error) {
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 
@@ -901,5 +906,5 @@ func (s *PaperConnectService) Cleanup() {
 }
 
 func (s *PaperConnectService) AddPeers(addrs []string) {
-	AddPublicPeers(addrs)
+	easytier.AddPublicPeers(addrs)
 }

@@ -2,9 +2,9 @@ package cli
 
 import (
 	"fmt"
-	"gravitycone/core"
 	"gravitycone/core/easytier"
 	"gravitycone/core/minecraft"
+	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
 	"strings"
 	"sync"
@@ -12,15 +12,15 @@ import (
 
 // Handler dispatches CLI requests to core service methods.
 type Handler struct {
-	stunSvc          *easytier.StunService
-	lanSvc           *minecraft.LanService
-	scaffoldingSvc   *scaffolding.ScaffoldingService
-	paperConnectSvc  *core.PaperConnectService
-	writer           *StdioWriter
-	shutdownCh       chan struct{}
-	shutdownOnce     sync.Once
-	vendorPrefix     string
-	motd             string
+	stunSvc         *easytier.StunService
+	lanSvc          *minecraft.LanService
+	scaffoldingSvc  *scaffolding.ScaffoldingService
+	paperConnectSvc *paperconnect.PaperConnectService
+	writer          *StdioWriter
+	shutdownCh      chan struct{}
+	shutdownOnce    sync.Once
+	vendorPrefix    string
+	motd            string
 }
 
 // NewHandler creates a Handler with the given services and writer.
@@ -28,7 +28,7 @@ func NewHandler(
 	stunSvc *easytier.StunService,
 	lanSvc *minecraft.LanService,
 	scaffoldingSvc *scaffolding.ScaffoldingService,
-	paperConnectSvc *core.PaperConnectService,
+	paperConnectSvc *paperconnect.PaperConnectService,
 	writer *StdioWriter,
 	shutdownCh chan struct{},
 	vendorPrefix string,
@@ -43,8 +43,8 @@ func NewHandler(
 		shutdownCh:      shutdownCh,
 		vendorPrefix:    vendorPrefix,
 		motd:            motd,
-		}
-	}}
+	}
+}
 
 // Handle processes a single request and writes the response.
 func (h *Handler) Handle(req Request) {
@@ -94,7 +94,7 @@ func (h *Handler) handleRoom(req Request, action string) {
 	case "join":
 		h.handleRoomJoin(req)
 
-	case "cancel_join":	case "cancel_join":
+	case "cancel_join":
 		// Cancel both — whichever is active will respond
 		h.scaffoldingSvc.CancelJoin()
 		h.paperConnectSvc.CancelJoin()
@@ -138,6 +138,10 @@ func (h *Handler) handleRoomCreate(req Request) {
 			"players":      result.Players,
 			"running":      result.Running,
 			"protocol":     "paperconnect",
+		}))
+		return
+	}
+
 	// Default: Scaffolding (Java Edition)
 	mcPort, err := req.getInt("mc_port")
 	if err != nil {

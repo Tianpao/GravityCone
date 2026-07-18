@@ -14,7 +14,7 @@ import (
 
 	"github.com/kirklin/go-blind-watermark/bwm"
 
-	"gravitycone/core"
+	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
 )
 
@@ -125,7 +125,7 @@ func (w *WatermarkService) DecodeRoomCode(imageBase64 string) (string, error) {
 	// Validate the room code — try both U/ (Scaffolding) and P/ (PaperConnect) prefixes
 	if _, err := scaffolding.ParseRoomCode(code); err == nil {
 		slog.Info("valid Scaffolding room code", "code", code)
-	} else if _, err := core.ParsePaperConnectRoomCode(code); err == nil {
+	} else if _, err := paperconnect.ParsePaperConnectRoomCode(code); err == nil {
 		slog.Info("valid PaperConnect room code", "code", code)
 	} else {
 		// Try adding U/ prefix — if code already has a prefix it's unrecoverable
@@ -140,7 +140,7 @@ func (w *WatermarkService) DecodeRoomCode(imageBase64 string) (string, error) {
 		} else {
 			// Try P/ prefix (PaperConnect)
 			pCode := "P/" + code
-			if _, err := core.ParsePaperConnectRoomCode(pCode); err == nil {
+			if _, err := paperconnect.ParsePaperConnectRoomCode(pCode); err == nil {
 				code = pCode
 				slog.Info("added P/ prefix", "code", code)
 			} else {

@@ -8,6 +8,7 @@ import (
 	"gravitycone/core/app/account"
 	"gravitycone/core/easytier"
 	"gravitycone/core/minecraft"
+	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
 	"gravitycone/core/utils"
 	"log/slog"
@@ -96,7 +97,7 @@ func main() {
 	minecraftSvc := account.NewMinecraftService(clientID, clientSecret)
 	lanSvc := minecraft.NewLanService(nil)
 	scaffoldingSvc := scaffolding.NewScaffoldingService(nil)
-	paperConnectSvc := core.NewPaperConnectService(nil)
+	paperConnectSvc := paperconnect.NewPaperConnectService(nil)
 
 	app := application.New(application.Options{
 		Name:        "GravityCone",
@@ -108,8 +109,6 @@ func main() {
 			application.NewService(minecraftSvc),
 			application.NewService(scaffoldingSvc),
 			application.NewService(paperConnectSvc),
-			application.NewService(&core.WatermarkService{}),
-			application.NewService(&core.SettingsService{}),
 			application.NewService(&app.WatermarkService{}),
 			application.NewService(&easytier.SettingsService{}),
 		},
@@ -121,13 +120,11 @@ func main() {
 		},
 	})
 
-	// Wire up Wails event emitter now that app exists
-	core.InitScaffoldingEmitter(scaffoldingSvc, &wailsEventEmitter{app: app})
-	core.InitPaperConnectEmitter(paperConnectSvc, &wailsEventEmitter{app: app})
 	// Wire up Wails event emitters now that app exists
 	wailsEmitter := &wailsEventEmitter{app: app}
 	lanSvc.SetEventEmitter(wailsEmitter)
 	scaffolding.InitScaffoldingEmitter(scaffoldingSvc, wailsEmitter)
+	paperconnect.InitPaperConnectEmitter(paperConnectSvc, wailsEmitter)
 	easytier.SetEnsureEasyTierEmitter(wailsEmitter)
 
 	// Ensure EasyTier binaries are available (auto-download if missing).

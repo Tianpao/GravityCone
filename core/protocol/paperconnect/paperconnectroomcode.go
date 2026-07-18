@@ -1,9 +1,36 @@
-package core
+package paperconnect
 
 import (
+	"crypto/rand"
 	"fmt"
 	"strings"
 )
+
+const roomCodeCharset = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ" // 34 chars, excluding I and O
+
+var charToValueTable [256]int8
+
+func init() {
+	for i := range charToValueTable {
+		charToValueTable[i] = -1
+	}
+	for i := 0; i < len(roomCodeCharset); i++ {
+		charToValueTable[roomCodeCharset[i]] = int8(i)
+	}
+}
+
+func charToValue(c byte) (int, bool) {
+	v := int(charToValueTable[c])
+	return v, v >= 0
+}
+
+func randomCharsetChar() (byte, error) {
+	var buf [1]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return 0, err
+	}
+	return roomCodeCharset[buf[0]%byte(len(roomCodeCharset))], nil
+}
 
 const pcRoomCodeHeader = "P/"
 const pcRoomName = "paper-connect"
