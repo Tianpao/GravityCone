@@ -10,37 +10,37 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 export function AddPeers(addrs: string[] | null): $CancellablePromise<void> {
-    return $Call.ByID(2028729157, addrs);
+    return $Call.ByID(83918175, addrs);
 }
 
 export function CancelJoin(): $CancellablePromise<void> {
-    return $Call.ByID(4286668103);
+    return $Call.ByID(3453541945);
 }
 
 export function Cleanup(): $CancellablePromise<void> {
-    return $Call.ByID(3703900511);
+    return $Call.ByID(3896148725);
 }
 
 export function CreateRoom(playerName: string, vendorPrefix: string): $CancellablePromise<$models.PaperConnectRoomStatus | null> {
-    return $Call.ByID(2516405574, playerName, vendorPrefix);
+    return $Call.ByID(2101453668, playerName, vendorPrefix);
 }
 
 export function GetConnectionStatus(): $CancellablePromise<$models.PaperConnectConnectionStatus | null> {
-    return $Call.ByID(2317443181);
+    return $Call.ByID(696866851);
 }
 
 export function GetRoomStatus(): $CancellablePromise<$models.PaperConnectRoomStatus | null> {
-    return $Call.ByID(3829863222);
+    return $Call.ByID(2260811612);
 }
 
 export function JoinRoom(code: string, playerName: string, vendorPrefix: string): $CancellablePromise<$models.PaperConnectConnectionStatus | null> {
-    return $Call.ByID(3973105074, code, playerName, vendorPrefix);
+    return $Call.ByID(3220456788, code, playerName, vendorPrefix);
 }
 
 export function LeaveRoom(): $CancellablePromise<void> {
-    return $Call.ByID(4010632487);
+    return $Call.ByID(1631908205);
 }
 
 export function StopRoom(): $CancellablePromise<void> {
-    return $Call.ByID(3121406246);
+    return $Call.ByID(3622720108);
 }

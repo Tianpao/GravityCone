@@ -13,53 +13,6 @@ export interface ConnectionStatus {
     "disconnect_reason": string;
 }
 
-export interface LanServer {
-    "motd": string;
-    "ip": string;
-    "port": number;
-}
-
-export interface NatayarkUser {
-    "id": number;
-    "username": string;
-    "email": string;
-    "realname": boolean;
-    "status": number;
-    "last_login": string;
-    "regtime": string;
-}
-
-export interface PCPlayerEntry {
-    "player": string;
-    "clientId": string;
-    "isRoomHost": boolean;
-}
-
-/**
- * PaperConnectConnectionStatus is the guest-side connection status.
- */
-export interface PaperConnectConnectionStatus {
-    "room_code": string;
-    "host_address": string;
-    "game_port": number;
-    "connected": boolean;
-    "online_count": number;
-    "players": PCPlayerEntry[] | null;
-    "heartbeating": boolean;
-    "disconnect_reason": string;
-}
-
-/**
- * PaperConnectRoomStatus is the host-side room status.
- */
-export interface PaperConnectRoomStatus {
-    "code": string;
-    "game_port": number;
-    "online_count": number;
-    "players": PCPlayerEntry[] | null;
-    "running": boolean;
-}
-
 export interface PlayerInfo {
     "name": string;
     "machine_id": string;

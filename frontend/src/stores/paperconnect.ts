@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import {
   CreateRoom, StopRoom, GetRoomStatus,
   JoinRoom, LeaveRoom, GetConnectionStatus, CancelJoin
-} from '../../bindings/gravitycone/core/paperconnectservice.js'
+} from '../../bindings/gravitycone/core/protocol/paperconnect/paperconnectservice.js'
 
 export const usePaperConnectStore = defineStore('paperconnect', {
   state: () => ({
