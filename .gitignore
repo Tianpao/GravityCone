@@ -20,4 +20,6 @@ CLAUDE.md
 
 *.exe
 *.zip
+
+config.toml
 review.md

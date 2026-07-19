@@ -15,6 +15,7 @@ import (
 
 	"github.com/kirklin/go-blind-watermark/bwm"
 
+	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
 )
 
@@ -137,17 +138,30 @@ func (w *WatermarkService) DecodeRoomCode(imageBase64 string) (string, error) {
 	code := unpadPayload(text)
 	slog.Info("unpad result", "code", code)
 
-	// Validate the room code
-	if _, err := scaffolding.ParseRoomCode(code); err != nil {
-		// Try without U/ prefix
-		if !strings.HasPrefix(strings.ToUpper(code), "U/") {
-			code = "U/" + code
+	// Validate the room code — try both U/ (Scaffolding) and P/ (PaperConnect) prefixes
+	if _, err := scaffolding.ParseRoomCode(code); err == nil {
+		slog.Info("valid Scaffolding room code", "code", code)
+	} else if _, err := paperconnect.ParsePaperConnectRoomCode(code); err == nil {
+		slog.Info("valid PaperConnect room code", "code", code)
+	} else {
+		// Try adding U/ prefix — if code already has a prefix it's unrecoverable
+		if strings.HasPrefix(strings.ToUpper(code), "U/") || strings.HasPrefix(strings.ToUpper(code), "P/") {
+			return "", fmt.Errorf("图片中的房间代码无效，可能图片未包含房间信息或被过度压缩")
+		}
+		// Try U/ prefix first (Scaffolding)
+		uCode := "U/" + code
+		if _, err := scaffolding.ParseRoomCode(uCode); err == nil {
+			code = uCode
 			slog.Info("added U/ prefix", "code", code)
-			if _, err := scaffolding.ParseRoomCode(code); err != nil {
+		} else {
+			// Try P/ prefix (PaperConnect)
+			pCode := "P/" + code
+			if _, err := paperconnect.ParsePaperConnectRoomCode(pCode); err == nil {
+				code = pCode
+				slog.Info("added P/ prefix", "code", code)
+			} else {
 				return "", fmt.Errorf("图片中的房间代码无效，可能图片未包含房间信息或被过度压缩")
 			}
-		} else {
-			return "", fmt.Errorf("图片中的房间代码无效，可能图片未包含房间信息或被过度压缩")
 		}
 	}
 

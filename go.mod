@@ -3,6 +3,7 @@ module gravitycone
 go 1.26.1
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/andre-carbajal/go-mcstatus v1.0.0
 	github.com/joho/godotenv v1.5.1
 	github.com/kirklin/go-blind-watermark v0.0.1
