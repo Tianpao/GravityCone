@@ -45,16 +45,36 @@ const progressLabel = computed(() => {
     </main>
     <BottomNav />
 
-    <!-- Download Progress Overlay -->
     <Transition name="overlay-fade">
       <div
-        v-if="download.downloading"
+        v-if="download.status === 'downloading' || download.status === 'extracting'"
         class="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-xl bg-background/60"
       >
         <div class="flex flex-col items-center gap-4 px-10 py-10 rounded-2xl border border-border bg-card/90 min-w-72">
           <div class="size-10 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           <p class="text-lg font-semibold">正在下载 EasyTier</p>
           <p class="text-sm text-muted-foreground">{{ progressLabel }}</p>
+        </div>
+      </div>
+    </Transition>
+
+    <Transition name="overlay-fade">
+      <div
+        v-if="download.status === 'error'"
+        class="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-xl bg-background/60"
+      >
+        <div class="flex flex-col items-center gap-4 px-8 py-10 rounded-2xl border border-destructive/30 bg-card/90">
+          <div class="flex size-12 items-center justify-center rounded-full bg-destructive/10">
+            <svg class="size-6 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </div>
+          <p class="text-lg font-semibold text-destructive">EasyTier 下载失败</p>
+          <p class="max-w-xs text-center text-sm text-muted-foreground">{{ download.errorMessage }}</p>
+          <div class="mt-2 flex gap-3">
+            <Button size="sm" @click="download.retry">重试</Button>
+            <Button variant="outline" size="sm" @click="download.dismiss">关闭</Button>
+          </div>
         </div>
       </div>
     </Transition>

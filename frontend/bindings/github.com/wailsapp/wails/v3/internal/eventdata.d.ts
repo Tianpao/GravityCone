@@ -18,6 +18,7 @@ import type * as scaffolding$0 from "../../../../../gravitycone/core/protocol/sc
 declare module "@wailsio/runtime" {
     namespace Events {
         interface CustomEvents {
+            "download.error": easytier$0.DownloadErrorData;
             "download.progress": easytier$0.DownloadProgressData;
             "lan.server_found": minecraft$0.LanServer;
             "lan.server_lost": { [_ in string]?: any } | null;

@@ -39,6 +39,7 @@ var assets embed.FS
 
 func init() {
 	application.RegisterEvent[easytier.DownloadProgressData]("download.progress")
+	application.RegisterEvent[easytier.DownloadErrorData]("download.error")
 	application.RegisterEvent[scaffolding.PlayerInfo]("room.player_joined")
 	application.RegisterEvent[scaffolding.PlayerInfo]("room.player_left")
 	application.RegisterEvent[map[string]string]("room.closed")
@@ -104,6 +105,7 @@ func main() {
 		Description: "A demo of using raw HTML & CSS",
 		Services: []application.Service{
 			application.NewService(&easytier.StunService{}),
+			application.NewService(&easytier.EasyTierDownloadService{}),
 			application.NewService(lanSvc),
 			application.NewService(natayarkSvc),
 			application.NewService(minecraftSvc),
