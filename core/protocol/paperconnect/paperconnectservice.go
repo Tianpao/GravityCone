@@ -78,6 +78,7 @@ type PaperConnectService struct {
 	guestPlayerName       string
 	guestDisconnectReason string
 	guestHostVirtualIP    string
+	guestTCPLocalPort     uint16
 	guestPlayers          []PCPlayerEntry
 	guestCancelFunc       context.CancelFunc
 
@@ -508,7 +509,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		return nil, fmt.Errorf("写入ACL配置失败: %w", err)
 	}
 
-	// 3. Start EasyTier (no port forwards — dial directly through TUN)
+	// 3. Start EasyTier (phase 1: discover host, no port forwards yet)
 	manager, err := easytier.NewEasyTierManager()
 	if err != nil {
 		return nil, err
@@ -550,7 +551,89 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		return nil, fmt.Errorf("加入已取消")
 	}
 
-	// 5. Start NetherNet discovery listener for local MC client
+	// 5. Allocate local ports for port forwarding
+	// TCP control port forwarding
+	tcpLocalLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		manager.Stop()
+		return nil, fmt.Errorf("分配本地TCP端口失败: %w", err)
+	}
+	tcpLocalPort := uint16(tcpLocalLn.Addr().(*net.TCPAddr).Port)
+	tcpLocalLn.Close()
+
+	// RakNet (UDP) port forwarding
+	rakLocalLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		manager.Stop()
+		return nil, fmt.Errorf("分配本地RakNet端口失败: %w", err)
+	}
+	rakLocalPort := uint16(rakLocalLn.Addr().(*net.TCPAddr).Port)
+	rakLocalLn.Close()
+
+	// 6. Restart EasyTier with port forwards (TCP control + UDP RakNet)
+	manager.Stop()
+
+	manager, err = easytier.NewEasyTierManager()
+	if err != nil {
+		return nil, err
+	}
+
+	portForwards := []string{
+		fmt.Sprintf("tcp://0.0.0.0:%d/%s:%d", tcpLocalPort, hostIP, serverPort),
+		fmt.Sprintf("udp://0.0.0.0:%d/%s:%d", rakLocalPort, hostIP, PCRakNetPort),
+	}
+
+	_, err = manager.Start(easytier.StartOptions{
+		NetworkName:        rc.EasyTierNetworkName(),
+		NetworkSecret:      rc.EasyTierNetworkSecret(),
+		IsHost:             false,
+		ConfigPath:         "./config.toml",
+		PortForwards:       portForwards,
+		UpstreamCompatible: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("启动虚拟网络(端口转发)失败: %w", err)
+	}
+
+	// 7. Wait for port forwards to become active via TCP ping
+	for attempt := 0; attempt < 30; attempt++ {
+		if s.joinCancelled.Load() {
+			manager.Stop()
+			return nil, fmt.Errorf("加入已取消")
+		}
+
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", tcpLocalPort), 2*time.Second)
+		if err != nil {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		pingReq := PCPingRequest{Time: time.Now().UnixMilli()}
+		if err := WritePCRequest(conn, PCPing, pingReq); err != nil {
+			conn.Close()
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		buf := make([]byte, 4096)
+		n, err := conn.Read(buf)
+		conn.Close()
+
+		if err != nil || n == 0 {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		var pingResp PCPingResponse
+		if err := json.Unmarshal(buf[:n], &pingResp); err != nil {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+		break
+	}
+
+	// 8. Start NetherNet discovery listener for local MC client
 	discCfg := discovery.ListenConfig{
 		NetworkID: randomID(),
 		Log:       slog.Default(),
@@ -573,7 +656,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		ConnectionType:        4,
 	})
 
-	// 6. Start NetherNet listener
+	// 9. Start NetherNet listener
 	nnCfg := nethernet.ListenConfig{
 		AllowAnonymous:    true,
 		DisableTrickleICE: true,
@@ -586,8 +669,8 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	}
 	slog.Info("NetherNet listening for local client", "network_id", disc.NetworkID())
 
-	// 7. Dial host RakNet through TUN
-	rakAddr := fmt.Sprintf("%s:%d", hostIP, PCRakNetPort)
+	// 10. Dial host RakNet through local port forward
+	rakAddr := fmt.Sprintf("127.0.0.1:%d", rakLocalPort)
 	dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer dialCancel()
 	rkConn, err := (raknet.Dialer{
@@ -600,10 +683,9 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		manager.Stop()
 		return nil, fmt.Errorf("连接主机RakNet失败: %w", err)
 	}
-	defer rkConn.Close()
 	slog.Info("connected to host RakNet proxy", "addr", rakAddr)
 
-	// 8. Accept one local NetherNet client connection
+	// 11. Accept one local NetherNet client connection
 	nnConn, err := nnLn.Accept()
 	if err != nil {
 		rkConn.Close()
@@ -614,13 +696,13 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	}
 	slog.Info("local MC client connected via NetherNet", "remote", nnConn.RemoteAddr())
 
-	// 9. Start proxy
+	// 12. Start proxy
 	proxyCtx, proxyCancel := context.WithCancel(context.Background())
 	go proxyPackets(proxyCtx, slog.Default(), nnConn.(*nethernet.Conn), rkConn)
 
-	// 10. Register with host via TCP control protocol
+	// 13. Register with host via TCP control protocol (through port forward)
 	clientId := scaffolding.MakeVendor(vendorPrefix)
-	s.pcGuestRegister(hostIP, uint16(serverPort), clientId, playerName)
+	s.pcGuestRegister("127.0.0.1", tcpLocalPort, clientId, playerName)
 
 	// Store state
 	s.guestMu.Lock()
@@ -634,10 +716,11 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	s.guestRoomCode = rc
 	s.guestPlayerName = playerName
 	s.guestHostVirtualIP = hostIP
+	s.guestTCPLocalPort = tcpLocalPort
 	s.guestCancelFunc = proxyCancel
 	s.guestMu.Unlock()
 
-	go s.pcGuestHeartbeatLoop(clientId, playerName, hostIP, uint16(serverPort))
+	go s.pcGuestHeartbeatLoop(clientId, playerName, "127.0.0.1", tcpLocalPort)
 
 	return s.pcBuildConnectionStatus(), nil
 }
@@ -816,6 +899,7 @@ func (s *PaperConnectService) LeaveRoom() error {
 	s.guestDisconnectReason = ""
 	s.guestPlayers = nil
 	s.guestHostVirtualIP = ""
+	s.guestTCPLocalPort = 0
 	s.guestRoomCode = nil
 	s.guestPlayerName = ""
 	s.guestMu.Unlock()
@@ -892,6 +976,7 @@ func (s *PaperConnectService) pcAutoDisconnect(reason string) {
 	s.guestCancelFunc = nil
 	s.guestPlayers = nil
 	s.guestHostVirtualIP = ""
+	s.guestTCPLocalPort = 0
 	s.guestRoomCode = nil
 	s.guestPlayerName = ""
 	s.guestMu.Unlock()
