@@ -3,7 +3,6 @@ module gravitycone
 go 1.26.1
 
 require (
-	github.com/BurntSushi/toml v1.6.0
 	github.com/andre-carbajal/go-mcstatus v1.0.0
 	github.com/df-mc/go-nethernet v0.0.0-00010101000000-000000000000
 	github.com/joho/godotenv v1.5.1
