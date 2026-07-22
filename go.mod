@@ -12,6 +12,8 @@ require (
 	golang.org/x/net v0.56.0
 )
 
+replace github.com/df-mc/go-nethernet => ./lib/go-nethernet
+
 require (
 	github.com/adrg/xdg v0.5.3 // indirect
 	github.com/coder/websocket v1.8.14 // indirect
