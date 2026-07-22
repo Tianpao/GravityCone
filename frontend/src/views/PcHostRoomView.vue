@@ -65,6 +65,11 @@ const players = () => pcStore.pcRoomStatus?.players ?? []
           </Button>
         </div>
 
+        <!-- Host hint -->
+        <div class="rounded-xl border border-primary/20 bg-primary/5 p-3">
+          <p class="text-sm text-muted-foreground">请确保 Minecraft 基岩版世界已开启局域网联机，GravityCone 会自动代理连接</p>
+        </div>
+
         <!-- Player list -->
         <div class="rounded-xl border border-border bg-card p-4 space-y-3">
           <div class="flex items-center justify-between">

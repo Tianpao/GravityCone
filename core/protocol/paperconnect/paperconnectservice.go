@@ -1,15 +1,21 @@
 package paperconnect
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/df-mc/go-nethernet"
+	"github.com/df-mc/go-nethernet/discovery"
+	raknet "github.com/sandertv/go-raknet"
 
 	"gravitycone/core/easytier"
 	"gravitycone/core/protocol/scaffolding"
@@ -45,22 +51,25 @@ type PaperConnectService struct {
 
 	// HOST state
 	hostManager    *easytier.EasyTierManager
-	hostListener   net.Listener
+	hostRakLn      *raknet.Listener
+	hostTcpLn      net.Listener
 	hostTCPPort    uint16
-	gamePort       uint16
 	roomCode       *PaperConnectRoomCode
-	hostPlayers    map[string]*PCPlayerEntry // keyed by playerName
+	hostPlayers    map[string]*PCPlayerEntry
 	hostPlayerMu   sync.Mutex
 	hostStopCh     chan struct{}
 	hostRunning    bool
 	hostMu         sync.Mutex
 	hostPlayerName string
 	hostStopReason string
-	hostConns      map[net.Conn]struct{}
-	hostConnMu     sync.Mutex
+	hostSessions   chan struct{}
+	hostCancelFunc context.CancelFunc
 
 	// GUEST state
 	guestManager          *easytier.EasyTierManager
+	guestRakConn          *raknet.Conn
+	guestDisc             *discovery.Listener
+	guestNnLn             *nethernet.Listener
 	guestStopCh           chan struct{}
 	guestMu               sync.Mutex
 	guestRunning          bool
@@ -68,12 +77,9 @@ type PaperConnectService struct {
 	guestRoomCode         *PaperConnectRoomCode
 	guestPlayerName       string
 	guestDisconnectReason string
-	guestGamePort         uint16
 	guestHostVirtualIP    string
-	guestHostTCPPort      uint16
-	guestTCPLocalPort     uint16
-	guestMCLocalPort      uint16
 	guestPlayers          []PCPlayerEntry
+	guestCancelFunc       context.CancelFunc
 
 	joinCancelled atomic.Bool
 }
@@ -107,8 +113,6 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	}
 	s.hostMu.Unlock()
 
-	gamePort := uint16(19132)
-
 	// Generate room code
 	rc, err := GeneratePaperConnectRoomCode()
 	if err != nil {
@@ -116,28 +120,28 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	}
 
 	// Allocate TCP port for PaperConnect control protocol
-	listener, err := net.Listen("tcp", ":0")
+	tcpLn, err := net.Listen("tcp", ":0")
 	if err != nil {
 		return nil, fmt.Errorf("分配TCP端口失败: %w", err)
 	}
-	tcpPort := uint16(listener.Addr().(*net.TCPAddr).Port)
+	tcpPort := uint16(tcpLn.Addr().(*net.TCPAddr).Port)
 
 	if tcpPort <= 1024 || tcpPort > 65535 {
-		listener.Close()
+		tcpLn.Close()
 		return nil, fmt.Errorf("分配的TCP端口 %d 不合法", tcpPort)
 	}
 
 	// Generate ACL config
 	aclConfig := BuildPaperConnectACL(true, PCHostVIP, &tcpPort)
 	if err := WritePaperConnectACL(aclConfig, "./config.toml"); err != nil {
-		listener.Close()
+		tcpLn.Close()
 		return nil, fmt.Errorf("写入ACL配置失败: %w", err)
 	}
 
 	// Start EasyTier
 	manager, err := easytier.NewEasyTierManager()
 	if err != nil {
-		listener.Close()
+		tcpLn.Close()
 		return nil, err
 	}
 
@@ -148,28 +152,39 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 		Hostname:           hostname,
 		IsHost:             true,
 		TCPPort:            tcpPort,
-		MCPort:             gamePort,
+		MCPort:             PCRakNetPort,
 		ConfigPath:         "./config.toml",
 		UpstreamCompatible: true,
 	})
 	if err != nil {
-		listener.Close()
+		tcpLn.Close()
 		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
+	}
+
+	// Start RakNet listener for game traffic proxy
+	rakLn, err := (raknet.ListenConfig{
+		MaxMTU:   rakNetMTU,
+		ErrorLog: slog.Default(),
+	}).Listen(fmt.Sprintf("0.0.0.0:%d", PCRakNetPort))
+	if err != nil {
+		tcpLn.Close()
+		manager.Stop()
+		return nil, fmt.Errorf("启动RakNet监听失败: %w", err)
 	}
 
 	// Store state
 	s.hostMu.Lock()
 	s.hostManager = manager
-	s.hostListener = listener
+	s.hostRakLn = rakLn
+	s.hostTcpLn = tcpLn
 	s.hostTCPPort = tcpPort
-	s.gamePort = gamePort
 	s.roomCode = rc
 	s.hostPlayers = make(map[string]*PCPlayerEntry)
 	s.hostStopCh = make(chan struct{})
 	s.hostRunning = true
 	s.hostStopReason = ""
 	s.hostPlayerName = playerName
-	s.hostConns = make(map[net.Conn]struct{})
+	s.hostSessions = make(chan struct{}, maxHostSessions)
 	s.hostMu.Unlock()
 
 	clientId := scaffolding.MakeVendor(vendorPrefix)
@@ -184,6 +199,12 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	}
 	s.hostPlayerMu.Unlock()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	s.hostMu.Lock()
+	s.hostCancelFunc = cancel
+	s.hostMu.Unlock()
+
+	go s.pcHostRakNetAcceptLoop(ctx)
 	go s.pcHostServerLoop()
 	go s.pcHostPlayerCleanupLoop()
 
@@ -197,8 +218,14 @@ func (s *PaperConnectService) StopRoom() error {
 		return nil
 	}
 	close(s.hostStopCh)
-	if s.hostListener != nil {
-		s.hostListener.Close()
+	if s.hostRakLn != nil {
+		s.hostRakLn.Close()
+	}
+	if s.hostTcpLn != nil {
+		s.hostTcpLn.Close()
+	}
+	if s.hostCancelFunc != nil {
+		s.hostCancelFunc()
 	}
 	s.hostRunning = false
 	s.hostMu.Unlock()
@@ -208,13 +235,6 @@ func (s *PaperConnectService) StopRoom() error {
 		reason = "room stopped by host"
 	}
 	s.eventEmitter.Emit("paperconnect.room.closed", map[string]string{"reason": reason})
-
-	s.hostConnMu.Lock()
-	for conn := range s.hostConns {
-		conn.Close()
-	}
-	s.hostConns = nil
-	s.hostConnMu.Unlock()
 
 	if s.hostManager != nil {
 		s.hostManager.Stop()
@@ -262,16 +282,71 @@ func (s *PaperConnectService) pcBuildRoomStatus(virtualIP string) *PaperConnectR
 
 	return &PaperConnectRoomStatus{
 		Code:        code,
-		GamePort:    int(s.gamePort),
+		GamePort:    PCRakNetPort,
 		OnlineCount: len(players),
 		Players:     players,
 		Running:     s.hostRunning,
 	}
 }
 
+func (s *PaperConnectService) pcHostRakNetAcceptLoop(ctx context.Context) {
+	var sessionID atomic.Uint64
+	for {
+		conn, err := s.hostRakLn.Accept()
+		if err != nil {
+			select {
+			case <-s.hostStopCh:
+				return
+			default:
+				slog.Error("RakNet accept error", "err", err)
+				continue
+			}
+		}
+
+		rkConn, ok := conn.(*raknet.Conn)
+		if !ok {
+			slog.Error("unexpected RakNet connection type", "type", fmt.Sprintf("%T", conn))
+			_ = conn.Close()
+			continue
+		}
+
+		select {
+		case s.hostSessions <- struct{}{}:
+			id := sessionID.Add(1)
+			go func() {
+				defer func() { <-s.hostSessions }()
+				s.pcHostSession(ctx, slog.With("session", id), rkConn)
+			}()
+		case <-s.hostStopCh:
+			_ = rkConn.Close()
+			return
+		case <-ctx.Done():
+			_ = rkConn.Close()
+			return
+		}
+	}
+}
+
+func (s *PaperConnectService) pcHostSession(ctx context.Context, log *slog.Logger, rkConn *raknet.Conn) {
+	defer rkConn.Close()
+	log.Info("tenant proxy connected", "remote", rkConn.RemoteAddr())
+
+	nnConn, err := dialLocalNetherNet(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			log.Error("failed to dial local Bedrock world", "err", err)
+		}
+		return
+	}
+	defer nnConn.Close()
+	log.Info("connected to local Bedrock world", "latency", nnConn.Latency())
+
+	proxyPackets(ctx, log, nnConn, rkConn)
+}
+
 func (s *PaperConnectService) pcHostServerLoop() {
 	for {
-		conn, err := s.hostListener.Accept()
+		conn, err := s.hostTcpLn.Accept()
 		if err != nil {
 			select {
 			case <-s.hostStopCh:
@@ -287,20 +362,7 @@ func (s *PaperConnectService) pcHostServerLoop() {
 }
 
 func (s *PaperConnectService) pcHandleHostConnection(conn net.Conn) {
-	s.hostConnMu.Lock()
-	if s.hostConns != nil {
-		s.hostConns[conn] = struct{}{}
-	}
-	s.hostConnMu.Unlock()
-
-	defer func() {
-		conn.Close()
-		s.hostConnMu.Lock()
-		if s.hostConns != nil {
-			delete(s.hostConns, conn)
-		}
-		s.hostConnMu.Unlock()
-	}()
+	defer conn.Close()
 
 	for {
 		s.hostMu.Lock()
@@ -341,7 +403,7 @@ func (s *PaperConnectService) pcHandlePing(conn net.Conn, rawJson []byte) {
 		ReturnTime:       time.Now().UnixMilli(),
 		GameType:         "MinecraftBedrock",
 		GameProtocolType: "UDP",
-		GamePort:         int(s.gamePort),
+		GamePort:         PCRakNetPort,
 	}
 	WritePCResponse(conn, resp)
 }
@@ -370,7 +432,6 @@ func (s *PaperConnectService) pcHandlePlayer(conn net.Conn, rawJson []byte) {
 		lastHeartbeat: time.Now(),
 	}
 
-	// Build response player list (host always included, guests only if heartbeat within timeout)
 	activePlayers := make([]PCPlayerEntry, 0)
 	for _, p := range s.hostPlayers {
 		if p.IsRoomHost || time.Since(p.lastHeartbeat) <= pcPlayerTimeout {
@@ -447,13 +508,13 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		return nil, fmt.Errorf("写入ACL配置失败: %w", err)
 	}
 
-	// 3. Start EasyTier (Phase 1: no port forwards yet, just discover the host)
+	// 3. Start EasyTier (no port forwards — dial directly through TUN)
 	manager, err := easytier.NewEasyTierManager()
 	if err != nil {
 		return nil, err
 	}
 
-	virtualIP, err := manager.Start(easytier.StartOptions{
+	_, err = manager.Start(easytier.StartOptions{
 		NetworkName:        rc.EasyTierNetworkName(),
 		NetworkSecret:      rc.EasyTierNetworkSecret(),
 		IsHost:             false,
@@ -463,7 +524,6 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	if err != nil {
 		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
 	}
-	_ = virtualIP
 
 	if s.joinCancelled.Load() {
 		manager.Stop()
@@ -485,173 +545,120 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		return nil, fmt.Errorf("解析主机端口失败: %w", err)
 	}
 
-	// 5. Phase 1: TCP-only connection
-	// Allocate local port for TCP forwarding to host's control port
-	localListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if s.joinCancelled.Load() {
+		manager.Stop()
+		return nil, fmt.Errorf("加入已取消")
+	}
+
+	// 5. Start NetherNet discovery listener for local MC client
+	discCfg := discovery.ListenConfig{
+		NetworkID: randomID(),
+		Log:       slog.Default(),
+	}
+	disc, err := discCfg.Listen("0.0.0.0:7551")
 	if err != nil {
 		manager.Stop()
-		return nil, fmt.Errorf("分配本地端口失败: %w", err)
-	}
-	tcpLocalPort := uint16(localListener.Addr().(*net.TCPAddr).Port)
-	localListener.Close()
-
-	// Stop the initial EasyTier and restart with TCP port-forward
-	manager.Stop()
-
-	manager, err = easytier.NewEasyTierManager()
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("启动NetherNet发现监听失败: %w", err)
 	}
 
-	tcpForward := fmt.Sprintf("tcp://0.0.0.0:%d/%s:%d", tcpLocalPort, hostIP, serverPort)
-	_, err = manager.Start(easytier.StartOptions{
-		NetworkName:        rc.EasyTierNetworkName(),
-		NetworkSecret:      rc.EasyTierNetworkSecret(),
-		IsHost:             false,
-		ConfigPath:         "./config.toml",
-		PortForwards:       []string{tcpForward},
-		UpstreamCompatible: true,
+	disc.ServerData(&discovery.ServerData{
+		ServerName:            "GravityCone Proxy",
+		LevelName:             "Join",
+		GameType:              discovery.GameTypeSurvival,
+		PlayerCount:           0,
+		MaxPlayerCount:        20,
+		AcceptsOnlineAuth:     true,
+		AcceptsSelfSignedAuth: true,
+		TransportLayer:        discovery.TransportLayerNetherNet,
+		ConnectionType:        4,
 	})
+
+	// 6. Start NetherNet listener
+	nnCfg := nethernet.ListenConfig{
+		AllowAnonymous:    true,
+		DisableTrickleICE: true,
+	}
+	nnLn, err := nnCfg.Listen(disc)
 	if err != nil {
-		return nil, fmt.Errorf("启动虚拟网络(TCP)失败: %w", err)
+		disc.Close()
+		manager.Stop()
+		return nil, fmt.Errorf("启动NetherNet监听失败: %w", err)
 	}
+	slog.Info("NetherNet listening for local client", "network_id", disc.NetworkID())
 
-	// Ping the server via TCP to verify connectivity (per-request connection)
-	var gamePort uint16
-	for attempt := 0; attempt < 30; attempt++ {
-		if s.joinCancelled.Load() {
-			manager.Stop()
-			return nil, fmt.Errorf("加入已取消")
-		}
-
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", tcpLocalPort), 2*time.Second)
-		if err != nil {
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		pingReq := PCPingRequest{Time: time.Now().UnixMilli()}
-		if err := WritePCRequest(conn, PCPing, pingReq); err != nil {
-			conn.Close()
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		// Read response
-		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		buf := make([]byte, 4096)
-		n, err := conn.Read(buf)
-		conn.Close()
-
-		if err != nil || n == 0 {
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		var pingResp PCPingResponse
-		if err := json.Unmarshal(buf[:n], &pingResp); err != nil {
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		gamePort = uint16(pingResp.GamePort)
-		break
-	}
-
-	if gamePort == 0 {
-		gamePort = 19132 // Default Bedrock port
-	}
-
-	// 6. Phase 2: TCP+UDP connection
-	manager.Stop()
-
-	manager, err = easytier.NewEasyTierManager()
+	// 7. Dial host RakNet through TUN
+	rakAddr := fmt.Sprintf("%s:%d", hostIP, PCRakNetPort)
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer dialCancel()
+	rkConn, err := (raknet.Dialer{
+		MaxMTU:   rakNetMTU,
+		ErrorLog: slog.Default(),
+	}).DialContext(dialCtx, rakAddr)
 	if err != nil {
-		return nil, err
+		nnLn.Close()
+		disc.Close()
+		manager.Stop()
+		return nil, fmt.Errorf("连接主机RakNet失败: %w", err)
 	}
+	defer rkConn.Close()
+	slog.Info("connected to host RakNet proxy", "addr", rakAddr)
 
-	// Allocate local port for UDP game traffic forwarding
-	mcListener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", gamePort))
+	// 8. Accept one local NetherNet client connection
+	nnConn, err := nnLn.Accept()
 	if err != nil {
-		mcListener, err = net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return nil, fmt.Errorf("分配本地MC端口失败: %w", err)
-		}
+		rkConn.Close()
+		nnLn.Close()
+		disc.Close()
+		manager.Stop()
+		return nil, fmt.Errorf("等待本地MC客户端连接失败: %w", err)
 	}
-	mcLocalPort := uint16(mcListener.Addr().(*net.TCPAddr).Port)
-	mcListener.Close()
+	slog.Info("local MC client connected via NetherNet", "remote", nnConn.RemoteAddr())
 
-	portForwards := []string{
-		fmt.Sprintf("tcp://0.0.0.0:%d/%s:%d", tcpLocalPort, hostIP, serverPort),
-		fmt.Sprintf("udp://0.0.0.0:%d/%s:%d", mcLocalPort, hostIP, gamePort),
-	}
+	// 9. Start proxy
+	proxyCtx, proxyCancel := context.WithCancel(context.Background())
+	go proxyPackets(proxyCtx, slog.Default(), nnConn.(*nethernet.Conn), rkConn)
 
-	_, err = manager.Start(easytier.StartOptions{
-		NetworkName:        rc.EasyTierNetworkName(),
-		NetworkSecret:      rc.EasyTierNetworkSecret(),
-		IsHost:             false,
-		ConfigPath:         "./config.toml",
-		PortForwards:       portForwards,
-		UpstreamCompatible: true,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("启动虚拟网络(TCP+UDP)失败: %w", err)
-	}
-
-	// Verify Phase 2 connectivity with another ping (per-request connection)
-	for attempt := 0; attempt < 30; attempt++ {
-		if s.joinCancelled.Load() {
-			manager.Stop()
-			return nil, fmt.Errorf("加入已取消")
-		}
-
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", tcpLocalPort), 2*time.Second)
-		if err != nil {
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		pingReq := PCPingRequest{Time: time.Now().UnixMilli()}
-		if err := WritePCRequest(conn, PCPing, pingReq); err != nil {
-			conn.Close()
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		buf := make([]byte, 4096)
-		n, err := conn.Read(buf)
-		conn.Close()
-
-		if err != nil || n == 0 {
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		break
-	}
-
+	// 10. Register with host via TCP control protocol
 	clientId := scaffolding.MakeVendor(vendorPrefix)
+	s.pcGuestRegister(hostIP, uint16(serverPort), clientId, playerName)
 
-	playerReq := PCPlayerRequest{
-		ClientId:   clientId,
-		PlayerName: playerName,
-	}
+	// Store state
+	s.guestMu.Lock()
+	s.guestManager = manager
+	s.guestRakConn = rkConn
+	s.guestDisc = disc
+	s.guestNnLn = nnLn
+	s.guestStopCh = make(chan struct{})
+	s.guestRunning = true
+	s.guestHeartbeating = true
+	s.guestRoomCode = rc
+	s.guestPlayerName = playerName
+	s.guestHostVirtualIP = hostIP
+	s.guestCancelFunc = proxyCancel
+	s.guestMu.Unlock()
 
-	var playerResp PCPlayerResponse
+	go s.pcGuestHeartbeatLoop(clientId, playerName, hostIP, uint16(serverPort))
+
+	return s.pcBuildConnectionStatus(), nil
+}
+
+func (s *PaperConnectService) pcGuestRegister(hostIP string, tcpPort uint16, clientId string, playerName string) {
 	for attempt := 0; attempt < 10; attempt++ {
 		if s.joinCancelled.Load() {
-			manager.Stop()
-			return nil, fmt.Errorf("加入已取消")
+			return
 		}
 
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", tcpLocalPort), 3*time.Second)
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", hostIP, tcpPort), 5*time.Second)
 		if err != nil {
 			time.Sleep(1 * time.Second)
 			continue
 		}
 
-		if err := WritePCRequest(conn, PCPlayer, playerReq); err != nil {
+		req := PCPlayerRequest{
+			ClientId:   clientId,
+			PlayerName: playerName,
+		}
+		if err := WritePCRequest(conn, PCPlayer, req); err != nil {
 			conn.Close()
 			time.Sleep(1 * time.Second)
 			continue
@@ -667,30 +674,14 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 			continue
 		}
 
-		json.Unmarshal(buf[:n], &playerResp)
-		break
+		var resp PCPlayerResponse
+		if err := json.Unmarshal(buf[:n], &resp); err == nil {
+			s.guestMu.Lock()
+			s.guestPlayers = resp.Players
+			s.guestMu.Unlock()
+		}
+		return
 	}
-
-	s.guestPlayers = playerResp.Players
-
-	// Store state
-	s.guestMu.Lock()
-	s.guestManager = manager
-	s.guestStopCh = make(chan struct{})
-	s.guestRunning = true
-	s.guestHeartbeating = true
-	s.guestRoomCode = rc
-	s.guestPlayerName = playerName
-	s.guestGamePort = gamePort
-	s.guestHostVirtualIP = hostIP
-	s.guestHostTCPPort = uint16(serverPort)
-	s.guestTCPLocalPort = tcpLocalPort
-	s.guestMCLocalPort = mcLocalPort
-	s.guestMu.Unlock()
-
-	go s.pcGuestHeartbeatLoop(clientId, playerName)
-
-	return s.pcBuildConnectionStatus(), nil
 }
 
 func (s *PaperConnectService) pcDiscoverHost(manager *easytier.EasyTierManager, timeout time.Duration) (hostname string, virtualIP string, err error) {
@@ -718,9 +709,7 @@ func (s *PaperConnectService) pcDiscoverHost(manager *easytier.EasyTierManager, 
 	return "", "", fmt.Errorf("发现主机超时: %w", lastErr)
 }
 
-// pcGuestHeartbeatLoop sends a heartbeat every 5 seconds using per-request TCP connections,
-// matching the C# PaperConnectClient pattern where each heartbeat creates a new TcpClient.
-func (s *PaperConnectService) pcGuestHeartbeatLoop(clientId string, playerName string) {
+func (s *PaperConnectService) pcGuestHeartbeatLoop(clientId string, playerName string, hostIP string, tcpPort uint16) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -734,7 +723,6 @@ func (s *PaperConnectService) pcGuestHeartbeatLoop(clientId string, playerName s
 		case <-ticker.C:
 			s.guestMu.Lock()
 			running := s.guestRunning
-			tcpLocalPort := s.guestTCPLocalPort
 			s.guestMu.Unlock()
 
 			if !running {
@@ -742,8 +730,7 @@ func (s *PaperConnectService) pcGuestHeartbeatLoop(clientId string, playerName s
 				return
 			}
 
-			// Create a new TCP connection for this heartbeat (matching C# pattern)
-			conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", tcpLocalPort), 5*time.Second)
+			conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", hostIP, tcpPort), 5*time.Second)
 			if err != nil {
 				consecutiveFailures++
 				log.Printf("[PCHeartbeat] dial failed (%d/%d): %v", consecutiveFailures, maxFailures, err)
@@ -769,7 +756,6 @@ func (s *PaperConnectService) pcGuestHeartbeatLoop(clientId string, playerName s
 				continue
 			}
 
-			// Read response
 			conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 			buf := make([]byte, 4096)
 			n, err := conn.Read(buf)
@@ -809,17 +795,29 @@ func (s *PaperConnectService) LeaveRoom() error {
 		s.guestRunning = false
 		s.guestHeartbeating = false
 	}
+	if s.guestCancelFunc != nil {
+		s.guestCancelFunc()
+	}
+	if s.guestRakConn != nil {
+		s.guestRakConn.Close()
+	}
+	if s.guestNnLn != nil {
+		s.guestNnLn.Close()
+	}
+	if s.guestDisc != nil {
+		s.guestDisc.Close()
+	}
 	manager := s.guestManager
 	s.guestManager = nil
+	s.guestRakConn = nil
+	s.guestNnLn = nil
+	s.guestDisc = nil
+	s.guestCancelFunc = nil
 	s.guestDisconnectReason = ""
 	s.guestPlayers = nil
-	s.guestGamePort = 0
 	s.guestHostVirtualIP = ""
-	s.guestHostTCPPort = 0
 	s.guestRoomCode = nil
 	s.guestPlayerName = ""
-	s.guestTCPLocalPort = 0
-	s.guestMCLocalPort = 0
 	s.guestMu.Unlock()
 
 	if manager != nil {
@@ -859,7 +857,7 @@ func (s *PaperConnectService) pcBuildConnectionStatus() *PaperConnectConnectionS
 	return &PaperConnectConnectionStatus{
 		RoomCode:         code,
 		HostAddress:      s.guestHostVirtualIP,
-		GamePort:         int(s.guestGamePort),
+		GamePort:         PCRakNetPort,
 		Connected:        s.guestRunning,
 		OnlineCount:      len(s.guestPlayers),
 		Players:          s.guestPlayers,
@@ -874,16 +872,28 @@ func (s *PaperConnectService) pcAutoDisconnect(reason string) {
 	s.guestRunning = false
 	s.guestHeartbeating = false
 	s.guestDisconnectReason = reason
+	if s.guestCancelFunc != nil {
+		s.guestCancelFunc()
+	}
+	if s.guestRakConn != nil {
+		s.guestRakConn.Close()
+	}
+	if s.guestNnLn != nil {
+		s.guestNnLn.Close()
+	}
+	if s.guestDisc != nil {
+		s.guestDisc.Close()
+	}
 	manager := s.guestManager
 	s.guestManager = nil
+	s.guestRakConn = nil
+	s.guestNnLn = nil
+	s.guestDisc = nil
+	s.guestCancelFunc = nil
 	s.guestPlayers = nil
 	s.guestHostVirtualIP = ""
-	s.guestGamePort = 0
-	s.guestHostTCPPort = 0
 	s.guestRoomCode = nil
 	s.guestPlayerName = ""
-	s.guestTCPLocalPort = 0
-	s.guestMCLocalPort = 0
 	s.guestMu.Unlock()
 
 	s.eventEmitter.Emit("paperconnect.room.disconnected", map[string]string{"reason": reason})

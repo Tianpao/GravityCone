@@ -45,6 +45,11 @@ const players = () => pcStore.pcConnectionStatus?.players ?? []
         <span v-if="pcStore.pcConnectionStatus?.heartbeating" class="text-xs text-muted-foreground">心跳正常</span>
       </div>
 
+      <!-- NetherNet proxy hint -->
+      <div v-if="pcStore.isConnectedPc" class="rounded-xl border border-primary/20 bg-primary/5 p-3">
+        <p class="text-sm text-muted-foreground">打开 Minecraft 基岩版，在局域网游戏中找到 <strong class="text-foreground">GravityCone Proxy</strong> 并加入</p>
+      </div>
+
       <!-- Disconnect reason banner -->
       <div v-if="!pcStore.isConnectedPc && pcStore.pcConnectionStatus?.disconnect_reason"
            class="border border-destructive/30 bg-destructive/5 p-4 rounded-xl">
