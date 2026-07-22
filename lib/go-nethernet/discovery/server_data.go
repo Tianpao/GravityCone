@@ -80,17 +80,29 @@ func (d *ServerData) MarshalBinary() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// UnmarshalBinary ...
+// UnmarshalBinary parses both v4 (legacy) and v5 (1.21+) ServerData formats.
 func (d *ServerData) UnmarshalBinary(data []byte) error {
+	if len(data) == 0 {
+		return fmt.Errorf("empty data")
+	}
+	switch data[0] {
+	case 5:
+		return d.unmarshalV5(data)
+	case 4:
+		return d.unmarshalV4(data)
+	default:
+		return fmt.Errorf("unsupported version: got %d, want 4 or 5", data[0])
+	}
+}
+
+func (d *ServerData) unmarshalV5(data []byte) error {
 	buf := bytes.NewBuffer(data)
 
 	v, err := buf.ReadByte()
 	if err != nil {
 		return fmt.Errorf("read version: %w", err)
 	}
-	if v != version {
-		return fmt.Errorf("version mismatch: got %d, want %d", v, version)
-	}
+	_ = v
 	d.ServerName, err = readString(buf)
 	if err != nil {
 		return fmt.Errorf("read server name: %w", err)
@@ -137,6 +149,72 @@ func (d *ServerData) UnmarshalBinary(data []byte) error {
 	}
 	if length := buf.Len(); length != 0 {
 		return fmt.Errorf("unread %d bytes", length)
+	}
+
+	return nil
+}
+
+func (d *ServerData) unmarshalV4(data []byte) error {
+	buf := bytes.NewBuffer(data)
+
+	// Skip version byte.
+	if _, err := buf.ReadByte(); err != nil {
+		return fmt.Errorf("read version: %w", err)
+	}
+
+	serverNameBytes, err := readBytes[uint8](buf)
+	if err != nil {
+		return fmt.Errorf("read v4 server name: %w", err)
+	}
+	d.ServerName = string(serverNameBytes)
+
+	levelNameBytes, err := readBytes[uint8](buf)
+	if err != nil {
+		return fmt.Errorf("read v4 level name: %w", err)
+	}
+	d.LevelName = string(levelNameBytes)
+
+	gameTypeByte, err := buf.ReadByte()
+	if err != nil {
+		return fmt.Errorf("read v4 game type: %w", err)
+	}
+	d.GameType = int32(gameTypeByte >> 1)
+
+	d.PlayerCount, err = readInt32(buf)
+	if err != nil {
+		return fmt.Errorf("read v4 player count: %w", err)
+	}
+	d.MaxPlayerCount, err = readInt32(buf)
+	if err != nil {
+		return fmt.Errorf("read v4 max player count: %w", err)
+	}
+	d.EditorWorld, err = readBool(buf)
+	if err != nil {
+		return fmt.Errorf("read v4 editor world: %w", err)
+	}
+	d.Hardcore, err = readBool(buf)
+	if err != nil {
+		return fmt.Errorf("read v4 hardcore: %w", err)
+	}
+
+	// v4 does not include auth fields — default to accepting both for LAN compatibility.
+	d.AcceptsOnlineAuth = true
+	d.AcceptsSelfSignedAuth = true
+
+	transportByte, err := buf.ReadByte()
+	if err != nil {
+		return fmt.Errorf("read v4 transport layer: %w", err)
+	}
+	d.TransportLayer = int32(transportByte >> 1)
+
+	connectionTypeByte, err := buf.ReadByte()
+	if err != nil {
+		return fmt.Errorf("read v4 connection type: %w", err)
+	}
+	d.ConnectionType = int32(connectionTypeByte >> 1)
+
+	if length := buf.Len(); length != 0 {
+		return fmt.Errorf("v4 unread %d bytes", length)
 	}
 
 	return nil

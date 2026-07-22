@@ -143,13 +143,14 @@ const (
 )
 
 // Hostname encoding:
-//   NetherNet: paper-connect-server-{tcpPort}
-//   RakNet:   paper-connect-server-{tcpPort}-r-{gamePort}
+//   NetherNet: pcs-{tcpPort}-g-{gameRakNetPort}
+//   RakNet:   pcs-{tcpPort}-r-{gamePort}
 
 const hostnameRakNetMarker = "-r-"
+const hostnameNetherNetMarker = "-g-"
 
-func buildHostname(tcpPort uint16) string {
-	return fmt.Sprintf("%s%d", pcHostnamePrefix, tcpPort)
+func buildHostname(tcpPort uint16, gamePort uint16) string {
+	return fmt.Sprintf("%s%d%s%d", pcHostnamePrefix, tcpPort, hostnameNetherNetMarker, gamePort)
 }
 
 func buildHostnameRakNet(tcpPort uint16, gamePort uint16) string {
@@ -160,7 +161,7 @@ func buildHostnameRakNet(tcpPort uint16, gamePort uint16) string {
 type ParsedHostname struct {
 	TCPPort  uint16
 	Protocol string // ProtocolNetherNet or ProtocolRakNet
-	GamePort uint16 // Only valid when Protocol == ProtocolRakNet
+	GamePort uint16 // RakNet UDP game port (NetherNet mode) or native UDP game port (RakNet mode)
 }
 
 func parseHostname(hostname string) (*ParsedHostname, error) {
@@ -181,9 +182,18 @@ func parseHostname(hostname string) (*ParsedHostname, error) {
 		}
 		return &ParsedHostname{TCPPort: uint16(tcpPort), Protocol: ProtocolRakNet, GamePort: uint16(gamePort)}, nil
 	}
-	tcpPort, err := strconv.ParseUint(rest, 10, 16)
-	if err != nil {
-		return nil, fmt.Errorf("invalid TCP port in hostname: %s", rest)
+	if idx := strings.Index(rest, hostnameNetherNetMarker); idx != -1 {
+		tcpStr := rest[:idx]
+		gameStr := rest[idx+len(hostnameNetherNetMarker):]
+		tcpPort, err := strconv.ParseUint(tcpStr, 10, 16)
+		if err != nil {
+			return nil, fmt.Errorf("invalid TCP port in hostname: %s", tcpStr)
+		}
+		gamePort, err := strconv.ParseUint(gameStr, 10, 16)
+		if err != nil {
+			return nil, fmt.Errorf("invalid game TCP port in hostname: %s", gameStr)
+		}
+		return &ParsedHostname{TCPPort: uint16(tcpPort), Protocol: ProtocolNetherNet, GamePort: uint16(gamePort)}, nil
 	}
-	return &ParsedHostname{TCPPort: uint16(tcpPort), Protocol: ProtocolNetherNet}, nil
+	return nil, fmt.Errorf("unrecognized hostname format: %s", hostname)
 }

@@ -7,6 +7,7 @@ import (
 	"log"
 	"log/slog"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,9 +21,7 @@ import (
 	"gravitycone/core/utils"
 )
 
-const PCRakNetPort = 19133 // RakNet proxy port for NetherNet mode
-
-const pcHostnamePrefix = "paper-connect-server-"
+const pcHostnamePrefix = "pcs-"
 const pcPlayerTimeout = 10 * time.Second
 
 // PaperConnectRoomStatus is the host-side room status.
@@ -65,7 +64,7 @@ type PaperConnectService struct {
 	hostSessions   chan struct{}
 	hostCancelFunc context.CancelFunc
 	hostProtocol   string           // ProtocolNetherNet or ProtocolRakNet
-	hostGamePort   uint16           // Actual game port (scanned for RakNet, PCRakNetPort for NetherNet)
+	hostGamePort   uint16           // RakNet listener port (NetherNet) or scanned MC port (RakNet)
 	hostRakNetInfo *RakNetServerInfo // Server info from RakNet scan (for guest broadcast)
 
 	// GUEST state
@@ -148,7 +147,7 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	}
 
 	protocol := ProtocolNetherNet
-	gamePort := uint16(PCRakNetPort)
+	gamePort := uint16(0)
 	if rkFound && !nnFound {
 		protocol = ProtocolRakNet
 		gamePort = rakNetInfo.GamePort
@@ -173,7 +172,6 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 		return nil, fmt.Errorf("分配的TCP端口 %d 不合法", tcpPort)
 	}
 
-	// Start EasyTier
 	manager, err := easytier.NewEasyTierManager()
 	if err != nil {
 		tcpLn.Close()
@@ -182,6 +180,9 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 
 	var hostname string
 	var startOpts easytier.StartOptions
+	var virtualIP string
+	var rakLn *raknet.Listener
+
 	if protocol == ProtocolRakNet {
 		hostname = buildHostnameRakNet(tcpPort, gamePort)
 		startOpts = easytier.StartOptions{
@@ -191,49 +192,53 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 			IsHost:             true,
 			TCPPort:            tcpPort,
 			MCPort:             gamePort,
-
 			UpstreamCompatible: true,
 		}
+		virtualIP, err = manager.Start(startOpts)
+		if err != nil {
+			tcpLn.Close()
+			return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
+		}
 	} else {
-		hostname = buildHostname(tcpPort)
+		// NetherNet: start RakNet listener first (random port), then encode its port.
+		rakLn, err = (raknet.ListenConfig{
+			MaxMTU:        rakNetMTU,
+			ErrorLog:      slog.Default(),
+			BlockDuration: -1,
+		}).Listen(":0")
+		if err != nil {
+			tcpLn.Close()
+			return nil, fmt.Errorf("启动RakNet监听失败: %w", err)
+		}
+		_, portStr, _ := net.SplitHostPort(rakLn.Addr().String())
+		rakPort, _ := strconv.ParseUint(portStr, 10, 16)
+		gamePort = uint16(rakPort)
+
+		hostname = buildHostname(tcpPort, gamePort)
 		startOpts = easytier.StartOptions{
 			NetworkName:        rc.EasyTierNetworkName(),
 			NetworkSecret:      rc.EasyTierNetworkSecret(),
 			Hostname:           hostname,
 			IsHost:             true,
 			TCPPort:            tcpPort,
-			MCPort:             PCRakNetPort,
-
+			MCPort:             gamePort,
 			UpstreamCompatible: true,
 		}
-	}
 
-	virtualIP, err := manager.Start(startOpts)
-	if err != nil {
-		tcpLn.Close()
-		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
-	}
-
-	// For NetherNet mode: start RakNet listener for game traffic proxy.
-	// For RakNet mode: no proxy needed — EasyTier forwards the MC port directly.
-	var rakLn *raknet.Listener
-	if protocol == ProtocolNetherNet {
-		rakLn, err = (raknet.ListenConfig{
-			MaxMTU:        rakNetMTU,
-			ErrorLog:      slog.Default(),
-			BlockDuration: -1,
-		}).Listen(fmt.Sprintf("0.0.0.0:%d", PCRakNetPort))
+		virtualIP, err = manager.Start(startOpts)
 		if err != nil {
+			rakLn.Close()
 			tcpLn.Close()
-			manager.Stop()
-			return nil, fmt.Errorf("启动RakNet监听失败: %w", err)
+			return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
 		}
 	}
 
 	// Store state
 	s.hostMu.Lock()
 	s.hostManager = manager
-	s.hostRakLn = rakLn
+	if rakLn != nil {
+		s.hostRakLn = rakLn
+	}
 	s.hostTcpLn = tcpLn
 	s.hostTCPPort = tcpPort
 	s.roomCode = rc
@@ -271,7 +276,7 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	go s.pcHostServerLoop()
 	go s.pcHostPlayerCleanupLoop()
 
-	slog.Info("PaperConnect room created", "protocol", protocol, "gamePort", gamePort, "tcpPort", tcpPort)
+	slog.Info("PaperConnect room created", "protocol", protocol, "gamePort", gamePort, "tcpPort", tcpPort, "hostname", hostname)
 	return s.pcBuildRoomStatus(virtualIP), nil
 }
 
@@ -374,6 +379,7 @@ func (s *PaperConnectService) pcHostRakNetAcceptLoop(ctx context.Context) {
 			continue
 		}
 
+		slog.Info("RakNet game connection accepted", "remote", rkConn.RemoteAddr())
 		select {
 		case s.hostSessions <- struct{}{}:
 			id := sessionID.Add(1)
@@ -561,14 +567,12 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	}
 	s.guestMu.Unlock()
 
-	// 1. Parse room code
 	rc, err := ParsePaperConnectRoomCode(code)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Start EasyTier (phase 1: discover host, no port forwards yet — we need
-	//    the hostname to know protocol before building ACL with the right port).
+	// Phase 1: start EasyTier without port forwards to discover host.
 	manager, err := easytier.NewEasyTierManager()
 	if err != nil {
 		return nil, err
@@ -589,7 +593,6 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		return nil, fmt.Errorf("加入已取消")
 	}
 
-	// 3. Discover host peer and decode protocol from hostname
 	hostname, hostIP, err := s.pcDiscoverHost(manager, 60*time.Second)
 	if err != nil {
 		manager.Stop()
@@ -605,16 +608,14 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	protocol := parsed.Protocol
 	serverPort := parsed.TCPPort
 	gamePort := parsed.GamePort
-	if protocol == ProtocolNetherNet {
-		gamePort = PCRakNetPort
-	}
+	slog.Info("hostname parsed", "hostname", hostname, "protocol", protocol, "tcpPort", serverPort, "gamePort", gamePort)
 
 	if s.joinCancelled.Load() {
 		manager.Stop()
 		return nil, fmt.Errorf("加入已取消")
 	}
 
-	// 4. Allocate local ports for port forwarding
+	// Allocate local ports for port forwarding.
 	tcpLocalLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		manager.Stop()
@@ -623,15 +624,16 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	tcpLocalPort := uint16(tcpLocalLn.Addr().(*net.TCPAddr).Port)
 	tcpLocalLn.Close()
 
-	rakLocalLn, err := net.Listen("tcp", "127.0.0.1:0")
+	// Allocate UDP port for game data forwarding.
+	rakLocalConn, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		manager.Stop()
-		return nil, fmt.Errorf("分配本地RakNet端口失败: %w", err)
+		return nil, fmt.Errorf("分配本地UDP端口失败: %w", err)
 	}
-	rakLocalPort := uint16(rakLocalLn.Addr().(*net.TCPAddr).Port)
-	rakLocalLn.Close()
+	rakLocalPort := uint16(rakLocalConn.LocalAddr().(*net.UDPAddr).Port)
+	rakLocalConn.Close()
 
-	// 6. Restart EasyTier with port forwards
+	// Phase 2: restart EasyTier with port forwards (TCP for control only, UDP added at runtime).
 	manager.Stop()
 	manager, err = easytier.NewEasyTierManager()
 	if err != nil {
@@ -640,14 +642,12 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 
 	portForwards := []string{
 		fmt.Sprintf("tcp://127.0.0.1:%d/%s:%d", tcpLocalPort, hostIP, serverPort),
-		fmt.Sprintf("udp://127.0.0.1:%d/%s:%d", rakLocalPort, hostIP, gamePort),
 	}
 
 	_, err = manager.Start(easytier.StartOptions{
 		NetworkName:        rc.EasyTierNetworkName(),
 		NetworkSecret:      rc.EasyTierNetworkSecret(),
 		IsHost:             false,
-
 		PortForwards:       portForwards,
 		UpstreamCompatible: true,
 	})
@@ -655,9 +655,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		return nil, fmt.Errorf("启动虚拟网络(端口转发)失败: %w", err)
 	}
 
-	// 7. Wait for port forwards to become active via TCP ping.
-	// Once c:ping succeeds the join is considered successful; NetherNet/RakNet
-	// connection setup runs asynchronously after this function returns.
+	// Wait for TCP ping to succeed.
 	var pingOk bool
 	for attempt := 0; attempt < 30; attempt++ {
 		if s.joinCancelled.Load() {
@@ -704,12 +702,8 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 
 	clientId := scaffolding.MakeVendor(vendorPrefix)
 
-	// Register with host via TCP control protocol (uses the TCP port forward,
-	// which is already proven working by the ping above).
 	s.pcGuestRegister("127.0.0.1", tcpLocalPort, clientId, playerName)
 
-	// Store state — c:ping succeeded, so the join is considered successful.
-	// NetherNet/RakNet connection setup runs asynchronously.
 	s.guestMu.Lock()
 	s.guestManager = manager
 	s.guestStopCh = make(chan struct{})
@@ -959,9 +953,7 @@ func (s *PaperConnectService) pcBuildConnectionStatus() *PaperConnectConnectionS
 	}
 }
 
-
 // pcGuestSetupConnection sets up the NetherNet or RakNet game connection asynchronously.
-// It is called after the TCP control protocol (c:ping) has already succeeded.
 func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierManager, clientId string, playerName string, protocol string, rakLocalPort uint16) {
 	var rkConn *raknet.Conn
 	var disc *discovery.Listener
@@ -970,7 +962,6 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 	var rakNetFakeStop chan struct{}
 
 	defer func() {
-		// Update state with the established connections (or nil if setup failed).
 		s.guestMu.Lock()
 		s.guestRakConn = rkConn
 		s.guestDisc = disc
@@ -994,11 +985,43 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 
 	if protocol == ProtocolNetherNet {
 		// ---- NetherNet path ----
+		// 1. Add UDP port forward + dial RakNet FIRST (before broadcasting NetherNet).
+		s.guestMu.Lock()
+		hostIP := s.guestHostVirtualIP
+		gamePort := s.guestGamePort
+		s.guestMu.Unlock()
+		slog.Info("pcGuestSetupConnection adding forward", "hostIP", hostIP, "gamePort", gamePort, "rakLocalPort", rakLocalPort)
+
+		localAddr := fmt.Sprintf("127.0.0.1:%d", rakLocalPort)
+		remoteAddr := fmt.Sprintf("%s:%d", hostIP, gamePort)
+		if err := manager.AddPortForward("udp", localAddr, remoteAddr); err != nil {
+			slog.Error("add UDP port forward failed", "err", err, "local", localAddr, "remote", remoteAddr)
+			return
+		}
+		slog.Info("UDP port forward added", "local", localAddr, "remote", remoteAddr)
+
+		rakAddr := fmt.Sprintf("127.0.0.1:%d", rakLocalPort)
+		dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		rkConn, err := (raknet.Dialer{
+			MaxMTU:   rakNetMTU,
+			ErrorLog: slog.Default(),
+		}).DialContext(dialCtx, rakAddr)
+		dialCancel()
+		if err != nil {
+			slog.Error("RakNet dial to host failed", "err", err)
+			return
+		}
+		slog.Info("connected to host RakNet proxy", "addr", rakAddr)
+
+		if s.joinCancelled.Load() {
+			return
+		}
+
+		// 2. Now start NetherNet discovery + listener (RakNet tunnel is ready).
 		discCfg := discovery.ListenConfig{
 			NetworkID: randomID(),
 			Log:       slog.Default(),
 		}
-		var err error
 		disc, err = discCfg.Listen("0.0.0.0:7551")
 		if err != nil {
 			slog.Error("NetherNet discovery listen failed", "err", err)
@@ -1034,31 +1057,15 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 			return
 		}
 
-		rakAddr := fmt.Sprintf("127.0.0.1:%d", rakLocalPort)
-		dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer dialCancel()
-		rkConn, err = (raknet.Dialer{
-			MaxMTU:   rakNetMTU,
-			ErrorLog: slog.Default(),
-		}).DialContext(dialCtx, rakAddr)
-		if err != nil {
-			nnLn.Close()
-			nnLn = nil
-			disc.Close()
-			disc = nil
-			slog.Error("RakNet dial to host failed", "err", err)
-			return
-		}
-		slog.Info("connected to host RakNet proxy", "addr", rakAddr)
-
-		if s.joinCancelled.Load() {
-			return
-		}
-
+		// 3. Wait for local MC client to connect via NetherNet.
 		nnConn, err := nnLn.Accept()
 		if err != nil {
 			rkConn.Close()
 			rkConn = nil
+			nnLn.Close()
+			nnLn = nil
+			disc.Close()
+			disc = nil
 			slog.Error("NetherNet accept failed", "err", err)
 			return
 		}
@@ -1080,6 +1087,7 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 		slog.Info("RakNet fake server broadcasting", "proxyPort", rakLocalPort, "serverName", serverName)
 	}
 }
+
 func (s *PaperConnectService) pcAutoDisconnect(reason string) {
 	log.Printf("[PCAutoDisconnect] reason=%q", reason)
 	s.guestMu.Lock()

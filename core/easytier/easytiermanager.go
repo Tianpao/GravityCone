@@ -427,9 +427,13 @@ func (m *EasyTierManager) RPCPortal() string {
 }
 
 func (m *EasyTierManager) AddPortForward(proto string, localAddr string, remoteAddr string) error {
+	rpcPortal := m.RPCPortal()
+	if rpcPortal == "" {
+		return fmt.Errorf("easytier-core 未运行，无法添加端口转发")
+	}
 	for attempt := 0; attempt < 3; attempt++ {
 		out, err := m.runCli(
-			"-p", m.rpcPortal,
+			"-p", rpcPortal,
 			"port-forward", "add",
 			proto, localAddr, remoteAddr,
 		)

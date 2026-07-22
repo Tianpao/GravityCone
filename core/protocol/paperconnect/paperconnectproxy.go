@@ -2,6 +2,7 @@ package paperconnect
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,85 @@ import (
 
 const maxHostSessions = 20
 
+// proxyTCPPackets proxies packets between a local NetherNet connection and a
+// TCP tunnel to the remote peer. Each packet is prefixed with a 4-byte
+// big-endian length header.
+func proxyTCPPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet.Conn, tcpConn net.Conn) {
+	ctx, cancel := context.WithCancel(parentCtx)
+	defer cancel()
+	go func() {
+		<-ctx.Done()
+		_ = nnConn.Close()
+		_ = tcpConn.Close()
+	}()
+
+	var nnPkCount, tcpPkCount atomic.Int64
+
+	// nn → tcp
+	go func() {
+		defer cancel()
+		for {
+			pk, err := nnConn.ReadPacket()
+			if err != nil {
+				if !isClosedErr(err) && ctx.Err() == nil {
+					log.Error("nethernet read error", "err", err, "nn_packets", nnPkCount.Load())
+				}
+				return
+			}
+			n := nnPkCount.Add(1)
+			log.Info("nn→tcp", "packet_size", len(pk), "total", n, "first_bytes", fmt.Sprintf("%x", truncateBytes(pk, 20)))
+			if err := writeTCPFrame(tcpConn, pk); err != nil {
+				if !isClosedErr(err) && ctx.Err() == nil {
+					log.Error("tcp write error", "err", err, "nn_packets", nnPkCount.Load())
+				}
+				return
+			}
+		}
+	}()
+
+	// tcp → nn
+	go func() {
+		defer cancel()
+		for {
+			pk, err := readTCPFrame(tcpConn)
+			if err != nil {
+				if !isClosedErr(err) && ctx.Err() == nil {
+					log.Error("tcp read error", "err", err, "tcp_packets", tcpPkCount.Load())
+				}
+				return
+			}
+			n := tcpPkCount.Add(1)
+			log.Info("tcp→nn", "packet_size", len(pk), "total", n, "first_bytes", fmt.Sprintf("%x", truncateBytes(pk, 20)))
+			if _, err := nnConn.Write(pk); err != nil {
+				if !isClosedErr(err) && ctx.Err() == nil {
+					log.Error("nethernet write error", "err", err, "tcp_packets", tcpPkCount.Load())
+				}
+				return
+			}
+		}
+	}()
+
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				log.Info("proxy status", "nn→tcp", nnPkCount.Load(), "tcp→nn", tcpPkCount.Load())
+			}
+		}
+	}()
+
+	<-ctx.Done()
+	log.Info("proxy session closed")
+}
+
+// proxyPackets forwards packets between a NetherNet connection and a RakNet
+// connection, preserving packet boundaries. The RakNet side uses the tunnel
+// protocol (packet type 1 for small packets, chunked type 2 for large ones)
+// to handle NetherNet packets that may exceed RakNet's MTU.
 func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet.Conn, rkConn *raknet.Conn) {
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
@@ -35,7 +115,7 @@ func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet
 			pk, err := nnConn.ReadPacket()
 			if err != nil {
 				if !isClosedErr(err) && ctx.Err() == nil {
-					log.Error("nethernet read error", "err", err, "packets_forwarded", nnPkCount.Load())
+					log.Error("nethernet read error", "err", err, "nn_packets", nnPkCount.Load())
 				}
 				return
 			}
@@ -43,7 +123,7 @@ func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet
 			log.Info("nn→rk", "packet_size", len(pk), "total", n, "first_bytes", fmt.Sprintf("%x", truncateBytes(pk, 20)))
 			if err := writeTunnelPacket(rkConn, pk); err != nil {
 				if !isClosedErr(err) && ctx.Err() == nil {
-					log.Error("raknet write error", "err", err, "packets_forwarded", nnPkCount.Load())
+					log.Error("raknet write error", "err", err, "nn_packets", nnPkCount.Load())
 				}
 				return
 			}
@@ -57,7 +137,7 @@ func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet
 			pk, err := reader.ReadPacket()
 			if err != nil {
 				if !isClosedErr(err) && ctx.Err() == nil {
-					log.Error("raknet read error", "err", err, "packets_forwarded", rkPkCount.Load())
+					log.Error("raknet read error", "err", err, "rk_packets", rkPkCount.Load())
 				}
 				return
 			}
@@ -65,7 +145,7 @@ func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet
 			log.Info("rk→nn", "packet_size", len(pk), "total", n, "first_bytes", fmt.Sprintf("%x", truncateBytes(pk, 20)))
 			if _, err := nnConn.Write(pk); err != nil {
 				if !isClosedErr(err) && ctx.Err() == nil {
-					log.Error("nethernet write error", "err", err, "packets_forwarded", rkPkCount.Load())
+					log.Error("nethernet write error", "err", err, "rk_packets", rkPkCount.Load())
 				}
 				return
 			}
@@ -89,9 +169,41 @@ func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet
 	log.Info("proxy session closed")
 }
 
+func writeTCPFrame(conn net.Conn, data []byte) error {
+	header := make([]byte, 4)
+	binary.BigEndian.PutUint32(header, uint32(len(data)))
+	if _, err := conn.Write(header); err != nil {
+		return err
+	}
+	_, err := conn.Write(data)
+	return err
+}
+
+func readTCPFrame(conn net.Conn) ([]byte, error) {
+	header := make([]byte, 4)
+	if _, err := io.ReadFull(conn, header); err != nil {
+		return nil, err
+	}
+	length := binary.BigEndian.Uint32(header)
+	if length > 16*1024*1024 {
+		return nil, fmt.Errorf("frame too large: %d", length)
+	}
+	data := make([]byte, length)
+	if _, err := io.ReadFull(conn, data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// dialLocalNetherNet discovers a local Minecraft Bedrock NetherNet server and
+// dials it. Broadcasts to 127.0.0.1:7551 for reliable local discovery.
 func dialLocalNetherNet(ctx context.Context) (*nethernet.Conn, error) {
 	cfg := discovery.ListenConfig{
 		NetworkID: randomID(),
+		BroadcastAddress: &net.UDPAddr{
+			IP:   net.IPv4(127, 0, 0, 1),
+			Port: 7551,
+		},
 	}
 	l, err := cfg.Listen(":0")
 	if err != nil {
@@ -99,7 +211,7 @@ func dialLocalNetherNet(ctx context.Context) (*nethernet.Conn, error) {
 	}
 	defer l.Close()
 
-	slog.Info("discovering NetherNet servers on LAN (broadcast to 255.255.255.255:7551)...")
+	slog.Info("discovering local Bedrock world on 127.0.0.1:7551...")
 
 	var targetID uint64
 	found := false
