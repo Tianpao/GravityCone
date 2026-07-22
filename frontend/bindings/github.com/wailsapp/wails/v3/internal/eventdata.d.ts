@@ -21,10 +21,10 @@ declare module "@wailsio/runtime" {
             "download.error": easytier$0.DownloadErrorData;
             "download.progress": easytier$0.DownloadProgressData;
             "lan.server_found": minecraft$0.LanServer;
-            "lan.server_lost": { [_ in string]?: any };
-            "room.closed": { [_ in string]?: string };
-            "room.disconnected": { [_ in string]?: string };
-            "room.guest_player_list_updated": scaffolding$0.PlayerInfo[];
+            "lan.server_lost": { [_ in string]?: any } | null;
+            "room.closed": { [_ in string]?: string } | null;
+            "room.disconnected": { [_ in string]?: string } | null;
+            "room.guest_player_list_updated": scaffolding$0.PlayerInfo[] | null;
             "room.player_joined": scaffolding$0.PlayerInfo;
             "room.player_left": scaffolding$0.PlayerInfo;
         }
