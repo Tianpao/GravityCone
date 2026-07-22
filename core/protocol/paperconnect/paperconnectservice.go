@@ -1076,6 +1076,20 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 		go proxyPackets(proxyCtx, slog.Default(), nnConn.(*nethernet.Conn), rkConn)
 	} else {
 		// ---- RakNet path ----
+		s.guestMu.Lock()
+		hostIP := s.guestHostVirtualIP
+		gamePort := s.guestGamePort
+		s.guestMu.Unlock()
+
+		localAddr := fmt.Sprintf("127.0.0.1:%d", rakLocalPort)
+		remoteAddr := fmt.Sprintf("%s:%d", hostIP, gamePort)
+		if err := manager.AddPortForward("udp", localAddr, remoteAddr); err != nil {
+			slog.Error("add UDP port forward failed", "err", err,
+				"local", localAddr, "remote", remoteAddr)
+			return
+		}
+		slog.Info("UDP port forward added", "local", localAddr, "remote", remoteAddr)
+
 		rakNetFakeStop = make(chan struct{})
 
 		serverName := "GravityCone Proxy"

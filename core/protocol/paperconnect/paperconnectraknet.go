@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net"
 	"strconv"
@@ -11,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	mcstatus "github.com/andre-carbajal/go-mcstatus"
+	raknet "github.com/sandertv/go-raknet"
 	"github.com/df-mc/go-nethernet/discovery"
 
 	"gravitycone/core/protocol/paperconnect/setsockopt"
@@ -30,46 +33,59 @@ type RakNetServerInfo struct {
 }
 
 func scanRakNetLAN(ctx context.Context, timeout time.Duration) (*RakNetServerInfo, error) {
-	lc := net.ListenConfig{
-		Control: func(network, address string, c syscall.RawConn) error {
-			var opErr error
-			err := c.Control(func(fd uintptr) {
-				opErr = setsockopt.Setsockopt(fd)
-			})
-			if err != nil {
-				return err
-			}
-			return opErr
-		},
-	}
-	conn, err := lc.ListenPacket(ctx, "udp", fmt.Sprintf(":%d", rakNetDiscoveryPort))
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
-		conn, err = net.ListenPacket("udp", ":0")
-		if err != nil {
-			return nil, fmt.Errorf("RakNet scan: bind failed: %w", err)
-		}
+		return nil, fmt.Errorf("RakNet scan: listen udp: %w", err)
 	}
+	defer conn.Close()
+
+	if rawConn, err := conn.SyscallConn(); err == nil {
+		rawConn.Control(func(fd uintptr) {
+			_ = setsockopt.SetBroadcast(fd)
+		})
+	}
+
+	broadcastAddrs, _ := getBroadcastAddrs(rakNetDiscoveryPort)
+	localAddrs := getLocalAddrs(rakNetDiscoveryPort)
+	pingPacket := buildUnconnectedPing()
 
 	deadline := time.Now().Add(timeout)
 	resultCh := make(chan *RakNetServerInfo, 1)
 	errCh := make(chan error, 1)
 
+	// Background goroutine: periodically send broadcast + local unicast pings.
+	// On Windows, broadcasts don't loopback, so local unicast pings are essential.
+	stopPing := make(chan struct{})
+	defer close(stopPing)
 	go func() {
-		buf := make([]byte, 2048)
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
 		for {
-			if time.Now().After(deadline) {
-				errCh <- fmt.Errorf("no RakNet server found on LAN after %v", timeout)
-				return
-			}
 			select {
-			case <-ctx.Done():
-				errCh <- ctx.Err()
+			case <-ticker.C:
+				for _, addr := range broadcastAddrs {
+					conn.WriteToUDP(pingPacket, addr)
+				}
+				for _, addr := range localAddrs {
+					conn.WriteToUDP(pingPacket, addr)
+				}
+			case <-stopPing:
 				return
-			default:
+			case <-ctx.Done():
+				return
 			}
+		}
+	}()
 
-			conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-			n, addr, err := conn.ReadFrom(buf)
+	// Main loop: collect pong responses.
+	go func() {
+		buf := make([]byte, 1500)
+		for time.Now().Before(deadline) {
+			if err := conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
+				errCh <- err
+				return
+			}
+			n, _, err := conn.ReadFromUDP(buf)
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					continue
@@ -86,7 +102,6 @@ func scanRakNetLAN(ctx context.Context, timeout time.Duration) (*RakNetServerInf
 			if err != nil {
 				continue
 			}
-			_ = addr
 
 			select {
 			case resultCh <- info:
@@ -94,41 +109,107 @@ func scanRakNetLAN(ctx context.Context, timeout time.Duration) (*RakNetServerInf
 			default:
 			}
 		}
-	}()
-
-	// Also send active pings to provoke responses.
-	go func() {
-		pingBuf := buildUnconnectedPing()
-		for {
-			if time.Now().After(deadline) {
-				return
-			}
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			broadcastAddr := &net.UDPAddr{IP: net.IPv4bcast, Port: rakNetDiscoveryPort}
-			conn.WriteTo(pingBuf, broadcastAddr)
-			time.Sleep(500 * time.Millisecond)
-		}
+		errCh <- fmt.Errorf("no RakNet server found on LAN after %v", timeout)
 	}()
 
 	select {
 	case info := <-resultCh:
-		conn.Close()
 		parsed := parseRakNetMOTD(info.MOTD)
 		if parsed != nil {
 			parsed.ServerGUID = info.ServerGUID
 		}
 		return parsed, nil
 	case err := <-errCh:
-		conn.Close()
 		return nil, err
 	case <-ctx.Done():
-		conn.Close()
 		return nil, ctx.Err()
 	}
+}
+
+// getBroadcastAddrs computes subnet broadcast addresses for all active interfaces
+// plus the global broadcast address 255.255.255.255.
+func getBroadcastAddrs(port int) ([]*net.UDPAddr, error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	var addrs []*net.UDPAddr
+	seen := make(map[string]bool)
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagBroadcast == 0 {
+			continue
+		}
+		ifaceAddrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range ifaceAddrs {
+			ipNet, ok := a.(*net.IPNet)
+			if !ok || ipNet.IP.IsLoopback() {
+				continue
+			}
+			ip4 := ipNet.IP.To4()
+			if ip4 == nil || len(ipNet.Mask) != 4 {
+				continue
+			}
+			broadcast := make(net.IP, 4)
+			for i := range ip4 {
+				broadcast[i] = ip4[i] | ^ipNet.Mask[i]
+			}
+			addrStr := fmt.Sprintf("%s:%d", broadcast.String(), port)
+			if !seen[addrStr] {
+				seen[addrStr] = true
+				udpAddr, _ := net.ResolveUDPAddr("udp4", addrStr)
+				if udpAddr != nil {
+					addrs = append(addrs, udpAddr)
+				}
+			}
+		}
+	}
+	globalAddr, _ := net.ResolveUDPAddr("udp4", fmt.Sprintf("255.255.255.255:%d", port))
+	if globalAddr != nil {
+		addrs = append(addrs, globalAddr)
+	}
+	return addrs, nil
+}
+
+// getLocalAddrs returns all local IPv4 unicast addresses including 127.0.0.1.
+// On Windows, broadcasts to 255.255.255.255 don't loopback, so local unicast pings
+// are needed to discover servers on the same machine.
+func getLocalAddrs(port int) []*net.UDPAddr {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var addrs []*net.UDPAddr
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		ifaceAddrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range ifaceAddrs {
+			ipNet, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip4 := ipNet.IP.To4()
+			if ip4 == nil {
+				continue
+			}
+			udpAddr, _ := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", ip4.String(), port))
+			if udpAddr != nil {
+				addrs = append(addrs, udpAddr)
+			}
+		}
+	}
+	udpAddr, _ := net.ResolveUDPAddr("udp4", fmt.Sprintf("127.0.0.1:%d", port))
+	if udpAddr != nil {
+		addrs = append(addrs, udpAddr)
+	}
+	return addrs
 }
 
 func buildUnconnectedPing() []byte {
@@ -198,24 +279,70 @@ func buildUnconnectedPong(motd string, serverGUID int64) []byte {
 	return buf
 }
 
-// broadcastRakNetFakeServer periodically sends unconnected pong advertisements
-// to the local Minecraft Bedrock client on 127.0.0.1:19132.
-// The MOTD in the pong points to 127.0.0.1:proxyPort so the client connects through the forwarded port.
-func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, serverName string, proxyPort uint16) {
-	conn, err := net.ListenPacket("udp", ":0")
+// reuseAddrPacketListener creates UDP listeners with SO_REUSEADDR so multiple
+// RakNet listeners can coexist on the same port (e.g. with a local MC client).
+type reuseAddrPacketListener struct{}
+
+func (reuseAddrPacketListener) ListenPacket(network, address string) (net.PacketConn, error) {
+	lc := net.ListenConfig{
+		Control: func(network, address string, c syscall.RawConn) error {
+			return c.Control(func(fd uintptr) {
+				setsockopt.Setsockopt(fd)
+			})
+		},
+	}
+	return lc.ListenPacket(context.Background(), "udp4", address)
+}
+
+// broadcastRakNetFakeServer queries the host's Bedrock server through the EasyTier
+// forwarded port to get real server info (MOTD, protocol, version, etc.), then runs a
+// RakNet server on 0.0.0.0:19132 that responds to Unconnected Pings from the local
+// Minecraft Bedrock client, AND actively broadcasts Unconnected Pongs to subnet
+// broadcast addresses. The MOTD points to 127.0.0.1:proxyPort so the client connects
+// through the forwarded port.
+func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fallbackName string, proxyPort uint16) {
+	// 1. Create go-raknet listener first so we can use its GUID in the MOTD.
+	conf := raknet.ListenConfig{
+		UpstreamPacketListener: reuseAddrPacketListener{},
+		ErrorLog:               slog.Default(),
+		BlockDuration:          -1,
+	}
+	listener, err := conf.Listen(fmt.Sprintf(":%d", rakNetDiscoveryPort))
+	if err != nil {
+		slog.Error("RakNet fake server listen failed", "err", err, "port", rakNetDiscoveryPort)
+		return
+	}
+	defer listener.Close()
+
+	serverGUID := listener.ID()
+	slog.Info("RakNet fake server listening", "addr", listener.Addr().String(), "guid", serverGUID)
+
+	// 2. Query the host's Bedrock server through the forwarded port to get real info.
+	motd := queryBedrockMOTD(fmt.Sprintf("127.0.0.1:%d", proxyPort), fallbackName, serverGUID, proxyPort)
+	pongData := []byte(motd)
+	listener.PongData(pongData)
+	slog.Info("RakNet fake server pongData", "motd", motd)
+
+	// 3. Create broadcast socket for active subnet broadcast.
+	bcConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
 		return
 	}
+	defer bcConn.Close()
 
-	serverGUID := rand.Int63()
-	targetAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: rakNetDiscoveryPort}
+	if rawConn, err := bcConn.SyscallConn(); err == nil {
+		rawConn.Control(func(fd uintptr) {
+			_ = setsockopt.SetBroadcast(fd)
+		})
+	}
 
-	// Build MOTD pointing to the local forwarded port.
-	// Format: MCPE;ServerName;ProtocolVersion;VersionString;CurrentPlayers;MaxPlayers;ServerGUID;LevelName;GameMode;GameModeNum;PortIPv4;PortIPv6;
-	motd := fmt.Sprintf("MCPE;%s;589;1.20.0;1;20;%d;%s;Survival;0;%d;%d;",
-		serverName, serverGUID, serverName, proxyPort, proxyPort)
-
-	pongBuf := buildUnconnectedPong(motd, serverGUID)
+	broadcastAddrs, _ := getBroadcastAddrs(rakNetDiscoveryPort)
+	localAddrs := getLocalAddrs(rakNetDiscoveryPort)
+	slog.Info("RakNet fake server broadcasting",
+		"broadcastAddrs", len(broadcastAddrs), "localAddrs", len(localAddrs))
+	for _, addr := range broadcastAddrs {
+		slog.Info("  -> broadcast", "addr", addr.String())
+	}
 
 	ticker := time.NewTicker(1500 * time.Millisecond)
 	defer ticker.Stop()
@@ -227,8 +354,84 @@ func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, serv
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_, _ = conn.WriteTo(pongBuf, targetAddr)
+			pongPacket := buildUnconnectedPong(motd, serverGUID)
+			for _, addr := range broadcastAddrs {
+				_, _ = bcConn.WriteToUDP(pongPacket, addr)
+			}
+			for _, addr := range localAddrs {
+				_, _ = bcConn.WriteToUDP(pongPacket, addr)
+			}
 		}
+	}
+}
+
+// queryBedrockMOTD queries a Bedrock server at the given address and returns
+// a properly formatted MCPE MOTD string with the specified proxyPort.
+// Falls back to hardcoded defaults if the query fails.
+func queryBedrockMOTD(address string, fallbackName string, serverGUID int64, proxyPort uint16) string {
+	for attempt := 0; attempt < 15; attempt++ {
+		bs, err := mcstatus.NewBedrockServer(address)
+		if err != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		raw, err := bs.Status()
+		if err != nil {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		resp, ok := raw.(*mcstatus.BedrockStatusResponse)
+		if !ok {
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		motdLine1 := resp.MOTD
+		motdLine2 := resp.MapName
+		if i := strings.Index(resp.MOTD, "\n"); i >= 0 {
+			motdLine1 = resp.MOTD[:i]
+			motdLine2 = strings.TrimSpace(resp.MOTD[i+1:])
+		}
+		if motdLine1 == "" {
+			motdLine1 = fallbackName
+		}
+		if motdLine2 == "" {
+			motdLine2 = resp.MapName
+		}
+
+		gmNum := gamemodeToNum(resp.Gamemode)
+
+		slog.Info("queried Bedrock server", "address", address,
+			"motd", resp.MOTD, "protocol", resp.Protocol, "version", resp.Version,
+			"online", resp.Online, "max", resp.Max, "mapName", resp.MapName, "gamemode", resp.Gamemode)
+
+		return fmt.Sprintf("MCPE;%s;%d;%s;%d;%d;%d;%s;%s;%d;%d;%d;",
+			motdLine1, resp.Protocol, resp.Version,
+			resp.Online, resp.Max, serverGUID,
+			motdLine2, resp.Gamemode, gmNum,
+			proxyPort, proxyPort)
+	}
+
+	// Fallback: hardcoded defaults.
+	slog.Warn("failed to query Bedrock server, using fallback MOTD", "address", address)
+	return fmt.Sprintf("MCPE;%s;589;1.20.0;1;20;%d;%s;Survival;0;%d;%d;",
+		fallbackName, serverGUID, fallbackName, proxyPort, proxyPort)
+}
+
+func gamemodeToNum(gm string) int {
+	switch strings.ToLower(gm) {
+	case "survival":
+		return 0
+	case "creative":
+		return 1
+	case "adventure":
+		return 2
+	case "survivalviewer":
+		return 3
+	case "creativeviewer":
+		return 4
+	default:
+		return 5
 	}
 }
 
