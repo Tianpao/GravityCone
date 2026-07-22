@@ -156,7 +156,7 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 		"--console-log-level", "info",
 	}
 	if opts.UpstreamCompatible {
-		args = append(args, "--disable-p2p", "false")
+		args = append(args, "--no-tun", "--disable-p2p", "false")
 	} else {
 		args = append(args,
 			"--no-tun",

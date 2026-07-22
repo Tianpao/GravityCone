@@ -219,8 +219,9 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	var rakLn *raknet.Listener
 	if protocol == ProtocolNetherNet {
 		rakLn, err = (raknet.ListenConfig{
-			MaxMTU:   rakNetMTU,
-			ErrorLog: slog.Default(),
+			MaxMTU:        rakNetMTU,
+			ErrorLog:      slog.Default(),
+			BlockDuration: -1,
 		}).Listen(fmt.Sprintf("0.0.0.0:%d", PCRakNetPort))
 		if err != nil {
 			tcpLn.Close()
@@ -654,7 +655,10 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		return nil, fmt.Errorf("启动虚拟网络(端口转发)失败: %w", err)
 	}
 
-	// 7. Wait for port forwards to become active via TCP ping
+	// 7. Wait for port forwards to become active via TCP ping.
+	// Once c:ping succeeds the join is considered successful; NetherNet/RakNet
+	// connection setup runs asynchronously after this function returns.
+	var pingOk bool
 	for attempt := 0; attempt < 30; attempt++ {
 		if s.joinCancelled.Load() {
 			manager.Stop()
@@ -689,104 +693,25 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 			time.Sleep(1 * time.Second)
 			continue
 		}
+		pingOk = true
 		_ = pingResp
 		break
+	}
+	if !pingOk {
+		manager.Stop()
+		return nil, fmt.Errorf("连接主机超时，TCP端口转发似乎未生效")
 	}
 
 	clientId := scaffolding.MakeVendor(vendorPrefix)
 
-	var rkConn *raknet.Conn
-	var disc *discovery.Listener
-	var nnLn *nethernet.Listener
-	var proxyCancel context.CancelFunc
-	var rakNetFakeStop chan struct{}
-
-	if protocol == ProtocolNetherNet {
-		// ---- NetherNet path ----
-		discCfg := discovery.ListenConfig{
-			NetworkID: randomID(),
-			Log:       slog.Default(),
-		}
-		disc, err = discCfg.Listen("0.0.0.0:7551")
-		if err != nil {
-			manager.Stop()
-			return nil, fmt.Errorf("启动NetherNet发现监听失败: %w", err)
-		}
-
-		disc.ServerData(&discovery.ServerData{
-			ServerName:            "GravityCone Proxy",
-			LevelName:             "Join",
-			GameType:              discovery.GameTypeSurvival,
-			PlayerCount:           0,
-			MaxPlayerCount:        20,
-			AcceptsOnlineAuth:     true,
-			AcceptsSelfSignedAuth: true,
-			TransportLayer:        discovery.TransportLayerNetherNet,
-			ConnectionType:        4,
-		})
-
-		nnCfg := nethernet.ListenConfig{
-			AllowAnonymous:    true,
-			DisableTrickleICE: true,
-		}
-		nnLn, err = nnCfg.Listen(disc)
-		if err != nil {
-			disc.Close()
-			manager.Stop()
-			return nil, fmt.Errorf("启动NetherNet监听失败: %w", err)
-		}
-		slog.Info("NetherNet listening for local client", "network_id", disc.NetworkID())
-
-		rakAddr := fmt.Sprintf("127.0.0.1:%d", rakLocalPort)
-		dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer dialCancel()
-		rkConn, err = (raknet.Dialer{
-			MaxMTU:   rakNetMTU,
-			ErrorLog: slog.Default(),
-		}).DialContext(dialCtx, rakAddr)
-		if err != nil {
-			nnLn.Close()
-			disc.Close()
-			manager.Stop()
-			return nil, fmt.Errorf("连接主机RakNet失败: %w", err)
-		}
-		slog.Info("connected to host RakNet proxy", "addr", rakAddr)
-
-		nnConn, err := nnLn.Accept()
-		if err != nil {
-			rkConn.Close()
-			nnLn.Close()
-			disc.Close()
-			manager.Stop()
-			return nil, fmt.Errorf("等待本地MC客户端连接失败: %w", err)
-		}
-		slog.Info("local MC client connected via NetherNet", "remote", nnConn.RemoteAddr())
-
-		proxyCtx, pc := context.WithCancel(context.Background())
-		proxyCancel = pc
-		go proxyPackets(proxyCtx, slog.Default(), nnConn.(*nethernet.Conn), rkConn)
-	} else {
-		// ---- RakNet path ----
-		rakNetFakeStop = make(chan struct{})
-
-		serverName := "GravityCone Proxy"
-		if playerName != "" {
-			serverName = playerName
-		}
-
-		go broadcastRakNetFakeServer(context.Background(), rakNetFakeStop, serverName, rakLocalPort)
-		slog.Info("RakNet fake server broadcasting", "proxyPort", rakLocalPort, "serverName", serverName)
-	}
-
-	// Register with host via TCP control protocol
+	// Register with host via TCP control protocol (uses the TCP port forward,
+	// which is already proven working by the ping above).
 	s.pcGuestRegister("127.0.0.1", tcpLocalPort, clientId, playerName)
 
-	// Store state
+	// Store state — c:ping succeeded, so the join is considered successful.
+	// NetherNet/RakNet connection setup runs asynchronously.
 	s.guestMu.Lock()
 	s.guestManager = manager
-	s.guestRakConn = rkConn
-	s.guestDisc = disc
-	s.guestNnLn = nnLn
 	s.guestStopCh = make(chan struct{})
 	s.guestRunning = true
 	s.guestHeartbeating = true
@@ -794,13 +719,12 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	s.guestPlayerName = playerName
 	s.guestHostVirtualIP = hostIP
 	s.guestTCPLocalPort = tcpLocalPort
-	s.guestCancelFunc = proxyCancel
 	s.guestProtocol = protocol
 	s.guestGamePort = gamePort
-	s.guestRakNetFakeStop = rakNetFakeStop
 	s.guestMu.Unlock()
 
 	go s.pcGuestHeartbeatLoop(clientId, playerName, "127.0.0.1", tcpLocalPort)
+	go s.pcGuestSetupConnection(manager, clientId, playerName, protocol, rakLocalPort)
 
 	return s.pcBuildConnectionStatus(), nil
 }
@@ -1035,6 +959,127 @@ func (s *PaperConnectService) pcBuildConnectionStatus() *PaperConnectConnectionS
 	}
 }
 
+
+// pcGuestSetupConnection sets up the NetherNet or RakNet game connection asynchronously.
+// It is called after the TCP control protocol (c:ping) has already succeeded.
+func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierManager, clientId string, playerName string, protocol string, rakLocalPort uint16) {
+	var rkConn *raknet.Conn
+	var disc *discovery.Listener
+	var nnLn *nethernet.Listener
+	var proxyCancel context.CancelFunc
+	var rakNetFakeStop chan struct{}
+
+	defer func() {
+		// Update state with the established connections (or nil if setup failed).
+		s.guestMu.Lock()
+		s.guestRakConn = rkConn
+		s.guestDisc = disc
+		s.guestNnLn = nnLn
+		s.guestCancelFunc = proxyCancel
+		s.guestRakNetFakeStop = rakNetFakeStop
+		s.guestMu.Unlock()
+
+		if rkConn != nil || nnLn != nil || disc != nil || rakNetFakeStop != nil {
+			slog.Info("PaperConnect game connection ready", "protocol", protocol)
+			s.eventEmitter.Emit("paperconnect.connection.ready", map[string]string{"protocol": protocol})
+		} else {
+			slog.Warn("PaperConnect game connection setup failed, only control channel active", "protocol", protocol)
+			s.eventEmitter.Emit("paperconnect.connection.error", map[string]string{"message": "游戏连接建立失败，仅控制通道可用"})
+		}
+	}()
+
+	if s.joinCancelled.Load() {
+		return
+	}
+
+	if protocol == ProtocolNetherNet {
+		// ---- NetherNet path ----
+		discCfg := discovery.ListenConfig{
+			NetworkID: randomID(),
+			Log:       slog.Default(),
+		}
+		var err error
+		disc, err = discCfg.Listen("0.0.0.0:7551")
+		if err != nil {
+			slog.Error("NetherNet discovery listen failed", "err", err)
+			return
+		}
+
+		disc.ServerData(&discovery.ServerData{
+			ServerName:            "GravityCone Proxy",
+			LevelName:             "Join",
+			GameType:              discovery.GameTypeSurvival,
+			PlayerCount:           0,
+			MaxPlayerCount:        20,
+			AcceptsOnlineAuth:     true,
+			AcceptsSelfSignedAuth: true,
+			TransportLayer:        discovery.TransportLayerNetherNet,
+			ConnectionType:        4,
+		})
+
+		nnCfg := nethernet.ListenConfig{
+			AllowAnonymous:    true,
+			DisableTrickleICE: true,
+		}
+		nnLn, err = nnCfg.Listen(disc)
+		if err != nil {
+			disc.Close()
+			disc = nil
+			slog.Error("NetherNet listen failed", "err", err)
+			return
+		}
+		slog.Info("NetherNet listening for local client", "network_id", disc.NetworkID())
+
+		if s.joinCancelled.Load() {
+			return
+		}
+
+		rakAddr := fmt.Sprintf("127.0.0.1:%d", rakLocalPort)
+		dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer dialCancel()
+		rkConn, err = (raknet.Dialer{
+			MaxMTU:   rakNetMTU,
+			ErrorLog: slog.Default(),
+		}).DialContext(dialCtx, rakAddr)
+		if err != nil {
+			nnLn.Close()
+			nnLn = nil
+			disc.Close()
+			disc = nil
+			slog.Error("RakNet dial to host failed", "err", err)
+			return
+		}
+		slog.Info("connected to host RakNet proxy", "addr", rakAddr)
+
+		if s.joinCancelled.Load() {
+			return
+		}
+
+		nnConn, err := nnLn.Accept()
+		if err != nil {
+			rkConn.Close()
+			rkConn = nil
+			slog.Error("NetherNet accept failed", "err", err)
+			return
+		}
+		slog.Info("local MC client connected via NetherNet", "remote", nnConn.RemoteAddr())
+
+		proxyCtx, pc := context.WithCancel(context.Background())
+		proxyCancel = pc
+		go proxyPackets(proxyCtx, slog.Default(), nnConn.(*nethernet.Conn), rkConn)
+	} else {
+		// ---- RakNet path ----
+		rakNetFakeStop = make(chan struct{})
+
+		serverName := "GravityCone Proxy"
+		if playerName != "" {
+			serverName = playerName
+		}
+
+		go broadcastRakNetFakeServer(context.Background(), rakNetFakeStop, serverName, rakLocalPort)
+		slog.Info("RakNet fake server broadcasting", "proxyPort", rakLocalPort, "serverName", serverName)
+	}
+}
 func (s *PaperConnectService) pcAutoDisconnect(reason string) {
 	log.Printf("[PCAutoDisconnect] reason=%q", reason)
 	s.guestMu.Lock()
