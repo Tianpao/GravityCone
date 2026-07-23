@@ -32,6 +32,7 @@ var paperConnectBuiltinPeers = []string{
 type PaperConnectRoomStatus struct {
 	Code        string          `json:"code"`
 	GamePort    int             `json:"game_port"`
+	SubProtocol string          `json:"sub_protocol"`
 	OnlineCount int             `json:"online_count"`
 	Players     []PCPlayerEntry `json:"players"`
 	Running     bool            `json:"running"`
@@ -42,6 +43,7 @@ type PaperConnectConnectionStatus struct {
 	RoomCode         string          `json:"room_code"`
 	HostAddress      string          `json:"host_address"`
 	GamePort         int             `json:"game_port"`
+	SubProtocol      string          `json:"sub_protocol"`
 	Connected        bool            `json:"connected"`
 	OnlineCount      int             `json:"online_count"`
 	Players          []PCPlayerEntry `json:"players"`
@@ -362,6 +364,7 @@ func (s *PaperConnectService) pcBuildRoomStatus(virtualIP string) *PaperConnectR
 	return &PaperConnectRoomStatus{
 		Code:        code,
 		GamePort:    int(s.hostGamePort),
+		SubProtocol: s.hostProtocol,
 		OnlineCount: len(players),
 		Players:     players,
 		Running:     s.hostRunning,
@@ -958,6 +961,7 @@ func (s *PaperConnectService) pcBuildConnectionStatus() *PaperConnectConnectionS
 		RoomCode:         code,
 		HostAddress:      s.guestHostVirtualIP,
 		GamePort:         int(s.guestGamePort),
+		SubProtocol:      s.guestProtocol,
 		Connected:        s.guestRunning,
 		OnlineCount:      len(s.guestPlayers),
 		Players:          s.guestPlayers,

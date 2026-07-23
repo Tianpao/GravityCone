@@ -138,6 +138,7 @@ func (h *Handler) handleRoomCreate(req Request) {
 			"players":      result.Players,
 			"running":      result.Running,
 			"protocol":     "paperconnect",
+			"sub_protocol": result.SubProtocol,
 		}))
 		return
 	}
@@ -199,6 +200,7 @@ func (h *Handler) handleRoomJoin(req Request) {
 			"heartbeating":      result.Heartbeating,
 			"disconnect_reason": result.DisconnectReason,
 			"protocol":          "paperconnect",
+			"sub_protocol":      result.SubProtocol,
 		}))
 		return
 	}
@@ -246,6 +248,7 @@ func (h *Handler) handleRoomStatus(req Request) {
 			"players":      pcHostStatus.Players,
 			"running":      pcHostStatus.Running,
 			"protocol":     "paperconnect",
+			"sub_protocol": pcHostStatus.SubProtocol,
 		}))
 		return
 	}
@@ -279,6 +282,7 @@ func (h *Handler) handleRoomStatus(req Request) {
 			"heartbeating":      pcGuestStatus.Heartbeating,
 			"disconnect_reason": pcGuestStatus.DisconnectReason,
 			"protocol":          "paperconnect",
+			"sub_protocol":      pcGuestStatus.SubProtocol,
 		}))
 		return
 	}
