@@ -3,6 +3,7 @@ package paperconnect
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/df-mc/go-nethernet"
@@ -93,6 +95,8 @@ type PaperConnectService struct {
 	guestProtocol         string // ProtocolNetherNet or ProtocolRakNet
 	guestGamePort         uint16
 	guestRakNetFakeStop   chan struct{} // Stop channel for fake RakNet broadcaster
+	guestPortBusy         bool
+	guestPortBusyConfirm  chan struct{}
 
 	joinCancelled atomic.Bool
 }
@@ -544,6 +548,31 @@ func (s *PaperConnectService) pcHostPlayerCleanupLoop() {
 
 func (s *PaperConnectService) CancelJoin() {
 	s.joinCancelled.Store(true)
+
+	s.guestMu.Lock()
+	running := s.guestRunning
+	s.guestMu.Unlock()
+	if running {
+		_ = s.LeaveRoom()
+	}
+}
+
+// ConfirmMinecraftEnded permits one new local NetherNet discovery bind attempt
+// after the caller has released UDP port 7551 by closing Minecraft.
+func (s *PaperConnectService) ConfirmMinecraftEnded() error {
+	s.guestMu.Lock()
+	defer s.guestMu.Unlock()
+
+	if !s.guestRunning || !s.guestPortBusy || s.guestPortBusyConfirm == nil {
+		return fmt.Errorf("未等待Minecraft结束确认")
+	}
+
+	select {
+	case s.guestPortBusyConfirm <- struct{}{}:
+		return nil
+	default:
+		return fmt.Errorf("Minecraft结束确认已提交")
+	}
 }
 
 func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPrefix string) (*PaperConnectConnectionStatus, error) {
@@ -706,10 +735,11 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	s.guestTCPLocalPort = tcpLocalPort
 	s.guestProtocol = protocol
 	s.guestGamePort = gamePort
+	s.pcResetGuestPortBusyLocked()
 	s.guestMu.Unlock()
 
 	go s.pcGuestHeartbeatLoop(clientId, playerName, "127.0.0.1", tcpLocalPort)
-	go s.pcGuestSetupConnection(manager, clientId, playerName, protocol, rakLocalPort)
+	go s.pcGuestSetupConnection(manager, playerName, protocol, rakLocalPort)
 
 	return s.pcBuildConnectionStatus(), nil
 }
@@ -877,7 +907,7 @@ func (s *PaperConnectService) LeaveRoom() error {
 	return nil
 }
 
-func (s *PaperConnectService) pcCleanupGuestLocked() *easytier.EasyTierManager {
+func (s *PaperConnectService) pcCleanupGuestGameResourcesLocked() {
 	if s.guestCancelFunc != nil {
 		s.guestCancelFunc()
 	}
@@ -893,13 +923,18 @@ func (s *PaperConnectService) pcCleanupGuestLocked() *easytier.EasyTierManager {
 	if s.guestDisc != nil {
 		s.guestDisc.Close()
 	}
-	manager := s.guestManager
-	s.guestManager = nil
 	s.guestRakConn = nil
 	s.guestNnLn = nil
 	s.guestDisc = nil
 	s.guestCancelFunc = nil
 	s.guestRakNetFakeStop = nil
+}
+
+func (s *PaperConnectService) pcCleanupGuestLocked() *easytier.EasyTierManager {
+	s.pcCleanupGuestGameResourcesLocked()
+	manager := s.guestManager
+	s.guestManager = nil
+	s.pcResetGuestPortBusyLocked()
 	s.guestPlayers = nil
 	s.guestHostVirtualIP = ""
 	s.guestTCPLocalPort = 0
@@ -950,79 +985,74 @@ func (s *PaperConnectService) pcBuildConnectionStatus() *PaperConnectConnectionS
 }
 
 // pcGuestSetupConnection sets up the NetherNet or RakNet game connection asynchronously.
-func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierManager, clientId string, playerName string, protocol string, rakLocalPort uint16) {
-	var rkConn *raknet.Conn
-	var disc *discovery.Listener
-	var nnLn *nethernet.Listener
-	var proxyCancel context.CancelFunc
-	var rakNetFakeStop chan struct{}
-
-	defer func() {
-		s.guestMu.Lock()
-		s.guestRakConn = rkConn
-		s.guestDisc = disc
-		s.guestNnLn = nnLn
-		s.guestCancelFunc = proxyCancel
-		s.guestRakNetFakeStop = rakNetFakeStop
-		s.guestMu.Unlock()
-
-		if rkConn != nil || nnLn != nil || disc != nil || rakNetFakeStop != nil {
-			slog.Info("PaperConnect game connection ready", "protocol", protocol)
-			s.eventEmitter.Emit("paperconnect.connection.ready", map[string]string{"protocol": protocol})
-		} else {
-			slog.Warn("PaperConnect game connection setup failed, only control channel active", "protocol", protocol)
-			s.eventEmitter.Emit("paperconnect.connection.error", map[string]string{"message": "游戏连接建立失败，仅控制通道可用"})
-		}
-	}()
-
+func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierManager, playerName string, protocol string, rakLocalPort uint16) {
 	if s.joinCancelled.Load() {
 		return
 	}
 
+	// Establish forwarding before the local discovery or broadcast phase.
+	s.guestMu.Lock()
+	hostIP := s.guestHostVirtualIP
+	gamePort := s.guestGamePort
+	s.guestMu.Unlock()
+
+	localHost := "0.0.0.0"
 	if protocol == ProtocolNetherNet {
-		// ---- NetherNet path ----
-		// 1. Add UDP port forward + dial RakNet FIRST (before broadcasting NetherNet).
-		s.guestMu.Lock()
-		hostIP := s.guestHostVirtualIP
-		gamePort := s.guestGamePort
-		s.guestMu.Unlock()
-		slog.Info("pcGuestSetupConnection adding forward", "hostIP", hostIP, "gamePort", gamePort, "rakLocalPort", rakLocalPort)
+		localHost = "127.0.0.1"
+	}
+	localAddr := fmt.Sprintf("%s:%d", localHost, rakLocalPort)
+	remoteAddr := fmt.Sprintf("%s:%d", hostIP, gamePort)
+	if err := manager.AddPortForward("udp", localAddr, remoteAddr); err != nil {
+		slog.Error("add UDP port forward failed", "err", err, "local", localAddr, "remote", remoteAddr)
+		s.pcGuestSetupError(manager, protocol)
+		return
+	}
 
-		localAddr := fmt.Sprintf("127.0.0.1:%d", rakLocalPort)
-		remoteAddr := fmt.Sprintf("%s:%d", hostIP, gamePort)
-		if err := manager.AddPortForward("udp", localAddr, remoteAddr); err != nil {
-			slog.Error("add UDP port forward failed", "err", err, "local", localAddr, "remote", remoteAddr)
-			return
-		}
-		slog.Info("UDP port forward added", "local", localAddr, "remote", remoteAddr)
+	if protocol == ProtocolNetherNet {
+		// Only the local discovery/broadcast phase is gated on Minecraft
+		// releasing UDP 7551; the tunnel is already available above.
 
-		rakAddr := fmt.Sprintf("127.0.0.1:%d", rakLocalPort)
 		dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		rkConn, err := (raknet.Dialer{
 			MaxMTU:   rakNetMTU,
 			ErrorLog: slog.Default(),
-		}).DialContext(dialCtx, rakAddr)
+		}).DialContext(dialCtx, fmt.Sprintf("127.0.0.1:%d", rakLocalPort))
 		dialCancel()
 		if err != nil {
 			slog.Error("RakNet dial to host failed", "err", err)
+			s.pcGuestSetupError(manager, protocol)
 			return
 		}
-		slog.Info("connected to host RakNet proxy", "addr", rakAddr)
-
-		if s.joinCancelled.Load() {
+		if !pcAttachGuest(s, manager, &s.guestRakConn, rkConn) {
+			rkConn.Close()
 			return
 		}
 
-		// 2. Now start NetherNet discovery + listener (RakNet tunnel is ready).
 		discCfg := discovery.ListenConfig{
 			NetworkID: randomID(),
 			Log:       slog.Default(),
 		}
-		disc, err = discCfg.Listen("0.0.0.0:7551")
-		if err != nil {
-			slog.Error("NetherNet discovery listen failed", "err", err)
+		var disc *discovery.Listener
+		for {
+			disc, err = discCfg.Listen("0.0.0.0:7551")
+			if err == nil {
+				break
+			}
+			if !isAddressInUse(err) {
+				slog.Error("NetherNet discovery listen failed", "err", err)
+				s.pcGuestSetupError(manager, protocol)
+				return
+			}
+			slog.Warn("NetherNet discovery port is occupied", "port", 7551, "err", err)
+			if !s.pcWaitForMinecraftEnded(manager) {
+				return
+			}
+		}
+		if !pcAttachGuest(s, manager, &s.guestDisc, disc) {
+			disc.Close()
 			return
 		}
+		s.pcClearGuestPortBusy(manager)
 
 		disc.ServerData(&discovery.ServerData{
 			ServerName:            "GravityCone Proxy",
@@ -1040,66 +1070,150 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 			AllowAnonymous:    true,
 			DisableTrickleICE: true,
 		}
-		nnLn, err = nnCfg.Listen(disc)
+		nnLn, err := nnCfg.Listen(disc)
 		if err != nil {
-			disc.Close()
-			disc = nil
 			slog.Error("NetherNet listen failed", "err", err)
+			s.pcGuestSetupError(manager, protocol)
 			return
 		}
+		if !pcAttachGuest(s, manager, &s.guestNnLn, nnLn) {
+			nnLn.Close()
+			return
+		}
+
 		slog.Info("NetherNet listening for local client", "network_id", disc.NetworkID())
+		s.pcGuestConnectionReady(manager, protocol)
 
-		if s.joinCancelled.Load() {
-			return
-		}
-
-		// 3. Wait for local MC client to connect via NetherNet.
 		nnConn, err := nnLn.Accept()
 		if err != nil {
-			rkConn.Close()
-			rkConn = nil
-			nnLn.Close()
-			nnLn = nil
-			disc.Close()
-			disc = nil
-			slog.Error("NetherNet accept failed", "err", err)
+			if s.pcGuestActive(manager) {
+				slog.Error("NetherNet accept failed", "err", err)
+				s.pcGuestSetupError(manager, protocol)
+			}
 			return
 		}
 		slog.Info("local MC client connected via NetherNet", "remote", nnConn.RemoteAddr())
 
-		proxyCtx, pc := context.WithCancel(context.Background())
-		proxyCancel = pc
+		proxyCtx, proxyCancel := context.WithCancel(context.Background())
+		if !pcAttachGuest(s, manager, &s.guestCancelFunc, proxyCancel) {
+			proxyCancel()
+			return
+		}
 		go proxyPackets(proxyCtx, slog.Default(), nnConn.(*nethernet.Conn), rkConn)
-	} else {
-		// ---- RakNet path ----
-		s.guestMu.Lock()
-		hostIP := s.guestHostVirtualIP
-		gamePort := s.guestGamePort
+		return
+	}
+
+	// ---- RakNet path ----
+	serverName := "GravityCone Proxy"
+	if playerName != "" {
+		serverName = playerName
+	}
+	readyCh := make(chan error, 1)
+	fakeStop := make(chan struct{})
+	go broadcastRakNetFakeServer(context.Background(), fakeStop, serverName, rakLocalPort, readyCh)
+	if err := <-readyCh; err != nil {
+		slog.Error("RakNet fake server failed to start", "err", err, "proxyPort", rakLocalPort)
+		close(fakeStop)
+		s.pcGuestSetupError(manager, protocol)
+		return
+	}
+	if !pcAttachGuest(s, manager, &s.guestRakNetFakeStop, fakeStop) {
+		close(fakeStop)
+		return
+	}
+	slog.Info("RakNet fake server ready", "proxyPort", rakLocalPort, "serverName", serverName)
+	s.pcGuestConnectionReady(manager, protocol)
+}
+
+func isAddressInUse(err error) bool {
+	// Windows wraps WSAEADDRINUSE (10048), which is distinct from the
+	// compatibility EADDRINUSE value exposed by syscall on that platform.
+	return errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, syscall.Errno(10048))
+}
+
+func (s *PaperConnectService) pcGuestActiveLocked(manager *easytier.EasyTierManager) bool {
+	return s.guestRunning && s.guestManager == manager
+}
+
+func (s *PaperConnectService) pcGuestActive(manager *easytier.EasyTierManager) bool {
+	s.guestMu.Lock()
+	defer s.guestMu.Unlock()
+	return s.pcGuestActiveLocked(manager)
+}
+
+func pcAttachGuest[T any](s *PaperConnectService, manager *easytier.EasyTierManager, target *T, value T) bool {
+	s.guestMu.Lock()
+	defer s.guestMu.Unlock()
+	if !s.pcGuestActiveLocked(manager) {
+		return false
+	}
+	*target = value
+	return true
+}
+
+func (s *PaperConnectService) pcResetGuestPortBusyLocked() {
+	s.guestPortBusy = false
+	s.guestPortBusyConfirm = nil
+}
+
+func (s *PaperConnectService) pcWaitForMinecraftEnded(manager *easytier.EasyTierManager) bool {
+	s.guestMu.Lock()
+	if !s.pcGuestActiveLocked(manager) {
 		s.guestMu.Unlock()
+		return false
+	}
+	confirmCh := make(chan struct{}, 1)
+	s.guestPortBusy = true
+	s.guestPortBusyConfirm = confirmCh
+	stopCh := s.guestStopCh
+	s.guestMu.Unlock()
 
-		localAddr := fmt.Sprintf("0.0.0.0:%d", rakLocalPort)
-		remoteAddr := fmt.Sprintf("%s:%d", hostIP, gamePort)
-		slog.Info("starting RakNet guest LAN discovery", "local", localAddr, "remote", remoteAddr)
-		if err := manager.AddPortForward("udp", localAddr, remoteAddr); err != nil {
-			slog.Error("add UDP port forward failed", "err", err,
-				"local", localAddr, "remote", remoteAddr)
-			return
-		}
-		slog.Info("UDP port forward added", "local", localAddr, "remote", remoteAddr)
-		serverName := "GravityCone Proxy"
-		if playerName != "" {
-			serverName = playerName
-		}
+	s.eventEmitter.Emit("paperconnect.connection.port_busy", map[string]string{
+		"port":    "7551",
+		"message": "Minecraft 正在占用 UDP 端口 7551。请结束 Minecraft 后确认。",
+	})
 
-		readyCh := make(chan error, 1)
-		rakNetFakeStop = make(chan struct{})
-		go broadcastRakNetFakeServer(context.Background(), rakNetFakeStop, serverName, rakLocalPort, readyCh)
-		if err := <-readyCh; err != nil {
-			slog.Error("RakNet fake server failed to start", "err", err, "proxyPort", rakLocalPort)
-			rakNetFakeStop = nil
-			return
+	select {
+	case <-confirmCh:
+		s.guestMu.Lock()
+		if s.guestPortBusyConfirm == confirmCh {
+			s.pcResetGuestPortBusyLocked()
 		}
-		slog.Info("RakNet fake server ready", "proxyPort", rakLocalPort, "serverName", serverName)
+		active := s.pcGuestActiveLocked(manager)
+		s.guestMu.Unlock()
+		return active
+	case <-stopCh:
+		return false
+	}
+}
+
+func (s *PaperConnectService) pcClearGuestPortBusy(manager *easytier.EasyTierManager) {
+	s.guestMu.Lock()
+	defer s.guestMu.Unlock()
+	if s.pcGuestActiveLocked(manager) {
+		s.pcResetGuestPortBusyLocked()
+	}
+}
+
+func (s *PaperConnectService) pcGuestConnectionReady(manager *easytier.EasyTierManager, protocol string) {
+	if !s.pcGuestActive(manager) {
+		return
+	}
+	slog.Info("PaperConnect game connection ready", "protocol", protocol)
+	s.eventEmitter.Emit("paperconnect.connection.ready", map[string]string{"protocol": protocol})
+}
+
+func (s *PaperConnectService) pcGuestSetupError(manager *easytier.EasyTierManager, protocol string) {
+	s.guestMu.Lock()
+	active := s.pcGuestActiveLocked(manager)
+	if active {
+		s.pcCleanupGuestGameResourcesLocked()
+		s.pcResetGuestPortBusyLocked()
+	}
+	s.guestMu.Unlock()
+	if active {
+		slog.Warn("PaperConnect game connection setup failed, only control channel active", "protocol", protocol)
+		s.eventEmitter.Emit("paperconnect.connection.error", map[string]string{"message": "游戏连接建立失败，仅控制通道可用"})
 	}
 }
 

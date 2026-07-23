@@ -100,6 +100,13 @@ func (h *Handler) handleRoom(req Request, action string) {
 		h.paperConnectSvc.CancelJoin()
 		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
 
+	case "confirm_minecraft_ended":
+		if err := h.paperConnectSvc.ConfirmMinecraftEnded(); err != nil {
+			h.writer.WriteResponse(errorResponse(req.ID, ErrInternalError, err.Error()))
+			return
+		}
+		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+
 	case "leave":
 		h.handleRoomLeave(req)
 

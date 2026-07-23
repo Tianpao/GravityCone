@@ -10,6 +10,7 @@ import PaperConnectPlayerList from '@/components/PaperConnectPlayerList.vue'
 const pcStore = usePaperConnectStore()
 const router = useRouter()
 const showDisconnectDialog = ref(false)
+const confirmingMinecraftEnded = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
@@ -33,6 +34,12 @@ async function handleLeave() {
   router.push('/')
 }
 
+async function handleMinecraftEnded() {
+  confirmingMinecraftEnded.value = true
+  await pcStore.pcConfirmMinecraftEnded()
+  confirmingMinecraftEnded.value = false
+}
+
 const players = () => pcStore.pcConnectionStatus?.players ?? []
 </script>
 
@@ -47,7 +54,7 @@ const players = () => pcStore.pcConnectionStatus?.players ?? []
       </div>
 
       <!-- NetherNet proxy hint -->
-      <div v-if="pcStore.isConnectedPc" class="rounded-xl border border-primary/20 bg-primary/5 p-3">
+      <div v-if="pcStore.isConnectedPc && !pcStore.pcPortBusyMessage" class="rounded-xl border border-primary/20 bg-primary/5 p-3">
         <p class="text-sm text-muted-foreground">打开 Minecraft 基岩版，在局域网游戏中找到 <strong class="text-foreground">GravityCone Proxy</strong> 并加入</p>
       </div>
 
@@ -79,6 +86,30 @@ const players = () => pcStore.pcConnectionStatus?.players ?? []
         退出房间
       </Button>
     </div>
+
+    <!-- Minecraft port conflict dialog -->
+    <Dialog :open="Boolean(pcStore.pcPortBusyMessage)">
+      <DialogContent
+        class="sm:max-w-sm"
+        :show-close-button="false"
+        @pointer-down-outside.prevent
+        @escape-key-down.prevent
+      >
+        <DialogHeader>
+          <DialogTitle>请结束 Minecraft</DialogTitle>
+        </DialogHeader>
+        <p class="text-sm text-muted-foreground">
+          {{ pcStore.pcPortBusyMessage }} 本地游戏广播需要使用 UDP 端口 7551。
+        </p>
+        <p v-if="pcStore.pcGuestError" class="text-sm text-destructive">{{ pcStore.pcGuestError }}</p>
+        <DialogFooter class="gap-2 sm:justify-between">
+          <Button variant="outline" :disabled="confirmingMinecraftEnded" @click="handleLeave">取消</Button>
+          <Button :disabled="confirmingMinecraftEnded" @click="handleMinecraftEnded">
+            {{ confirmingMinecraftEnded ? '正在确认...' : 'Minecraft 已结束' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <!-- Disconnect dialog -->
     <Dialog :open="showDisconnectDialog" @update:open="showDisconnectDialog = $event">

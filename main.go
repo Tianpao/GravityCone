@@ -47,6 +47,9 @@ func init() {
 	application.RegisterEvent[[]scaffolding.PlayerInfo]("room.guest_player_list_updated")
 	application.RegisterEvent[minecraft.LanServer]("lan.server_found")
 	application.RegisterEvent[map[string]interface{}]("lan.server_lost")
+	application.RegisterEvent[map[string]string]("paperconnect.connection.port_busy")
+	application.RegisterEvent[map[string]string]("paperconnect.connection.ready")
+	application.RegisterEvent[map[string]string]("paperconnect.connection.error")
 }
 
 func main() {
