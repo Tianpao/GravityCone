@@ -88,12 +88,9 @@ func InitScaffoldingEmitter(svc *ScaffoldingService, emitter utils.EventEmitter)
 }
 
 type ScaffoldingService struct {
-	eventEmitter    utils.EventEmitter
-	joinProgressCb  func(string) // set by CLI mode for progress notifications
-	peersMu         sync.RWMutex
-	peersOverride   []string
-	additionalPeers []string
-	settingsSvc     *easytier.SettingsService
+	eventEmitter   utils.EventEmitter
+	joinProgressCb func(string) // set by CLI mode for progress notifications
+	peerConfig     easytier.PeerConfig
 
 	// HOST state
 	hostManager    *easytier.EasyTierManager
@@ -1131,39 +1128,19 @@ func (s *ScaffoldingService) Cleanup() {
 
 // ConfigureSettingsPeers provides GUI custom peers for future EasyTier starts.
 func ConfigureSettingsPeers(s *ScaffoldingService, settingsSvc *easytier.SettingsService) {
-	s.peersMu.Lock()
-	defer s.peersMu.Unlock()
-	s.settingsSvc = settingsSvc
+	s.peerConfig.SetSettingsService(settingsSvc)
 }
 
 // ConfigureCLIPeers replaces the built-in peers for CLI starts.
 func ConfigureCLIPeers(s *ScaffoldingService, peers []string) {
-	s.peersMu.Lock()
-	defer s.peersMu.Unlock()
-	s.peersOverride = append([]string(nil), peers...)
+	s.peerConfig.SetCLIOverride(peers)
 }
 
 func (s *ScaffoldingService) resolvePeers() []string {
-	s.peersMu.RLock()
-	override := append([]string(nil), s.peersOverride...)
-	additional := append([]string(nil), s.additionalPeers...)
-	settingsSvc := s.settingsSvc
-	s.peersMu.RUnlock()
-
-	if len(override) > 0 {
-		return append(override, additional...)
-	}
-
-	peers := append([]string(nil), scaffoldingBuiltinPeers...)
-	if settingsSvc != nil {
-		peers = append(peers, settingsSvc.GetCustomPeers()...)
-	}
-	return append(peers, additional...)
+	return s.peerConfig.Resolve(scaffoldingBuiltinPeers)
 }
 
 // AddPeers appends peer addresses for future EasyTier starts.
 func (s *ScaffoldingService) AddPeers(addrs []string) {
-	s.peersMu.Lock()
-	defer s.peersMu.Unlock()
-	s.additionalPeers = append(s.additionalPeers, addrs...)
+	s.peerConfig.Add(addrs)
 }

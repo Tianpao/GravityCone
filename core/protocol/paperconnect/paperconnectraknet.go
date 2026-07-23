@@ -16,7 +16,7 @@ import (
 	mcstatus "github.com/andre-carbajal/go-mcstatus"
 	"github.com/df-mc/go-nethernet/discovery"
 
-	"gravitycone/core/protocol/paperconnect/setsockopt"
+	"gravitycone/core/utils"
 )
 
 const rakNetDiscoveryPort = 19132
@@ -41,7 +41,7 @@ func scanRakNetLAN(ctx context.Context, timeout time.Duration) (*RakNetServerInf
 
 	if rawConn, err := conn.SyscallConn(); err == nil {
 		rawConn.Control(func(fd uintptr) {
-			_ = setsockopt.SetBroadcast(fd)
+			_ = utils.SetBroadcast(fd)
 		})
 	}
 
@@ -330,7 +330,7 @@ func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fall
 	defer bcConn.Close()
 	if rawConn, err := bcConn.SyscallConn(); err == nil {
 		_ = rawConn.Control(func(fd uintptr) {
-			_ = setsockopt.SetBroadcast(fd)
+			_ = utils.SetBroadcast(fd)
 		})
 	}
 
@@ -364,8 +364,8 @@ func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fall
 	lc := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
 			return c.Control(func(fd uintptr) {
-				_ = setsockopt.Setsockopt(fd)
-				_ = setsockopt.SetBroadcast(fd)
+				_ = utils.SetReuseAddr(fd)
+				_ = utils.SetBroadcast(fd)
 			})
 		},
 	}

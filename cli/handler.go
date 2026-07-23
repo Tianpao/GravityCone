@@ -240,72 +240,69 @@ func (h *Handler) handleRoomStatus(req Request) {
 	// Try PaperConnect host status first
 	pcHostStatus, pcHostErr := h.paperConnectSvc.GetRoomStatus()
 	if pcHostErr == nil {
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
-			"role":         "host",
-			"code":         pcHostStatus.Code,
-			"game_port":    pcHostStatus.GamePort,
-			"online_count": pcHostStatus.OnlineCount,
-			"players":      pcHostStatus.Players,
-			"running":      pcHostStatus.Running,
-			"protocol":     "paperconnect",
-			"sub_protocol": pcHostStatus.SubProtocol,
-		}))
+		result := hostStatusResult(pcHostStatus.Code, pcHostStatus.OnlineCount, pcHostStatus.Players, pcHostStatus.Running)
+		result["game_port"] = pcHostStatus.GamePort
+		result["protocol"] = "paperconnect"
+		result["sub_protocol"] = pcHostStatus.SubProtocol
+		h.writer.WriteResponse(successResponse(req.ID, result))
 		return
 	}
 
 	// Try Scaffolding host status
 	hostStatus, hostErr := h.scaffoldingSvc.GetRoomStatus()
 	if hostErr == nil {
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
-			"role":         "host",
-			"code":         hostStatus.Code,
-			"mc_address":   hostStatus.MCAddress,
-			"mc_port":      hostStatus.MCPort,
-			"online_count": hostStatus.OnlineCount,
-			"players":      hostStatus.Players,
-			"running":      hostStatus.Running,
-		}))
+		result := hostStatusResult(hostStatus.Code, hostStatus.OnlineCount, hostStatus.Players, hostStatus.Running)
+		result["mc_address"] = hostStatus.MCAddress
+		result["mc_port"] = hostStatus.MCPort
+		h.writer.WriteResponse(successResponse(req.ID, result))
 		return
 	}
 
 	// Try PaperConnect guest status
 	pcGuestStatus, pcGuestErr := h.paperConnectSvc.GetConnectionStatus()
 	if pcGuestErr == nil {
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
-			"role":              "guest",
-			"room_code":         pcGuestStatus.RoomCode,
-			"host_address":      pcGuestStatus.HostAddress,
-			"game_port":         pcGuestStatus.GamePort,
-			"connected":         pcGuestStatus.Connected,
-			"online_count":      pcGuestStatus.OnlineCount,
-			"players":           pcGuestStatus.Players,
-			"heartbeating":      pcGuestStatus.Heartbeating,
-			"disconnect_reason": pcGuestStatus.DisconnectReason,
-			"protocol":          "paperconnect",
-			"sub_protocol":      pcGuestStatus.SubProtocol,
-		}))
+		result := guestStatusResult(pcGuestStatus.RoomCode, pcGuestStatus.HostAddress, pcGuestStatus.Connected, pcGuestStatus.OnlineCount, pcGuestStatus.Players, pcGuestStatus.Heartbeating, pcGuestStatus.DisconnectReason)
+		result["game_port"] = pcGuestStatus.GamePort
+		result["protocol"] = "paperconnect"
+		result["sub_protocol"] = pcGuestStatus.SubProtocol
+		h.writer.WriteResponse(successResponse(req.ID, result))
 		return
 	}
 
 	// Try Scaffolding guest status
 	guestStatus, guestErr := h.scaffoldingSvc.GetConnectionStatus()
 	if guestErr == nil {
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
-			"role":              "guest",
-			"room_code":         guestStatus.RoomCode,
-			"host_address":      guestStatus.HostAddress,
-			"mc_address":        guestStatus.MCAddress,
-			"mc_port":           guestStatus.MCPort,
-			"connected":         guestStatus.Connected,
-			"online_count":      guestStatus.OnlineCount,
-			"players":           guestStatus.Players,
-			"heartbeating":      guestStatus.Heartbeating,
-			"disconnect_reason": guestStatus.DisconnectReason,
-		}))
+		result := guestStatusResult(guestStatus.RoomCode, guestStatus.HostAddress, guestStatus.Connected, guestStatus.OnlineCount, guestStatus.Players, guestStatus.Heartbeating, guestStatus.DisconnectReason)
+		result["mc_address"] = guestStatus.MCAddress
+		result["mc_port"] = guestStatus.MCPort
+		h.writer.WriteResponse(successResponse(req.ID, result))
 		return
 	}
 
 	h.writer.WriteResponse(successResponse(req.ID, map[string]string{"role": "none"}))
+}
+
+func hostStatusResult(code string, onlineCount int, players interface{}, running bool) map[string]interface{} {
+	return map[string]interface{}{
+		"role":         "host",
+		"code":         code,
+		"online_count": onlineCount,
+		"players":      players,
+		"running":      running,
+	}
+}
+
+func guestStatusResult(roomCode, hostAddress string, connected bool, onlineCount int, players interface{}, heartbeating bool, disconnectReason string) map[string]interface{} {
+	return map[string]interface{}{
+		"role":              "guest",
+		"room_code":         roomCode,
+		"host_address":      hostAddress,
+		"connected":         connected,
+		"online_count":      onlineCount,
+		"players":           players,
+		"heartbeating":      heartbeating,
+		"disconnect_reason": disconnectReason,
+	}
 }
 
 func (h *Handler) handleLan(req Request, action string) {

@@ -1,10 +1,10 @@
 //go:build !windows
 
-package setsockopt
+package utils
 
 import "syscall"
 
-func Setsockopt(fd uintptr) error {
+func SetReuseAddr(fd uintptr) error {
 	return syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
 }
 

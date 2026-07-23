@@ -52,11 +52,8 @@ type PaperConnectConnectionStatus struct {
 }
 
 type PaperConnectService struct {
-	eventEmitter    utils.EventEmitter
-	peersMu         sync.RWMutex
-	peersOverride   []string
-	additionalPeers []string
-	settingsSvc     *easytier.SettingsService
+	eventEmitter utils.EventEmitter
+	peerConfig   easytier.PeerConfig
 
 	// HOST state
 	hostManager    *easytier.EasyTierManager
@@ -864,12 +861,23 @@ func (s *PaperConnectService) pcGuestHeartbeatLoop(clientId string, playerName s
 
 func (s *PaperConnectService) LeaveRoom() error {
 	s.guestMu.Lock()
-	alreadyStopped := !s.guestRunning
-	if !alreadyStopped {
+	if s.guestRunning {
 		close(s.guestStopCh)
 		s.guestRunning = false
 		s.guestHeartbeating = false
 	}
+	manager := s.pcCleanupGuestLocked()
+	s.guestDisconnectReason = ""
+	s.guestMu.Unlock()
+
+	if manager != nil {
+		manager.Stop()
+	}
+
+	return nil
+}
+
+func (s *PaperConnectService) pcCleanupGuestLocked() *easytier.EasyTierManager {
 	if s.guestCancelFunc != nil {
 		s.guestCancelFunc()
 	}
@@ -892,20 +900,13 @@ func (s *PaperConnectService) LeaveRoom() error {
 	s.guestDisc = nil
 	s.guestCancelFunc = nil
 	s.guestRakNetFakeStop = nil
-	s.guestDisconnectReason = ""
 	s.guestPlayers = nil
 	s.guestHostVirtualIP = ""
 	s.guestTCPLocalPort = 0
 	s.guestRoomCode = nil
 	s.guestPlayerName = ""
 	s.guestProtocol = ""
-	s.guestMu.Unlock()
-
-	if manager != nil {
-		manager.Stop()
-	}
-
-	return nil
+	return manager
 }
 
 func (s *PaperConnectService) GetConnectionStatus() (*PaperConnectConnectionStatus, error) {
@@ -1108,34 +1109,7 @@ func (s *PaperConnectService) pcAutoDisconnect(reason string) {
 	s.guestRunning = false
 	s.guestHeartbeating = false
 	s.guestDisconnectReason = reason
-	if s.guestCancelFunc != nil {
-		s.guestCancelFunc()
-	}
-	if s.guestRakNetFakeStop != nil {
-		close(s.guestRakNetFakeStop)
-	}
-	if s.guestRakConn != nil {
-		s.guestRakConn.Close()
-	}
-	if s.guestNnLn != nil {
-		s.guestNnLn.Close()
-	}
-	if s.guestDisc != nil {
-		s.guestDisc.Close()
-	}
-	manager := s.guestManager
-	s.guestManager = nil
-	s.guestRakConn = nil
-	s.guestNnLn = nil
-	s.guestDisc = nil
-	s.guestCancelFunc = nil
-	s.guestRakNetFakeStop = nil
-	s.guestPlayers = nil
-	s.guestHostVirtualIP = ""
-	s.guestTCPLocalPort = 0
-	s.guestRoomCode = nil
-	s.guestPlayerName = ""
-	s.guestProtocol = ""
+	manager := s.pcCleanupGuestLocked()
 	s.guestMu.Unlock()
 
 	s.eventEmitter.Emit("paperconnect.room.disconnected", map[string]string{"reason": reason})
@@ -1151,37 +1125,17 @@ func (s *PaperConnectService) Cleanup() {
 }
 
 func ConfigureSettingsPeers(s *PaperConnectService, settingsSvc *easytier.SettingsService) {
-	s.peersMu.Lock()
-	defer s.peersMu.Unlock()
-	s.settingsSvc = settingsSvc
+	s.peerConfig.SetSettingsService(settingsSvc)
 }
 
 func ConfigureCLIPeers(s *PaperConnectService, peers []string) {
-	s.peersMu.Lock()
-	defer s.peersMu.Unlock()
-	s.peersOverride = append([]string(nil), peers...)
+	s.peerConfig.SetCLIOverride(peers)
 }
 
 func (s *PaperConnectService) resolvePeers() []string {
-	s.peersMu.RLock()
-	override := append([]string(nil), s.peersOverride...)
-	additional := append([]string(nil), s.additionalPeers...)
-	settingsSvc := s.settingsSvc
-	s.peersMu.RUnlock()
-
-	if len(override) > 0 {
-		return append(override, additional...)
-	}
-
-	peers := append([]string(nil), paperConnectBuiltinPeers...)
-	if settingsSvc != nil {
-		peers = append(peers, settingsSvc.GetCustomPeers()...)
-	}
-	return append(peers, additional...)
+	return s.peerConfig.Resolve(paperConnectBuiltinPeers)
 }
 
 func (s *PaperConnectService) AddPeers(addrs []string) {
-	s.peersMu.Lock()
-	defer s.peersMu.Unlock()
-	s.additionalPeers = append(s.additionalPeers, addrs...)
+	s.peerConfig.Add(addrs)
 }

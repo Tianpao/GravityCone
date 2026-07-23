@@ -5,6 +5,7 @@ import { usePaperConnectStore } from '@/stores/paperconnect'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { LogOutOutline } from '@vicons/ionicons5'
+import PaperConnectPlayerList from '@/components/PaperConnectPlayerList.vue'
 
 const pcStore = usePaperConnectStore()
 const router = useRouter()
@@ -69,22 +70,7 @@ const players = () => pcStore.pcConnectionStatus?.players ?? []
           <span class="text-xs text-muted-foreground">{{ pcStore.pcConnectionStatus?.online_count ?? 0 }} 人</span>
         </div>
 
-        <div v-if="players().length === 0" class="text-sm text-muted-foreground text-center py-2">
-          加载中...
-        </div>
-
-        <ul v-else class="space-y-2">
-          <li v-for="player in players()" :key="player.player"
-              class="flex items-center gap-3 rounded-lg px-3 py-2 bg-muted/50">
-            <div class="flex size-8 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
-              {{ player.player.charAt(0).toUpperCase() }}
-            </div>
-            <div class="flex-1 min-w-0">
-              <p class="text-sm font-medium truncate">{{ player.player }}</p>
-              <p class="text-xs text-muted-foreground">{{ player.isRoomHost ? '房主' : '玩家' }}</p>
-            </div>
-          </li>
-        </ul>
+        <PaperConnectPlayerList :players="players()" empty-text="加载中..." />
       </div>
 
       <!-- Leave button -->

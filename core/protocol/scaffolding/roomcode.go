@@ -1,26 +1,14 @@
 package scaffolding
 
 import (
-	"crypto/rand"
 	"fmt"
 	"strings"
-)
 
-const roomCodeCharset = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ" // 34 chars, excluding I and O
+	"gravitycone/core/utils"
+)
 
 // pow34Mod7[i] = 34^i mod 7. Since 34 mod 7 = 6, the pattern is 1,6,1,6,...
 var pow34Mod7 = [16]int{1, 6, 1, 6, 1, 6, 1, 6, 1, 6, 1, 6, 1, 6, 1, 6}
-
-var charToValueTable [256]int8
-
-func init() {
-	for i := range charToValueTable {
-		charToValueTable[i] = -1
-	}
-	for i := 0; i < len(roomCodeCharset); i++ {
-		charToValueTable[roomCodeCharset[i]] = int8(i)
-	}
-}
 
 type RoomCode struct {
 	NetworkPart string // 8 chars: NNNN-NNNN (without dash)
@@ -28,7 +16,11 @@ type RoomCode struct {
 }
 
 func charToValue(c byte) int {
-	return int(charToValueTable[c])
+	value, ok := utils.Value(c)
+	if !ok {
+		return -1
+	}
+	return value
 }
 
 func isValidChecksum(chars [16]byte) bool {
@@ -43,19 +35,11 @@ func isValidChecksum(chars [16]byte) bool {
 	return sum%7 == 0
 }
 
-func randomCharsetChar() (byte, error) {
-	var buf [1]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return 0, err
-	}
-	return roomCodeCharset[buf[0]%byte(len(roomCodeCharset))], nil
-}
-
 func GenerateRoomCode() (*RoomCode, error) {
 	for {
 		var chars [16]byte
 		for i := range chars {
-			c, err := randomCharsetChar()
+			c, err := utils.RandomChar()
 			if err != nil {
 				return nil, fmt.Errorf("failed to generate random char: %w", err)
 			}
