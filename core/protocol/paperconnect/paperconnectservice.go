@@ -63,8 +63,8 @@ type PaperConnectService struct {
 	hostStopReason string
 	hostSessions   chan struct{}
 	hostCancelFunc context.CancelFunc
-	hostProtocol   string           // ProtocolNetherNet or ProtocolRakNet
-	hostGamePort   uint16           // RakNet listener port (NetherNet) or scanned MC port (RakNet)
+	hostProtocol   string            // ProtocolNetherNet or ProtocolRakNet
+	hostGamePort   uint16            // RakNet listener port (NetherNet) or scanned MC port (RakNet)
 	hostRakNetInfo *RakNetServerInfo // Server info from RakNet scan (for guest broadcast)
 
 	// GUEST state
@@ -625,7 +625,8 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	tcpLocalLn.Close()
 
 	// Allocate UDP port for game data forwarding.
-	rakLocalConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	// Bind to 0.0.0.0 so the MC client can connect via the physical NIC IP.
+	rakLocalConn, err := net.ListenPacket("udp", "0.0.0.0:0")
 	if err != nil {
 		manager.Stop()
 		return nil, fmt.Errorf("分配本地UDP端口失败: %w", err)
@@ -1081,24 +1082,29 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 		gamePort := s.guestGamePort
 		s.guestMu.Unlock()
 
-		localAddr := fmt.Sprintf("127.0.0.1:%d", rakLocalPort)
+		localAddr := fmt.Sprintf("0.0.0.0:%d", rakLocalPort)
 		remoteAddr := fmt.Sprintf("%s:%d", hostIP, gamePort)
+		slog.Info("starting RakNet guest LAN discovery", "local", localAddr, "remote", remoteAddr)
 		if err := manager.AddPortForward("udp", localAddr, remoteAddr); err != nil {
 			slog.Error("add UDP port forward failed", "err", err,
 				"local", localAddr, "remote", remoteAddr)
 			return
 		}
 		slog.Info("UDP port forward added", "local", localAddr, "remote", remoteAddr)
-
-		rakNetFakeStop = make(chan struct{})
-
 		serverName := "GravityCone Proxy"
 		if playerName != "" {
 			serverName = playerName
 		}
 
-		go broadcastRakNetFakeServer(context.Background(), rakNetFakeStop, serverName, rakLocalPort)
-		slog.Info("RakNet fake server broadcasting", "proxyPort", rakLocalPort, "serverName", serverName)
+		readyCh := make(chan error, 1)
+		rakNetFakeStop = make(chan struct{})
+		go broadcastRakNetFakeServer(context.Background(), rakNetFakeStop, serverName, rakLocalPort, readyCh)
+		if err := <-readyCh; err != nil {
+			slog.Error("RakNet fake server failed to start", "err", err, "proxyPort", rakLocalPort)
+			rakNetFakeStop = nil
+			return
+		}
+		slog.Info("RakNet fake server ready", "proxyPort", rakLocalPort, "serverName", serverName)
 	}
 }
 

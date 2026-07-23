@@ -9,6 +9,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -135,7 +136,7 @@ func getBroadcastAddrs(port int) ([]*net.UDPAddr, error) {
 	var addrs []*net.UDPAddr
 	seen := make(map[string]bool)
 	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagBroadcast == 0 {
+		if !isPhysicalNIC(iface) {
 			continue
 		}
 		ifaceAddrs, err := iface.Addrs()
@@ -144,7 +145,7 @@ func getBroadcastAddrs(port int) ([]*net.UDPAddr, error) {
 		}
 		for _, a := range ifaceAddrs {
 			ipNet, ok := a.(*net.IPNet)
-			if !ok || ipNet.IP.IsLoopback() {
+			if !ok || ipNet.IP.IsLoopback() || isEasyTierIP(ipNet.IP) {
 				continue
 			}
 			ip4 := ipNet.IP.To4()
@@ -165,10 +166,6 @@ func getBroadcastAddrs(port int) ([]*net.UDPAddr, error) {
 			}
 		}
 	}
-	globalAddr, _ := net.ResolveUDPAddr("udp4", fmt.Sprintf("255.255.255.255:%d", port))
-	if globalAddr != nil {
-		addrs = append(addrs, globalAddr)
-	}
 	return addrs, nil
 }
 
@@ -182,7 +179,7 @@ func getLocalAddrs(port int) []*net.UDPAddr {
 	}
 	var addrs []*net.UDPAddr
 	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 {
+		if !isPhysicalNIC(iface) {
 			continue
 		}
 		ifaceAddrs, err := iface.Addrs()
@@ -195,7 +192,7 @@ func getLocalAddrs(port int) []*net.UDPAddr {
 				continue
 			}
 			ip4 := ipNet.IP.To4()
-			if ip4 == nil {
+			if ip4 == nil || isEasyTierIP(ip4) {
 				continue
 			}
 			udpAddr, _ := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", ip4.String(), port))
@@ -204,8 +201,9 @@ func getLocalAddrs(port int) []*net.UDPAddr {
 			}
 		}
 	}
-	udpAddr, _ := net.ResolveUDPAddr("udp4", fmt.Sprintf("127.0.0.1:%d", port))
-	if udpAddr != nil {
+	// Always include 127.0.0.1 for reliable local loopback — Windows may not
+	// loopback unicast packets sent to the physical NIC IP.
+	if udpAddr, _ := net.ResolveUDPAddr("udp4", fmt.Sprintf("127.0.0.1:%d", port)); udpAddr != nil {
 		addrs = append(addrs, udpAddr)
 	}
 	return addrs
@@ -278,83 +276,130 @@ func buildUnconnectedPong(motd string, serverGUID int64) []byte {
 	return buf
 }
 
-// broadcastRakNetFakeServer queries the host's Bedrock server through the EasyTier
-// forwarded port to get real server info (MOTD, protocol, version, etc.), then runs a
-// raw UDP handler on 127.0.0.1:19132 that responds ONLY to Unconnected Pings. Connection
-// request packets (OPEN_CONNECTION_REQUEST_1/2) are silently ignored — a go-raknet
-// listener would auto-complete the handshake but nobody calls Accept(), causing the
-// client to time out.
-//
-// All pongs are sent from / received on 127.0.0.1:19132 only, so the client always
-// resolves the server address as 127.0.0.1:{proxyPort}. The MOTD points to
-// 127.0.0.1:proxyPort where EasyTier's port forward is listening.
-func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fallbackName string, proxyPort uint16) {
+// isPhysicalNIC reports whether the interface is a physical NIC (not a virtual /
+// hypervisor / container adapter). Filters by known virtual MAC OUI prefixes and
+// by interface name patterns.
+func isPhysicalNIC(iface net.Interface) bool {
+	if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagBroadcast == 0 {
+		return false
+	}
+	// Filter by interface name prefix (virtual / tunnel / container adapters).
+	for _, prefix := range []string{
+		"veth", "docker", "br-", "tun", "tap", "wg", "vmnet", "vboxnet",
+		"vEthernet", "Hyper-V", "VirtualBox", "VMware", "Loopback",
+		"lo", "utun", "llw", "awdl", "anpi",
+	} {
+		if len(iface.Name) >= len(prefix) && strings.EqualFold(iface.Name[:len(prefix)], prefix) {
+			return false
+		}
+	}
+	// Filter by known virtual MAC OUI prefixes.
+	if len(iface.HardwareAddr) >= 3 {
+		oui := [3]byte{iface.HardwareAddr[0], iface.HardwareAddr[1], iface.HardwareAddr[2]}
+		for _, prefix := range [][3]byte{
+			{0x00, 0x05, 0x69}, // VMware
+			{0x00, 0x0C, 0x29}, // VMware
+			{0x00, 0x50, 0x56}, // VMware
+			{0x00, 0x15, 0x5D}, // Hyper-V
+			{0x08, 0x00, 0x27}, // VirtualBox
+			{0x0A, 0x00, 0x27}, // VirtualBox
+			{0x00, 0x1C, 0x42}, // Parallels
+		} {
+			if oui == prefix {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// broadcastRakNetFakeServer advertises the forwarded Bedrock server on the guest LAN.
+// It answers discovery pings when port 19132 is available and always sends periodic
+// unsolicited pongs from a separate broadcast socket.
+func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fallbackName string, proxyPort uint16, readyCh chan<- error) {
 	serverGUID := rand.Int63()
 	slog.Info("RakNet fake server starting", "guid", serverGUID, "proxyPort", proxyPort)
 
-	// 1. Query the host's Bedrock server through the forwarded port to get real info.
-	motd := queryBedrockMOTD(fmt.Sprintf("127.0.0.1:%d", proxyPort), fallbackName, serverGUID, proxyPort)
-	slog.Info("RakNet fake server MOTD", "motd", motd)
+	bcConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	if err != nil {
+		startupErr := fmt.Errorf("open RakNet broadcast socket: %w", err)
+		slog.Error("RakNet fake server broadcast socket failed", "err", startupErr, "guid", serverGUID)
+		readyCh <- startupErr
+		return
+	}
+	defer bcConn.Close()
+	if rawConn, err := bcConn.SyscallConn(); err == nil {
+		_ = rawConn.Control(func(fd uintptr) {
+			_ = setsockopt.SetBroadcast(fd)
+		})
+	}
 
-	// 2. Create a raw UDP socket on 127.0.0.1:19132 with SO_REUSEADDR so it can
-	// coexist with the local MC client's own listener on the same port. Binding to
-	// 127.0.0.1 (not 0.0.0.0) ensures all outgoing pongs carry 127.0.0.1 as source.
+	broadcastAddrs, _ := getBroadcastAddrs(rakNetDiscoveryPort)
+	localAddrs := getLocalAddrs(rakNetDiscoveryPort)
+	slog.Info("RakNet fake server broadcast socket ready", "addr", bcConn.LocalAddr().String(),
+		"broadcastAddrs", len(broadcastAddrs), "localAddrs", len(localAddrs), "guid", serverGUID)
+
+	fallbackMOTD := buildFallbackBedrockMOTD(fallbackName, serverGUID, proxyPort)
+	var motdMu sync.RWMutex
+	motd := fallbackMOTD
+	getMOTD := func() string {
+		motdMu.RLock()
+		defer motdMu.RUnlock()
+		return motd
+	}
+
+	readyCh <- nil
+
+	go func() {
+		queriedMOTD, ok := queryBedrockMOTD(fmt.Sprintf("127.0.0.1:%d", proxyPort), fallbackName, serverGUID, proxyPort)
+		if !ok {
+			return
+		}
+		motdMu.Lock()
+		motd = queriedMOTD
+		motdMu.Unlock()
+		slog.Info("RakNet fake server MOTD updated", "guid", serverGUID)
+	}()
+
 	lc := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
 			return c.Control(func(fd uintptr) {
-				setsockopt.Setsockopt(fd) // SO_REUSEADDR
+				_ = setsockopt.Setsockopt(fd)
+				_ = setsockopt.SetBroadcast(fd)
 			})
 		},
 	}
-	conn, err := lc.ListenPacket(ctx, "udp4", fmt.Sprintf("127.0.0.1:%d", rakNetDiscoveryPort))
+	listenConn, err := lc.ListenPacket(ctx, "udp4", fmt.Sprintf("0.0.0.0:%d", rakNetDiscoveryPort))
 	if err != nil {
-		slog.Error("RakNet fake server listen failed", "err", err, "port", rakNetDiscoveryPort)
-		return
+		slog.Warn("RakNet fake server ping responder unavailable; continuing active broadcast",
+			"err", err, "port", rakNetDiscoveryPort, "guid", serverGUID)
+	} else {
+		defer listenConn.Close()
+		slog.Info("RakNet fake server ping responder ready", "addr", listenConn.LocalAddr().String(), "guid", serverGUID)
+		go func() {
+			buf := make([]byte, 1500)
+			for {
+				n, addr, err := listenConn.ReadFrom(buf)
+				if err != nil {
+					return
+				}
+				if n < 25 || (buf[0] != 0x01 && buf[0] != 0x02) {
+					continue
+				}
+				var magic [16]byte
+				copy(magic[:], buf[9:25])
+				if magic != rakNetMagic {
+					continue
+				}
+				pong := buildUnconnectedPong(getMOTD(), serverGUID)
+				binary.BigEndian.PutUint64(pong[1:], binary.BigEndian.Uint64(buf[1:9]))
+				_, _ = listenConn.WriteTo(pong, addr)
+			}
+		}()
 	}
-	defer conn.Close()
-	slog.Info("RakNet fake server listening", "addr", conn.LocalAddr().String(), "guid", serverGUID)
 
-	loopbackAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: rakNetDiscoveryPort}
-
-	// 3. Goroutine: respond to Unconnected Pings from 127.0.0.1 ONLY. All other
-	// packet types and source addresses are silently ignored.
-	go func() {
-		buf := make([]byte, 1500)
-		for {
-			n, addr, err := conn.ReadFrom(buf)
-			if err != nil {
-				return
-			}
-			// Only accept packets from 127.0.0.1.
-			udpAddr, ok := addr.(*net.UDPAddr)
-			if !ok || !udpAddr.IP.IsLoopback() {
-				continue
-			}
-			if n < 25 {
-				continue
-			}
-			if buf[0] != 0x01 && buf[0] != 0x02 {
-				continue
-			}
-			var magic [16]byte
-			copy(magic[:], buf[9:25])
-			if magic != rakNetMagic {
-				continue
-			}
-			pingTime := int64(binary.BigEndian.Uint64(buf[1:9]))
-			pong := buildUnconnectedPong(motd, serverGUID)
-			binary.BigEndian.PutUint64(pong[1:], uint64(pingTime))
-			_, _ = conn.WriteTo(pong, addr)
-		}
-	}()
-
-	// 4. Active broadcast: periodically send unsolicited pongs to 127.0.0.1:19132.
-	// Because the socket is bound to 127.0.0.1, the source IP is always 127.0.0.1,
-	// so the client resolves the server as 127.0.0.1:proxyPort (from MOTD) and
-	// connects through the EasyTier forward.
 	ticker := time.NewTicker(1500 * time.Millisecond)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-stopCh:
@@ -362,16 +407,20 @@ func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fall
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			pongPacket := buildUnconnectedPong(motd, serverGUID)
-			_, _ = conn.WriteTo(pongPacket, loopbackAddr)
+			pongPacket := buildUnconnectedPong(getMOTD(), serverGUID)
+			for _, addr := range broadcastAddrs {
+				_, _ = bcConn.WriteToUDP(pongPacket, addr)
+			}
+			for _, addr := range localAddrs {
+				_, _ = bcConn.WriteToUDP(pongPacket, addr)
+			}
 		}
 	}
 }
 
 // queryBedrockMOTD queries a Bedrock server at the given address and returns
 // a properly formatted MCPE MOTD string with the specified proxyPort.
-// Falls back to hardcoded defaults if the query fails.
-func queryBedrockMOTD(address string, fallbackName string, serverGUID int64, proxyPort uint16) string {
+func queryBedrockMOTD(address string, fallbackName string, serverGUID int64, proxyPort uint16) (string, bool) {
 	for attempt := 0; attempt < 15; attempt++ {
 		bs, err := mcstatus.NewBedrockServer(address)
 		if err != nil {
@@ -412,13 +461,21 @@ func queryBedrockMOTD(address string, fallbackName string, serverGUID int64, pro
 			motdLine1, resp.Protocol, resp.Version,
 			resp.Online, resp.Max, serverGUID,
 			motdLine2, resp.Gamemode, gmNum,
-			proxyPort, proxyPort)
+			proxyPort, proxyPort), true
 	}
 
-	// Fallback: hardcoded defaults.
-	slog.Warn("failed to query Bedrock server, using fallback MOTD", "address", address)
+	slog.Warn("failed to query Bedrock server; retaining fallback MOTD", "address", address)
+	return "", false
+}
+
+func buildFallbackBedrockMOTD(fallbackName string, serverGUID int64, proxyPort uint16) string {
 	return fmt.Sprintf("MCPE;%s;589;1.20.0;1;20;%d;%s;Survival;0;%d;%d;",
 		fallbackName, serverGUID, fallbackName, proxyPort, proxyPort)
+}
+
+func isEasyTierIP(ip net.IP) bool {
+	ip4 := ip.To4()
+	return ip4 != nil && ip4[0] == 10 && ip4[1] == 144 && ip4[2] == 144
 }
 
 func gamemodeToNum(gm string) int {
