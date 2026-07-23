@@ -393,6 +393,7 @@ func (h *Handler) handleAddPeers(req Request) {
 		return
 	}
 	h.scaffoldingSvc.AddPeers(addrs)
+	h.paperConnectSvc.AddPeers(addrs)
 	h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
 }
 

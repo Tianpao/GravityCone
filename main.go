@@ -99,6 +99,9 @@ func main() {
 	lanSvc := minecraft.NewLanService(nil)
 	scaffoldingSvc := scaffolding.NewScaffoldingService(nil)
 	paperConnectSvc := paperconnect.NewPaperConnectService(nil)
+	settingsSvc := &easytier.SettingsService{}
+	scaffolding.ConfigureSettingsPeers(scaffoldingSvc, settingsSvc)
+	paperconnect.ConfigureSettingsPeers(paperConnectSvc, settingsSvc)
 
 	app := application.New(application.Options{
 		Name:        "GravityCone",
@@ -112,7 +115,7 @@ func main() {
 			application.NewService(scaffoldingSvc),
 			application.NewService(paperConnectSvc),
 			application.NewService(&app.WatermarkService{}),
-			application.NewService(&easytier.SettingsService{}),
+			application.NewService(settingsSvc),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),

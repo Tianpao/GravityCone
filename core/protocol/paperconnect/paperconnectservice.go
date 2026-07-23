@@ -24,6 +24,10 @@ import (
 const pcHostnamePrefix = "pcs-"
 const pcPlayerTimeout = 10 * time.Second
 
+var paperConnectBuiltinPeers = []string{
+	"wss://center.node.1tmc.top",
+}
+
 // PaperConnectRoomStatus is the host-side room status.
 type PaperConnectRoomStatus struct {
 	Code        string          `json:"code"`
@@ -46,7 +50,11 @@ type PaperConnectConnectionStatus struct {
 }
 
 type PaperConnectService struct {
-	eventEmitter utils.EventEmitter
+	eventEmitter    utils.EventEmitter
+	peersMu         sync.RWMutex
+	peersOverride   []string
+	additionalPeers []string
+	settingsSvc     *easytier.SettingsService
 
 	// HOST state
 	hostManager    *easytier.EasyTierManager
@@ -192,6 +200,7 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 			IsHost:             true,
 			TCPPort:            tcpPort,
 			MCPort:             gamePort,
+			Peers:              s.resolvePeers(),
 			UpstreamCompatible: true,
 		}
 		virtualIP, err = manager.Start(startOpts)
@@ -222,6 +231,7 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 			IsHost:             true,
 			TCPPort:            tcpPort,
 			MCPort:             gamePort,
+			Peers:              s.resolvePeers(),
 			UpstreamCompatible: true,
 		}
 
@@ -582,6 +592,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		NetworkName:        rc.EasyTierNetworkName(),
 		NetworkSecret:      rc.EasyTierNetworkSecret(),
 		IsHost:             false,
+		Peers:              s.resolvePeers(),
 		UpstreamCompatible: true,
 	})
 	if err != nil {
@@ -650,6 +661,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		NetworkSecret:      rc.EasyTierNetworkSecret(),
 		IsHost:             false,
 		PortForwards:       portForwards,
+		Peers:              s.resolvePeers(),
 		UpstreamCompatible: true,
 	})
 	if err != nil {
@@ -1156,6 +1168,38 @@ func (s *PaperConnectService) Cleanup() {
 	s.LeaveRoom()
 }
 
+func ConfigureSettingsPeers(s *PaperConnectService, settingsSvc *easytier.SettingsService) {
+	s.peersMu.Lock()
+	defer s.peersMu.Unlock()
+	s.settingsSvc = settingsSvc
+}
+
+func ConfigureCLIPeers(s *PaperConnectService, peers []string) {
+	s.peersMu.Lock()
+	defer s.peersMu.Unlock()
+	s.peersOverride = append([]string(nil), peers...)
+}
+
+func (s *PaperConnectService) resolvePeers() []string {
+	s.peersMu.RLock()
+	override := append([]string(nil), s.peersOverride...)
+	additional := append([]string(nil), s.additionalPeers...)
+	settingsSvc := s.settingsSvc
+	s.peersMu.RUnlock()
+
+	if len(override) > 0 {
+		return append(override, additional...)
+	}
+
+	peers := append([]string(nil), paperConnectBuiltinPeers...)
+	if settingsSvc != nil {
+		peers = append(peers, settingsSvc.GetCustomPeers()...)
+	}
+	return append(peers, additional...)
+}
+
 func (s *PaperConnectService) AddPeers(addrs []string) {
-	easytier.AddPublicPeers(addrs)
+	s.peersMu.Lock()
+	defer s.peersMu.Unlock()
+	s.additionalPeers = append(s.additionalPeers, addrs...)
 }

@@ -47,12 +47,6 @@ func Run(peers []string, vendorPrefix string, motd string) {
 	// Redirect EasyTier logs to file
 	easytier.SetEasyTierLogOutput(etLogPath)
 
-	// Override EasyTier peers if provided
-	if len(peers) > 0 {
-		easytier.SetPublicPeers(peers)
-		slog.Info("Using custom peers", "peers", peers)
-	}
-
 	// Set up writer and emitter early so download progress can be reported
 	writer := NewStdioWriter()
 	emitter := NewStdioEventEmitter(writer)
@@ -68,6 +62,11 @@ func Run(peers []string, vendorPrefix string, motd string) {
 	lanSvc := minecraft.NewLanService(emitter)
 	scaffoldingSvc := scaffolding.NewScaffoldingService(emitter)
 	paperConnectSvc := paperconnect.NewPaperConnectService(emitter)
+	if len(peers) > 0 {
+		scaffolding.ConfigureCLIPeers(scaffoldingSvc, peers)
+		paperconnect.ConfigureCLIPeers(paperConnectSvc, peers)
+		slog.Info("Using CLI peer override", "peers", peers)
+	}
 
 	shutdownCh := make(chan struct{})
 	handler := NewHandler(stunSvc, lanSvc, scaffoldingSvc, paperConnectSvc, writer, shutdownCh, vendorPrefix, motd)
