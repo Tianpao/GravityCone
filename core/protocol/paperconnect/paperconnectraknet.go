@@ -13,7 +13,6 @@ import (
 	"time"
 
 	mcstatus "github.com/andre-carbajal/go-mcstatus"
-	raknet "github.com/sandertv/go-raknet"
 	"github.com/df-mc/go-nethernet/discovery"
 
 	"gravitycone/core/protocol/paperconnect/setsockopt"
@@ -279,71 +278,80 @@ func buildUnconnectedPong(motd string, serverGUID int64) []byte {
 	return buf
 }
 
-// reuseAddrPacketListener creates UDP listeners with SO_REUSEADDR so multiple
-// RakNet listeners can coexist on the same port (e.g. with a local MC client).
-type reuseAddrPacketListener struct{}
+// broadcastRakNetFakeServer queries the host's Bedrock server through the EasyTier
+// forwarded port to get real server info (MOTD, protocol, version, etc.), then runs a
+// raw UDP handler on 127.0.0.1:19132 that responds ONLY to Unconnected Pings. Connection
+// request packets (OPEN_CONNECTION_REQUEST_1/2) are silently ignored — a go-raknet
+// listener would auto-complete the handshake but nobody calls Accept(), causing the
+// client to time out.
+//
+// All pongs are sent from / received on 127.0.0.1:19132 only, so the client always
+// resolves the server address as 127.0.0.1:{proxyPort}. The MOTD points to
+// 127.0.0.1:proxyPort where EasyTier's port forward is listening.
+func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fallbackName string, proxyPort uint16) {
+	serverGUID := rand.Int63()
+	slog.Info("RakNet fake server starting", "guid", serverGUID, "proxyPort", proxyPort)
 
-func (reuseAddrPacketListener) ListenPacket(network, address string) (net.PacketConn, error) {
+	// 1. Query the host's Bedrock server through the forwarded port to get real info.
+	motd := queryBedrockMOTD(fmt.Sprintf("127.0.0.1:%d", proxyPort), fallbackName, serverGUID, proxyPort)
+	slog.Info("RakNet fake server MOTD", "motd", motd)
+
+	// 2. Create a raw UDP socket on 127.0.0.1:19132 with SO_REUSEADDR so it can
+	// coexist with the local MC client's own listener on the same port. Binding to
+	// 127.0.0.1 (not 0.0.0.0) ensures all outgoing pongs carry 127.0.0.1 as source.
 	lc := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
 			return c.Control(func(fd uintptr) {
-				setsockopt.Setsockopt(fd)
+				setsockopt.Setsockopt(fd) // SO_REUSEADDR
 			})
 		},
 	}
-	return lc.ListenPacket(context.Background(), "udp4", address)
-}
-
-// broadcastRakNetFakeServer queries the host's Bedrock server through the EasyTier
-// forwarded port to get real server info (MOTD, protocol, version, etc.), then runs a
-// RakNet server on 0.0.0.0:19132 that responds to Unconnected Pings from the local
-// Minecraft Bedrock client, AND actively broadcasts Unconnected Pongs to subnet
-// broadcast addresses. The MOTD points to 127.0.0.1:proxyPort so the client connects
-// through the forwarded port.
-func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fallbackName string, proxyPort uint16) {
-	// 1. Create go-raknet listener first so we can use its GUID in the MOTD.
-	conf := raknet.ListenConfig{
-		UpstreamPacketListener: reuseAddrPacketListener{},
-		ErrorLog:               slog.Default(),
-		BlockDuration:          -1,
-	}
-	listener, err := conf.Listen(fmt.Sprintf(":%d", rakNetDiscoveryPort))
+	conn, err := lc.ListenPacket(ctx, "udp4", fmt.Sprintf("127.0.0.1:%d", rakNetDiscoveryPort))
 	if err != nil {
 		slog.Error("RakNet fake server listen failed", "err", err, "port", rakNetDiscoveryPort)
 		return
 	}
-	defer listener.Close()
+	defer conn.Close()
+	slog.Info("RakNet fake server listening", "addr", conn.LocalAddr().String(), "guid", serverGUID)
 
-	serverGUID := listener.ID()
-	slog.Info("RakNet fake server listening", "addr", listener.Addr().String(), "guid", serverGUID)
+	loopbackAddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: rakNetDiscoveryPort}
 
-	// 2. Query the host's Bedrock server through the forwarded port to get real info.
-	motd := queryBedrockMOTD(fmt.Sprintf("127.0.0.1:%d", proxyPort), fallbackName, serverGUID, proxyPort)
-	pongData := []byte(motd)
-	listener.PongData(pongData)
-	slog.Info("RakNet fake server pongData", "motd", motd)
+	// 3. Goroutine: respond to Unconnected Pings from 127.0.0.1 ONLY. All other
+	// packet types and source addresses are silently ignored.
+	go func() {
+		buf := make([]byte, 1500)
+		for {
+			n, addr, err := conn.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			// Only accept packets from 127.0.0.1.
+			udpAddr, ok := addr.(*net.UDPAddr)
+			if !ok || !udpAddr.IP.IsLoopback() {
+				continue
+			}
+			if n < 25 {
+				continue
+			}
+			if buf[0] != 0x01 && buf[0] != 0x02 {
+				continue
+			}
+			var magic [16]byte
+			copy(magic[:], buf[9:25])
+			if magic != rakNetMagic {
+				continue
+			}
+			pingTime := int64(binary.BigEndian.Uint64(buf[1:9]))
+			pong := buildUnconnectedPong(motd, serverGUID)
+			binary.BigEndian.PutUint64(pong[1:], uint64(pingTime))
+			_, _ = conn.WriteTo(pong, addr)
+		}
+	}()
 
-	// 3. Create broadcast socket for active subnet broadcast.
-	bcConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
-	if err != nil {
-		return
-	}
-	defer bcConn.Close()
-
-	if rawConn, err := bcConn.SyscallConn(); err == nil {
-		rawConn.Control(func(fd uintptr) {
-			_ = setsockopt.SetBroadcast(fd)
-		})
-	}
-
-	broadcastAddrs, _ := getBroadcastAddrs(rakNetDiscoveryPort)
-	localAddrs := getLocalAddrs(rakNetDiscoveryPort)
-	slog.Info("RakNet fake server broadcasting",
-		"broadcastAddrs", len(broadcastAddrs), "localAddrs", len(localAddrs))
-	for _, addr := range broadcastAddrs {
-		slog.Info("  -> broadcast", "addr", addr.String())
-	}
-
+	// 4. Active broadcast: periodically send unsolicited pongs to 127.0.0.1:19132.
+	// Because the socket is bound to 127.0.0.1, the source IP is always 127.0.0.1,
+	// so the client resolves the server as 127.0.0.1:proxyPort (from MOTD) and
+	// connects through the EasyTier forward.
 	ticker := time.NewTicker(1500 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -355,12 +363,7 @@ func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fall
 			return
 		case <-ticker.C:
 			pongPacket := buildUnconnectedPong(motd, serverGUID)
-			for _, addr := range broadcastAddrs {
-				_, _ = bcConn.WriteToUDP(pongPacket, addr)
-			}
-			for _, addr := range localAddrs {
-				_, _ = bcConn.WriteToUDP(pongPacket, addr)
-			}
+			_, _ = conn.WriteTo(pongPacket, loopbackAddr)
 		}
 	}
 }
