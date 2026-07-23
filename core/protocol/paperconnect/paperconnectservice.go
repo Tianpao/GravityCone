@@ -189,27 +189,10 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	}
 
 	var hostname string
-	var startOpts easytier.StartOptions
-	var virtualIP string
 	var rakLn *raknet.Listener
 
 	if protocol == ProtocolRakNet {
 		hostname = buildHostnameRakNet(tcpPort, gamePort)
-		startOpts = easytier.StartOptions{
-			NetworkName:        rc.EasyTierNetworkName(),
-			NetworkSecret:      rc.EasyTierNetworkSecret(),
-			Hostname:           hostname,
-			IsHost:             true,
-			TCPPort:            tcpPort,
-			MCPort:             gamePort,
-			Peers:              s.resolvePeers(),
-			UpstreamCompatible: true,
-		}
-		virtualIP, err = manager.Start(startOpts)
-		if err != nil {
-			tcpLn.Close()
-			return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
-		}
 	} else {
 		// NetherNet: start RakNet listener first (random port), then encode its port.
 		rakLn, err = (raknet.ListenConfig{
@@ -224,25 +207,25 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 		_, portStr, _ := net.SplitHostPort(rakLn.Addr().String())
 		rakPort, _ := strconv.ParseUint(portStr, 10, 16)
 		gamePort = uint16(rakPort)
-
 		hostname = buildHostname(tcpPort, gamePort)
-		startOpts = easytier.StartOptions{
-			NetworkName:        rc.EasyTierNetworkName(),
-			NetworkSecret:      rc.EasyTierNetworkSecret(),
-			Hostname:           hostname,
-			IsHost:             true,
-			TCPPort:            tcpPort,
-			MCPort:             gamePort,
-			Peers:              s.resolvePeers(),
-			UpstreamCompatible: true,
-		}
+	}
 
-		virtualIP, err = manager.Start(startOpts)
-		if err != nil {
+	virtualIP, err := manager.Start(easytier.StartOptions{
+		NetworkName:        rc.EasyTierNetworkName(),
+		NetworkSecret:      rc.EasyTierNetworkSecret(),
+		Hostname:           hostname,
+		IsHost:             true,
+		TCPPort:            tcpPort,
+		MCPort:             gamePort,
+		Peers:              s.resolvePeers(),
+		UpstreamCompatible: true,
+	})
+	if err != nil {
+		if rakLn != nil {
 			rakLn.Close()
-			tcpLn.Close()
-			return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
 		}
+		tcpLn.Close()
+		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
 	}
 
 	// Store state
@@ -338,13 +321,8 @@ func (s *PaperConnectService) GetRoomStatus() (*PaperConnectRoomStatus, error) {
 		}
 		return nil, fmt.Errorf("没有正在运行的房间")
 	}
-	virtualIP := ""
-	if s.hostManager != nil {
-		virtualIP = s.hostManager.SelfVirtualIP()
-	}
 	s.hostMu.Unlock()
 
-	_ = virtualIP
 	return s.pcBuildRoomStatus(""), nil
 }
 
