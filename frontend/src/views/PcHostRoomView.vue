@@ -2,11 +2,14 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { usePaperConnectStore } from '@/stores/paperconnect'
+import { useWatermarkStore } from '@/stores/watermark'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { StopCircleOutline, CopyOutline, CheckmarkOutline } from '@vicons/ionicons5'
+import WatermarkShare from '@/components/WatermarkShare.vue'
 
 const pcStore = usePaperConnectStore()
+const watermark = useWatermarkStore()
 const router = useRouter()
 const copied = ref(false)
 const showStopDialog = ref(false)
@@ -16,6 +19,7 @@ onMounted(() => {
   pollTimer = setInterval(() => {
     pcStore.pcRefreshRoomStatus()
   }, 3000)
+  watermark.loadDemoImages()
 })
 
 onUnmounted(() => {
@@ -94,6 +98,11 @@ const players = () => pcStore.pcRoomStatus?.players ?? []
             </li>
           </ul>
         </div>
+
+        <WatermarkShare
+          v-if="pcStore.hostRoomCodePc"
+          :room-code="pcStore.hostRoomCodePc"
+        />
 
         <!-- Stop button -->
         <Button variant="destructive" class="w-full" @click="showStopDialog = true">
