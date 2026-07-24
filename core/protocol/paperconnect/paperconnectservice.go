@@ -818,7 +818,6 @@ func (s *PaperConnectService) pcGuestHeartbeatLoop(clientId string, playerName s
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-
 	consecutiveFailures := 0
 	const maxFailures = 3
 
