@@ -8,6 +8,11 @@ export interface MinecraftUser {
     "avatar_png": string;
 }
 
+export interface NatayarkLoginResult {
+    "user": NatayarkUser | null;
+    "access_token": string;
+}
+
 export interface NatayarkUser {
     "id": number;
     "username": string;

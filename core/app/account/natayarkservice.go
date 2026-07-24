@@ -8,9 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -34,6 +32,11 @@ type NatayarkUser struct {
 	RegTime   string `json:"regtime"`
 }
 
+type NatayarkLoginResult struct {
+	User        *NatayarkUser `json:"user"`
+	AccessToken string        `json:"access_token"`
+}
+
 type natayarkAPIResponse struct {
 	Code int          `json:"code"`
 	Msg  string       `json:"msg"`
@@ -55,70 +58,7 @@ func NewNatayarkService(clientID, clientSecret string) *NatayarkService {
 	}
 }
 
-func (s *NatayarkService) sessionFilePath() string {
-	dir, _ := os.UserConfigDir()
-	return filepath.Join(dir, "GravityCone", "natayark_session.json")
-}
-
-type natayarkSession struct {
-	AccessToken string        `json:"access_token"`
-	User        *NatayarkUser `json:"user"`
-}
-
-func (s *NatayarkService) saveSession() {
-	path := s.sessionFilePath()
-	os.MkdirAll(filepath.Dir(path), 0700)
-	data := natayarkSession{AccessToken: s.accessToken, User: s.User}
-	b, _ := json.Marshal(data)
-	os.WriteFile(path, b, 0600)
-}
-
-func (s *NatayarkService) loadSession() error {
-	path := s.sessionFilePath()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	var data natayarkSession
-	if err := json.Unmarshal(b, &data); err != nil {
-		return err
-	}
-	if data.AccessToken != "" && data.User != nil {
-		s.accessToken = data.AccessToken
-		s.User = data.User
-	}
-	return nil
-}
-
-// RestoreSession is called at startup to reload the persisted session.
-func (s *NatayarkService) RestoreSession() error {
-	if err := s.loadSession(); err != nil {
-		return err
-	}
-	// Validate the saved token by fetching fresh user data.
-	if s.accessToken != "" {
-		user, err := s.fetchUserData(s.accessToken)
-		if err != nil {
-			// Token is invalid/expired — clear session.
-			s.accessToken = ""
-			s.User = nil
-			s.clearSession()
-			return nil
-		}
-		s.User = user
-		s.saveSession()
-	}
-	return nil
-}
-
-func (s *NatayarkService) clearSession() {
-	os.Remove(s.sessionFilePath())
-}
-
-func (s *NatayarkService) StartLogin() (*NatayarkUser, error) {
+func (s *NatayarkService) StartLogin() (*NatayarkLoginResult, error) {
 	if s.clientID == "" || s.clientSecret == "" {
 		return nil, fmt.Errorf("Naids OAuth2 credentials not configured")
 	}
@@ -170,8 +110,7 @@ func (s *NatayarkService) StartLogin() (*NatayarkUser, error) {
 			return nil, fmt.Errorf("failed to fetch user data: %w", err)
 		}
 		s.User = user
-		s.saveSession()
-		return user, nil
+		return &NatayarkLoginResult{User: user, AccessToken: token}, nil
 	case <-time.After(5 * time.Minute):
 		srv.Shutdown(context.Background())
 		return nil, fmt.Errorf("login timed out after 5 minutes")
@@ -182,10 +121,23 @@ func (s *NatayarkService) GetCurrentUser() *NatayarkUser {
 	return s.User
 }
 
+// RestoreSession validates the given access token and restores the in-memory session.
+func (s *NatayarkService) RestoreSession(token string) (*NatayarkUser, error) {
+	if token == "" {
+		return nil, nil
+	}
+	user, err := s.fetchUserData(token)
+	if err != nil {
+		return nil, err
+	}
+	s.accessToken = token
+	s.User = user
+	return user, nil
+}
+
 func (s *NatayarkService) Logout() {
 	s.accessToken = ""
 	s.User = nil
-	s.clearSession()
 }
 
 func (s *NatayarkService) exchangeCode(code string, redirectURI string) (string, error) {

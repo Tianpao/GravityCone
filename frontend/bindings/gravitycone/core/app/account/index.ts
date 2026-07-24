@@ -10,5 +10,6 @@ export {
 
 export type {
     MinecraftUser,
+    NatayarkLoginResult,
     NatayarkUser
 } from "./models.js";

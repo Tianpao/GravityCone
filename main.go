@@ -160,9 +160,6 @@ func main() {
 		URL:              "/",
 	})
 
-	if err := natayarkSvc.RestoreSession(); err != nil {
-		slog.Warn("failed to restore session", "error", err)
-	}
 	if err := minecraftSvc.RestoreSession(); err != nil {
 		slog.Warn("failed to restore Minecraft session", "error", err)
 	}
