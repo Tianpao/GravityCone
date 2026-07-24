@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"net"
 	"strconv"
@@ -374,7 +373,6 @@ func (s *PaperConnectService) pcHostRakNetAcceptLoop(ctx context.Context) {
 			continue
 		}
 
-		slog.Info("RakNet game connection accepted", "remote", rkConn.RemoteAddr())
 		select {
 		case s.hostSessions <- struct{}{}:
 			id := sessionID.Add(1)
@@ -394,7 +392,6 @@ func (s *PaperConnectService) pcHostRakNetAcceptLoop(ctx context.Context) {
 
 func (s *PaperConnectService) pcHostSession(ctx context.Context, log *slog.Logger, rkConn *raknet.Conn) {
 	defer rkConn.Close()
-	log.Info("tenant proxy connected", "remote", rkConn.RemoteAddr())
 
 	nnConn, err := dialLocalNetherNet(ctx)
 	if err != nil {
@@ -404,7 +401,6 @@ func (s *PaperConnectService) pcHostSession(ctx context.Context, log *slog.Logge
 		return
 	}
 	defer nnConn.Close()
-	log.Info("connected to local Bedrock world", "latency", nnConn.Latency())
 
 	proxyPackets(ctx, log, nnConn, rkConn)
 }
@@ -417,11 +413,9 @@ func (s *PaperConnectService) pcHostServerLoop() {
 			case <-s.hostStopCh:
 				return
 			default:
-				log.Printf("[PCHostServer] Accept error: %v", err)
 				continue
 			}
 		}
-		log.Printf("[PCHostServer] Accepted connection from %s", conn.RemoteAddr())
 		go s.pcHandleHostConnection(conn)
 	}
 }
@@ -634,7 +628,6 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	protocol := parsed.Protocol
 	serverPort := parsed.TCPPort
 	gamePort := parsed.GamePort
-	slog.Info("hostname parsed", "hostname", hostname, "protocol", protocol, "tcpPort", serverPort, "gamePort", gamePort)
 
 	if s.joinCancelled.Load() {
 		manager.Stop()
@@ -825,7 +818,6 @@ func (s *PaperConnectService) pcGuestHeartbeatLoop(clientId string, playerName s
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	log.Printf("[PCHeartbeat] started")
 
 	consecutiveFailures := 0
 	const maxFailures = 3
@@ -838,14 +830,12 @@ func (s *PaperConnectService) pcGuestHeartbeatLoop(clientId string, playerName s
 			s.guestMu.Unlock()
 
 			if !running {
-				log.Printf("[PCHeartbeat] exiting: not running")
 				return
 			}
 
 			conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", hostIP, tcpPort), 5*time.Second)
 			if err != nil {
 				consecutiveFailures++
-				log.Printf("[PCHeartbeat] dial failed (%d/%d): %v", consecutiveFailures, maxFailures, err)
 				if consecutiveFailures >= maxFailures {
 					s.pcAutoDisconnect("房主已关闭房间")
 					return
@@ -860,7 +850,6 @@ func (s *PaperConnectService) pcGuestHeartbeatLoop(clientId string, playerName s
 			if err := WritePCRequest(conn, PCPlayer, req); err != nil {
 				conn.Close()
 				consecutiveFailures++
-				log.Printf("[PCHeartbeat] write failed (%d/%d): %v", consecutiveFailures, maxFailures, err)
 				if consecutiveFailures >= maxFailures {
 					s.pcAutoDisconnect("房主已关闭房间")
 					return
@@ -875,7 +864,6 @@ func (s *PaperConnectService) pcGuestHeartbeatLoop(clientId string, playerName s
 
 			if err != nil {
 				consecutiveFailures++
-				log.Printf("[PCHeartbeat] read failed (%d/%d): %v", consecutiveFailures, maxFailures, err)
 				if consecutiveFailures >= maxFailures {
 					s.pcAutoDisconnect("房主已关闭房间")
 					return
@@ -894,7 +882,6 @@ func (s *PaperConnectService) pcGuestHeartbeatLoop(clientId string, playerName s
 			}
 
 		case <-s.guestStopCh:
-			log.Printf("[PCHeartbeat] stopCh, exiting")
 			return
 		}
 	}
@@ -1229,7 +1216,6 @@ func (s *PaperConnectService) pcGuestSetupError(manager *easytier.EasyTierManage
 }
 
 func (s *PaperConnectService) pcAutoDisconnect(reason string) {
-	log.Printf("[PCAutoDisconnect] reason=%q", reason)
 	s.guestMu.Lock()
 	s.guestRunning = false
 	s.guestHeartbeating = false

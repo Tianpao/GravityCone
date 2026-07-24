@@ -44,8 +44,7 @@ func proxyTCPPackets(parentCtx context.Context, log *slog.Logger, nnConn *nether
 				}
 				return
 			}
-			n := nnPkCount.Add(1)
-			log.Info("nn→tcp", "packet_size", len(pk), "total", n, "first_bytes", fmt.Sprintf("%x", truncateBytes(pk, 20)))
+			nnPkCount.Add(1)
 			if err := writeTCPFrame(tcpConn, pk); err != nil {
 				if !isClosedErr(err) && ctx.Err() == nil {
 					log.Error("tcp write error", "err", err, "nn_packets", nnPkCount.Load())
@@ -66,8 +65,7 @@ func proxyTCPPackets(parentCtx context.Context, log *slog.Logger, nnConn *nether
 				}
 				return
 			}
-			n := tcpPkCount.Add(1)
-			log.Info("tcp→nn", "packet_size", len(pk), "total", n, "first_bytes", fmt.Sprintf("%x", truncateBytes(pk, 20)))
+			tcpPkCount.Add(1)
 			if _, err := nnConn.Write(pk); err != nil {
 				if !isClosedErr(err) && ctx.Err() == nil {
 					log.Error("nethernet write error", "err", err, "tcp_packets", tcpPkCount.Load())
@@ -77,21 +75,7 @@ func proxyTCPPackets(parentCtx context.Context, log *slog.Logger, nnConn *nether
 		}
 	}()
 
-	go func() {
-		ticker := time.NewTicker(3 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				log.Info("proxy status", "nn→tcp", nnPkCount.Load(), "tcp→nn", tcpPkCount.Load())
-			}
-		}
-	}()
-
 	<-ctx.Done()
-	log.Info("proxy session closed")
 }
 
 // proxyPackets forwards packets between a NetherNet connection and a RakNet
@@ -119,8 +103,7 @@ func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet
 				}
 				return
 			}
-			n := nnPkCount.Add(1)
-			log.Info("nn→rk", "packet_size", len(pk), "total", n, "first_bytes", fmt.Sprintf("%x", truncateBytes(pk, 20)))
+			nnPkCount.Add(1)
 			if err := writeTunnelPacket(rkConn, pk); err != nil {
 				if !isClosedErr(err) && ctx.Err() == nil {
 					log.Error("raknet write error", "err", err, "nn_packets", nnPkCount.Load())
@@ -141,8 +124,7 @@ func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet
 				}
 				return
 			}
-			n := rkPkCount.Add(1)
-			log.Info("rk→nn", "packet_size", len(pk), "total", n, "first_bytes", fmt.Sprintf("%x", truncateBytes(pk, 20)))
+			rkPkCount.Add(1)
 			if _, err := nnConn.Write(pk); err != nil {
 				if !isClosedErr(err) && ctx.Err() == nil {
 					log.Error("nethernet write error", "err", err, "rk_packets", rkPkCount.Load())
@@ -152,21 +134,7 @@ func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet
 		}
 	}()
 
-	go func() {
-		ticker := time.NewTicker(3 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				log.Info("proxy status", "nn→rk", nnPkCount.Load(), "rk→nn", rkPkCount.Load())
-			}
-		}
-	}()
-
 	<-ctx.Done()
-	log.Info("proxy session closed")
 }
 
 func writeTCPFrame(conn net.Conn, data []byte) error {
@@ -211,8 +179,6 @@ func dialLocalNetherNet(ctx context.Context) (*nethernet.Conn, error) {
 	}
 	defer l.Close()
 
-	slog.Info("discovering local Bedrock world on 127.0.0.1:7551...")
-
 	var targetID uint64
 	found := false
 	for i := 0; i < 60; i++ {
@@ -221,13 +187,7 @@ func dialLocalNetherNet(ctx context.Context) (*nethernet.Conn, error) {
 			return nil, ctx.Err()
 		default:
 		}
-		for id, data := range l.Responses() {
-			var sd discovery.ServerData
-			if err := sd.UnmarshalBinary(data); err != nil {
-				slog.Info("found server (unparseable data)", "network_id", id)
-			} else {
-				slog.Info("found NetherNet server", "network_id", id, "name", sd.ServerName, "level", sd.LevelName)
-			}
+		for id := range l.Responses() {
 			targetID = id
 			found = true
 			break
@@ -264,11 +224,4 @@ func isClosedErr(err error) bool {
 		return false
 	}
 	return errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF)
-}
-
-func truncateBytes(b []byte, n int) []byte {
-	if len(b) <= n {
-		return b
-	}
-	return b[:n]
 }
