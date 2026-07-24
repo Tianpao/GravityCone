@@ -273,7 +273,10 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	go s.pcHostPlayerCleanupLoop()
 
 	slog.Info("PaperConnect room created", "protocol", protocol, "gamePort", gamePort, "tcpPort", tcpPort, "hostname", hostname)
-	return s.pcBuildRoomStatus(virtualIP), nil
+
+	status := s.pcBuildRoomStatus(virtualIP)
+	s.eventEmitter.Emit("paperconnect.room.info", status)
+	return status, nil
 }
 
 func (s *PaperConnectService) StopRoom() error {
@@ -513,6 +516,7 @@ func (s *PaperConnectService) pcHandlePlayer(conn net.Conn, rawJson []byte) {
 			ClientId:   req.ClientId,
 			IsRoomHost: false,
 		})
+		s.eventEmitter.Emit("paperconnect.room.info", s.pcBuildRoomStatus(""))
 	}
 
 	resp := PCPlayerResponse{
@@ -530,12 +534,16 @@ func (s *PaperConnectService) pcHostPlayerCleanupLoop() {
 		select {
 		case <-ticker.C:
 			s.hostPlayerMu.Lock()
+			prevCount := len(s.hostPlayers)
 			now := time.Now()
 			for name, p := range s.hostPlayers {
 				if !p.IsRoomHost && now.Sub(p.lastHeartbeat) > pcPlayerTimeout {
 					s.eventEmitter.Emit("paperconnect.room.player_left", *p)
 					delete(s.hostPlayers, name)
 				}
+			}
+			if len(s.hostPlayers) < prevCount {
+				s.eventEmitter.Emit("paperconnect.room.info", s.pcBuildRoomStatus(""))
 			}
 			s.hostPlayerMu.Unlock()
 		case <-s.hostStopCh:
@@ -741,7 +749,9 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	go s.pcGuestHeartbeatLoop(clientId, playerName, "127.0.0.1", tcpLocalPort)
 	go s.pcGuestSetupConnection(manager, playerName, protocol, rakLocalPort)
 
-	return s.pcBuildConnectionStatus(), nil
+	status := s.pcBuildConnectionStatus()
+	s.eventEmitter.Emit("paperconnect.room.info", status)
+	return status, nil
 }
 
 func (s *PaperConnectService) pcGuestRegister(hostIP string, tcpPort uint16, clientId string, playerName string) {
@@ -880,6 +890,7 @@ func (s *PaperConnectService) pcGuestHeartbeatLoop(clientId string, playerName s
 				s.guestMu.Lock()
 				s.guestPlayers = resp.Players
 				s.guestMu.Unlock()
+				s.eventEmitter.Emit("paperconnect.room.info", s.pcBuildConnectionStatus())
 			}
 
 		case <-s.guestStopCh:

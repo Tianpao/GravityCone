@@ -21,6 +21,7 @@ interface PcState {
   pcJoining: boolean
   pcGuestError: string
   pcPortBusyMessage: string
+  _hostUnsubscribers: EventUnsubscriber[]
   _guestUnsubscribers: EventUnsubscriber[]
 }
 
@@ -35,6 +36,7 @@ export const usePaperConnectStore = defineStore('paperconnect', {
     pcJoining: false,
     pcGuestError: '',
     pcPortBusyMessage: '',
+    _hostUnsubscribers: [],
     _guestUnsubscribers: [],
   }),
 
@@ -48,11 +50,13 @@ export const usePaperConnectStore = defineStore('paperconnect', {
     async pcCreateRoom(playerName: string) {
       this.pcCreating = true
       this.pcHostError = ''
+      this.startHostEvents()
       try {
         const result = await CreateRoom(playerName, '')
         this.pcRoomStatus = result
         return result
       } catch (e: any) {
+        this.stopHostEvents()
         this.pcHostError = e?.message || String(e)
         throw e
       } finally {
@@ -61,6 +65,7 @@ export const usePaperConnectStore = defineStore('paperconnect', {
     },
 
     async pcStopRoom() {
+      this.stopHostEvents()
       try {
         await StopRoom()
       } catch (e: any) {
@@ -119,6 +124,25 @@ export const usePaperConnectStore = defineStore('paperconnect', {
       }
     },
 
+    startHostEvents() {
+      this.stopHostEvents()
+
+      const unsubRoomInfo = onPaperConnectEvent('paperconnect.room.info', (data) => {
+        if (this.pcRoomStatus) {
+          this.pcRoomStatus = data as unknown as PaperConnectRoomStatus
+        }
+      })
+
+      this._hostUnsubscribers = [unsubRoomInfo]
+    },
+
+    stopHostEvents() {
+      for (const unsubscribe of this._hostUnsubscribers) {
+        try { unsubscribe() } catch { /* ignore */ }
+      }
+      this._hostUnsubscribers = []
+    },
+
     startGuestEvents() {
       this.stopGuestEvents()
 
@@ -141,8 +165,13 @@ export const usePaperConnectStore = defineStore('paperconnect', {
           }
         }
       })
+      const unsubRoomInfo = onPaperConnectEvent('paperconnect.room.info', (data) => {
+        if (this.pcConnectionStatus) {
+          this.pcConnectionStatus = data as unknown as PaperConnectConnectionStatus
+        }
+      })
 
-      this._guestUnsubscribers = [unsubPortBusy, unsubReady, unsubError, unsubDisconnected]
+      this._guestUnsubscribers = [unsubPortBusy, unsubReady, unsubError, unsubDisconnected, unsubRoomInfo]
     },
 
     stopGuestEvents() {
@@ -165,6 +194,7 @@ export const usePaperConnectStore = defineStore('paperconnect', {
     },
 
     resetPc() {
+      this.stopHostEvents()
       this.stopGuestEvents()
       this.$reset()
     },
