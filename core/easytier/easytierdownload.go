@@ -45,6 +45,11 @@ type DownloadProgressData struct {
 	Speed     int64  `json:"speed"`      // bytes/sec (download step only)
 }
 
+// DownloadErrorData is emitted when the EasyTier download fails.
+type DownloadErrorData struct {
+	Error string `json:"error"`
+}
+
 // easyTierPlatform holds the OS and arch segments used in the download URL.
 type easyTierPlatform struct {
 	sys  string // "windows", "macos", "linux", "freebsd"
@@ -96,9 +101,12 @@ func SetEnsureEasyTierEmitter(emitter utils.EventEmitter) {
 }
 
 // EnsureEasyTier checks if easytier-core and easytier-cli exist locally,
-// and downloads them if missing. Emits "download.progress" events via the
-// configured emitter. Call this at startup before any EasyTier operations.
+// and downloads them if missing. Emits "download.progress" and "download.error"
+// events via the configured emitter. Call this at startup before any EasyTier operations.
 func EnsureEasyTier() error {
+	ensureMu.Lock()
+	defer ensureMu.Unlock()
+
 	corePath, err := resolveEasyTierBinary("easytier-core")
 	if err == nil {
 		cliPath, err2 := resolveEasyTierBinary("easytier-cli")
@@ -111,15 +119,23 @@ func EnsureEasyTier() error {
 	slog.Info("EasyTier binaries not found, starting auto-download")
 	_, err = downloadEasyTierBinary("easytier-core")
 	if err != nil {
-		return fmt.Errorf("auto-download easytier-core failed: %w", err)
+		return emitDownloadError(fmt.Errorf("auto-download easytier-core failed: %w", err))
 	}
 	_, err = downloadEasyTierBinary("easytier-cli")
 	if err != nil {
-		return fmt.Errorf("auto-download easytier-cli failed: %w", err)
+		return emitDownloadError(fmt.Errorf("auto-download easytier-cli failed: %w", err))
 	}
 	slog.Info("EasyTier binaries ready")
 	return nil
 }
+
+func emitDownloadError(err error) error {
+	ensureEasyTierEmitter.Emit("download.error", DownloadErrorData{Error: err.Error()})
+	return err
+}
+
+// ensureMu serializes full EnsureEasyTier calls, including retries.
+var ensureMu sync.Mutex
 
 // downloadMu serializes download+extract to prevent concurrent goroutines from
 // downloading the same zip simultaneously.

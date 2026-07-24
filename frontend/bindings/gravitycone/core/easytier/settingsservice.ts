@@ -9,10 +9,6 @@ export function GetCustomPeers(): $CancellablePromise<string[] | null> {
     return $Call.ByID(1307178693);
 }
 
-export function GetPublicPeers(): $CancellablePromise<string[] | null> {
-    return $Call.ByID(1351421367);
-}
-
 export function SetCustomPeers(peers: string[] | null): $CancellablePromise<void> {
     return $Call.ByID(91832177, peers);
 }

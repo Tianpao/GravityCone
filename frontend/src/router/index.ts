@@ -29,6 +29,16 @@ const router = createRouter({
       name: "joined-room",
       component: () => import("@/views/JoinedRoomView.vue"),
     },
+    {
+      path: "/pc-host-room",
+      name: "pc-host-room",
+      component: () => import("@/views/PcHostRoomView.vue"),
+    },
+    {
+      path: "/pc-joined-room",
+      name: "pc-joined-room",
+      component: () => import("@/views/PcJoinedRoomView.vue"),
+    },
   ],
 });
 

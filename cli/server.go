@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"gravitycone/core/easytier"
 	"gravitycone/core/minecraft"
+	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
 	"gravitycone/core/utils"
 	"log/slog"
@@ -46,12 +47,6 @@ func Run(peers []string, vendorPrefix string, motd string) {
 	// Redirect EasyTier logs to file
 	easytier.SetEasyTierLogOutput(etLogPath)
 
-	// Override EasyTier peers if provided
-	if len(peers) > 0 {
-		easytier.SetPublicPeers(peers)
-		slog.Info("Using custom peers", "peers", peers)
-	}
-
 	// Set up writer and emitter early so download progress can be reported
 	writer := NewStdioWriter()
 	emitter := NewStdioEventEmitter(writer)
@@ -66,9 +61,15 @@ func Run(peers []string, vendorPrefix string, motd string) {
 	stunSvc := &easytier.StunService{}
 	lanSvc := minecraft.NewLanService(emitter)
 	scaffoldingSvc := scaffolding.NewScaffoldingService(emitter)
+	paperConnectSvc := paperconnect.NewPaperConnectService(emitter)
+	if len(peers) > 0 {
+		scaffolding.ConfigureCLIPeers(scaffoldingSvc, peers)
+		paperconnect.ConfigureCLIPeers(paperConnectSvc, peers)
+		slog.Info("Using CLI peer override", "peers", peers)
+	}
 
 	shutdownCh := make(chan struct{})
-	handler := NewHandler(stunSvc, lanSvc, scaffoldingSvc, writer, shutdownCh, vendorPrefix, motd)
+	handler := NewHandler(stunSvc, lanSvc, scaffoldingSvc, paperConnectSvc, writer, shutdownCh, vendorPrefix, motd)
 
 	// Open stdio log file
 	stdioLog, err := os.OpenFile(stdioLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
@@ -132,6 +133,7 @@ func Run(peers []string, vendorPrefix string, motd string) {
 
 	// Cleanup
 	scaffoldingSvc.Cleanup()
+	paperConnectSvc.Cleanup()
 	lanSvc.StopDiscovery()
 }
 

@@ -25,7 +25,7 @@ export function EncodeRoomCode(sourcePath: string, roomCode: string): $Cancellab
 }
 
 /**
- * ListDemoImages returns absolute paths to images in the images directory.
+ * ListDemoImages returns resource identifiers for embedded demo images.
  */
 export function ListDemoImages(): $CancellablePromise<string[] | null> {
     return $Call.ByID(3334707414);

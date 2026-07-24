@@ -20,6 +20,11 @@ import (
 // BaseVendor is the default vendor suffix. Call MakeVendor to append optional prefixes.
 const BaseVendor = "GVC v0.1.0, EasyTier " + easytier.EasyTierVersion
 
+var scaffoldingBuiltinPeers = []string{
+	"https://etnode.zkitefly.eu.org/node1",
+	"wss://center.node.1tmc.top",
+}
+
 func MakeVendor(prefixes ...string) string {
 	parts := make([]string, 0, len(prefixes)+1)
 	for _, p := range prefixes {
@@ -85,6 +90,7 @@ func InitScaffoldingEmitter(svc *ScaffoldingService, emitter utils.EventEmitter)
 type ScaffoldingService struct {
 	eventEmitter   utils.EventEmitter
 	joinProgressCb func(string) // set by CLI mode for progress notifications
+	peerConfig     easytier.PeerConfig
 
 	// HOST state
 	hostManager    *easytier.EasyTierManager
@@ -187,6 +193,7 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 		IsHost:        true,
 		TCPPort:       tcpPort,
 		MCPort:        mcPort,
+		Peers:         s.resolvePeers(),
 	})
 	if err != nil {
 		listener.Close()
@@ -583,6 +590,7 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 		NetworkName:   rc.EasyTierNetworkName(),
 		NetworkSecret: rc.EasyTierNetworkSecret(),
 		IsHost:        false,
+		Peers:         s.resolvePeers(),
 	}); err != nil {
 		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
 	}
@@ -1118,7 +1126,21 @@ func (s *ScaffoldingService) Cleanup() {
 	s.LeaveRoom()
 }
 
-// AddPeers appends peer addresses so they are included when EasyTier starts.
+// ConfigureSettingsPeers provides GUI custom peers for future EasyTier starts.
+func ConfigureSettingsPeers(s *ScaffoldingService, settingsSvc *easytier.SettingsService) {
+	s.peerConfig.SetSettingsService(settingsSvc)
+}
+
+// ConfigureCLIPeers replaces the built-in peers for CLI starts.
+func ConfigureCLIPeers(s *ScaffoldingService, peers []string) {
+	s.peerConfig.SetCLIOverride(peers)
+}
+
+func (s *ScaffoldingService) resolvePeers() []string {
+	return s.peerConfig.Resolve(scaffoldingBuiltinPeers)
+}
+
+// AddPeers appends peer addresses for future EasyTier starts.
 func (s *ScaffoldingService) AddPeers(addrs []string) {
-	easytier.AddPublicPeers(addrs)
+	s.peerConfig.Add(addrs)
 }

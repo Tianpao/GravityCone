@@ -8,6 +8,7 @@ import (
 	"gravitycone/core/app/account"
 	"gravitycone/core/easytier"
 	"gravitycone/core/minecraft"
+	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
 	"gravitycone/core/utils"
 	"log/slog"
@@ -38,6 +39,7 @@ var assets embed.FS
 
 func init() {
 	application.RegisterEvent[easytier.DownloadProgressData]("download.progress")
+	application.RegisterEvent[easytier.DownloadErrorData]("download.error")
 	application.RegisterEvent[scaffolding.PlayerInfo]("room.player_joined")
 	application.RegisterEvent[scaffolding.PlayerInfo]("room.player_left")
 	application.RegisterEvent[map[string]string]("room.closed")
@@ -45,6 +47,9 @@ func init() {
 	application.RegisterEvent[[]scaffolding.PlayerInfo]("room.guest_player_list_updated")
 	application.RegisterEvent[minecraft.LanServer]("lan.server_found")
 	application.RegisterEvent[map[string]interface{}]("lan.server_lost")
+	application.RegisterEvent[map[string]string]("paperconnect.connection.port_busy")
+	application.RegisterEvent[map[string]string]("paperconnect.connection.ready")
+	application.RegisterEvent[map[string]string]("paperconnect.connection.error")
 }
 
 func main() {
@@ -95,19 +100,25 @@ func main() {
 	natayarkSvc := account.NewNatayarkService(naidsID, naidsSecret)
 	minecraftSvc := account.NewMinecraftService(clientID, clientSecret)
 	lanSvc := minecraft.NewLanService(nil)
-	scaffoldingSvc := scaffolding.NewScaffoldingService(nil) // nil = NilEventEmitter; Wails frontend polls via method calls
+	scaffoldingSvc := scaffolding.NewScaffoldingService(nil)
+	paperConnectSvc := paperconnect.NewPaperConnectService(nil)
+	settingsSvc := &easytier.SettingsService{}
+	scaffolding.ConfigureSettingsPeers(scaffoldingSvc, settingsSvc)
+	paperconnect.ConfigureSettingsPeers(paperConnectSvc, settingsSvc)
 
 	app := application.New(application.Options{
 		Name:        "GravityCone",
 		Description: "A demo of using raw HTML & CSS",
 		Services: []application.Service{
 			application.NewService(&easytier.StunService{}),
+			application.NewService(&easytier.EasyTierDownloadService{}),
 			application.NewService(lanSvc),
 			application.NewService(natayarkSvc),
 			application.NewService(minecraftSvc),
 			application.NewService(scaffoldingSvc),
+			application.NewService(paperConnectSvc),
 			application.NewService(&app.WatermarkService{}),
-			application.NewService(&easytier.SettingsService{}),
+			application.NewService(settingsSvc),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -121,6 +132,7 @@ func main() {
 	wailsEmitter := &wailsEventEmitter{app: app}
 	lanSvc.SetEventEmitter(wailsEmitter)
 	scaffolding.InitScaffoldingEmitter(scaffoldingSvc, wailsEmitter)
+	paperconnect.InitPaperConnectEmitter(paperConnectSvc, wailsEmitter)
 	easytier.SetEnsureEasyTierEmitter(wailsEmitter)
 
 	// Ensure EasyTier binaries are available (auto-download if missing).
@@ -157,6 +169,7 @@ func main() {
 
 	app.OnShutdown(func() {
 		scaffoldingSvc.Cleanup()
+		paperConnectSvc.Cleanup()
 	})
 
 	err := app.Run()

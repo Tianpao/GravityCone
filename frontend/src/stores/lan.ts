@@ -21,8 +21,8 @@ export const useLanStore = defineStore('lan', {
         await StartDiscovery()
       } catch (e: any) {
         this.error = e?.message || String(e)
+        this.discovering = false
       }
-      this.discovering = false
     },
     async stopDiscovery() {
       this.stopEvents()

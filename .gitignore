@@ -15,9 +15,11 @@ bin/easytier/
 ./easytier/
 CLAUDE.md
 .mcp.json
-images/
+./images/
 .env
 
 *.exe
 *.zip
+
+config.toml
 review.md
