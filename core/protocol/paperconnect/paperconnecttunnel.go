@@ -119,12 +119,12 @@ func (r *tunnelReader) ReadPacket() ([]byte, error) {
 				continue
 			}
 			delete(r.chunks, messageID)
-				for i, id := range r.ids {
-					if id == messageID {
-						r.ids = append(r.ids[:i], r.ids[i+1:]...)
-						break
-					}
+			for i, id := range r.ids {
+				if id == messageID {
+					r.ids = append(r.ids[:i], r.ids[i+1:]...)
+					break
 				}
+			}
 			return bytes.Join(parts, nil), nil
 		default:
 			return nil, fmt.Errorf("unknown tunnel frame type %d", frame[0])
