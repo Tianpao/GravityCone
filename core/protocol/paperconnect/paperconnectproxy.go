@@ -19,6 +19,8 @@ import (
 
 const maxHostSessions = 20
 
+const tcpReadTimeout = 30 * time.Second
+
 // proxyTCPPackets proxies packets between a local NetherNet connection and a
 // TCP tunnel to the remote peer. Each packet is prefixed with a 4-byte
 // big-endian length header.
@@ -148,18 +150,20 @@ func writeTCPFrame(conn net.Conn, data []byte) error {
 }
 
 func readTCPFrame(conn net.Conn) ([]byte, error) {
+	_ = conn.SetReadDeadline(time.Now().Add(tcpReadTimeout))
 	header := make([]byte, 4)
 	if _, err := io.ReadFull(conn, header); err != nil {
 		return nil, err
 	}
 	length := binary.BigEndian.Uint32(header)
-	if length > 16*1024*1024 {
+	if length > 1*1024*1024 {
 		return nil, fmt.Errorf("frame too large: %d", length)
 	}
 	data := make([]byte, length)
 	if _, err := io.ReadFull(conn, data); err != nil {
 		return nil, err
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 	return data, nil
 }
 

@@ -14,6 +14,8 @@ const rakNetMTU = 1200
 
 const tunnelChunkSize = 900
 
+const maxTunnelChunks = 1024
+
 const (
 	tunnelPacket byte = iota + 1
 	tunnelChunk
@@ -22,12 +24,13 @@ const (
 type tunnelReader struct {
 	conn   *raknet.Conn
 	chunks map[uint32][][]byte
+	ids    []uint32 // insertion-order for eviction
 }
 
 var tunnelMessageID atomic.Uint32
 
 func newTunnelReader(conn *raknet.Conn) *tunnelReader {
-	return &tunnelReader{conn: conn, chunks: make(map[uint32][][]byte)}
+	return &tunnelReader{conn: conn, chunks: make(map[uint32][][]byte), ids: make([]uint32, 0)}
 }
 
 func writeTunnelPacket(conn *raknet.Conn, packet []byte) error {
@@ -92,8 +95,14 @@ func (r *tunnelReader) ReadPacket() ([]byte, error) {
 			}
 			parts := r.chunks[messageID]
 			if parts == nil {
+				if len(r.chunks) >= maxTunnelChunks {
+					evictID := r.ids[0]
+					r.ids = r.ids[1:]
+					delete(r.chunks, evictID)
+				}
 				parts = make([][]byte, count)
 				r.chunks[messageID] = parts
+				r.ids = append(r.ids, messageID)
 			}
 			if len(parts) != count {
 				return nil, fmt.Errorf("inconsistent tunnel chunk count")
@@ -110,6 +119,12 @@ func (r *tunnelReader) ReadPacket() ([]byte, error) {
 				continue
 			}
 			delete(r.chunks, messageID)
+				for i, id := range r.ids {
+					if id == messageID {
+						r.ids = append(r.ids[:i], r.ids[i+1:]...)
+						break
+					}
+				}
 			return bytes.Join(parts, nil), nil
 		default:
 			return nil, fmt.Errorf("unknown tunnel frame type %d", frame[0])

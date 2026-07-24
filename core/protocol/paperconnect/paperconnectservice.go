@@ -127,7 +127,18 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 		s.hostMu.Unlock()
 		return nil, fmt.Errorf("已有房间在运行")
 	}
+	s.hostRunning = true
 	s.hostMu.Unlock()
+
+	// Ensure hostRunning is reset on any early return from this function.
+	var setupFailed bool
+	defer func() {
+		if setupFailed {
+			s.hostMu.Lock()
+			s.hostRunning = false
+			s.hostMu.Unlock()
+		}
+	}()
 
 	// Detect protocol: scan both NetherNet and RakNet LAN lists.
 	ctx, cancelScan := context.WithTimeout(context.Background(), 8*time.Second)
@@ -153,6 +164,7 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	rkFound = rakNetInfo != nil
 
 	if !nnFound && !rkFound {
+		setupFailed = true
 		return nil, fmt.Errorf("未检测到本地Minecraft基岩版房间，请先在Minecraft中开启局域网游戏")
 	}
 
@@ -167,24 +179,28 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	// Generate room code
 	rc, err := GeneratePaperConnectRoomCode()
 	if err != nil {
+		setupFailed = true
 		return nil, fmt.Errorf("生成房间代码失败: %w", err)
 	}
 
 	// Allocate TCP port for PaperConnect control protocol
 	tcpLn, err := net.Listen("tcp", ":0")
 	if err != nil {
+		setupFailed = true
 		return nil, fmt.Errorf("分配TCP端口失败: %w", err)
 	}
 	tcpPort := uint16(tcpLn.Addr().(*net.TCPAddr).Port)
 
 	if tcpPort <= 1024 || tcpPort > 65535 {
 		tcpLn.Close()
+		setupFailed = true
 		return nil, fmt.Errorf("分配的TCP端口 %d 不合法", tcpPort)
 	}
 
 	manager, err := easytier.NewEasyTierManager()
 	if err != nil {
 		tcpLn.Close()
+		setupFailed = true
 		return nil, err
 	}
 
@@ -202,6 +218,7 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 		}).Listen(":0")
 		if err != nil {
 			tcpLn.Close()
+			setupFailed = true
 			return nil, fmt.Errorf("启动RakNet监听失败: %w", err)
 		}
 		_, portStr, _ := net.SplitHostPort(rakLn.Addr().String())
@@ -225,6 +242,7 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 			rakLn.Close()
 		}
 		tcpLn.Close()
+		setupFailed = true
 		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
 	}
 
@@ -239,7 +257,6 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	s.roomCode = rc
 	s.hostPlayers = make(map[string]*PCPlayerEntry)
 	s.hostStopCh = make(chan struct{})
-	s.hostRunning = true
 	s.hostStopReason = ""
 	s.hostPlayerName = playerName
 	s.hostSessions = make(chan struct{}, maxHostSessions)
@@ -337,12 +354,12 @@ func (s *PaperConnectService) pcBuildRoomStatus(virtualIP string) *PaperConnectR
 	}
 	s.hostPlayerMu.Unlock()
 
+	s.hostMu.Lock()
 	code := ""
 	if s.roomCode != nil {
 		code = s.roomCode.Format()
 	}
-
-	return &PaperConnectRoomStatus{
+	status := &PaperConnectRoomStatus{
 		Code:        code,
 		GamePort:    int(s.hostGamePort),
 		SubProtocol: s.hostProtocol,
@@ -350,6 +367,9 @@ func (s *PaperConnectService) pcBuildRoomStatus(virtualIP string) *PaperConnectR
 		Players:     players,
 		Running:     s.hostRunning,
 	}
+	s.hostMu.Unlock()
+
+	return status
 }
 
 func (s *PaperConnectService) pcHostRakNetAcceptLoop(ctx context.Context) {
@@ -529,17 +549,22 @@ func (s *PaperConnectService) pcHostPlayerCleanupLoop() {
 		case <-ticker.C:
 			s.hostPlayerMu.Lock()
 			prevCount := len(s.hostPlayers)
+			var leftPlayers []PCPlayerEntry
 			now := time.Now()
 			for name, p := range s.hostPlayers {
 				if !p.IsRoomHost && now.Sub(p.lastHeartbeat) > pcPlayerTimeout {
-					s.eventEmitter.Emit("paperconnect.room.player_left", *p)
+					leftPlayers = append(leftPlayers, *p)
 					delete(s.hostPlayers, name)
 				}
 			}
-			if len(s.hostPlayers) < prevCount {
+			needInfo := len(s.hostPlayers) < prevCount
+			s.hostPlayerMu.Unlock()
+			for _, p := range leftPlayers {
+				s.eventEmitter.Emit("paperconnect.room.player_left", p)
+			}
+			if needInfo {
 				s.eventEmitter.Emit("paperconnect.room.info", s.pcBuildRoomStatus(""))
 			}
-			s.hostPlayerMu.Unlock()
 		case <-s.hostStopCh:
 			return
 		}
