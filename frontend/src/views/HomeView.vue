@@ -46,14 +46,8 @@ onMounted(() => {
       </div>
 
       <div class="flex flex-col items-center gap-4">
-        <template v-if="edition === 'java'">
-          <Button size="lg" class="text-lg px-8 py-6" @click="showCreateDialog = true">创建房间</Button>
-          <Button variant="outline" size="lg" class="text-lg px-8 py-6" @click="showJoinDialog = true">加入房间</Button>
-        </template>
-        <template v-else>
-          <Button size="lg" class="text-lg px-8 py-6" @click="showCreateDialog = true">创建房间</Button>
-          <Button variant="outline" size="lg" class="text-lg px-8 py-6" @click="showJoinDialog = true">加入房间</Button>
-        </template>
+        <Button size="lg" class="text-lg px-8 py-6" @click="showCreateDialog = true">创建房间</Button>
+        <Button variant="outline" size="lg" class="text-lg px-8 py-6" @click="showJoinDialog = true">加入房间</Button>
       </div>
 
       <div class="flex flex-col items-center gap-1 text-xs text-muted-foreground">

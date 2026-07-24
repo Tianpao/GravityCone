@@ -20,22 +20,6 @@ import (
 
 const hostVirtualIP = "10.144.144.1"
 
-var publicPeers = []string{
-	"https://etnode.zkitefly.eu.org/node1",
-}
-
-// SetPublicPeers replaces the default public peer list used when starting EasyTier.
-func SetPublicPeers(peers []string) {
-	if len(peers) > 0 {
-		publicPeers = peers
-	}
-}
-
-// AddPublicPeers appends peer addresses to the public peer list.
-func AddPublicPeers(peers []string) {
-	publicPeers = append(publicPeers, peers...)
-}
-
 // easytierLogOutput controls where easytier-core stdout/stderr is written.
 // Defaults to os.Stdout/os.Stderr. Override with SetEasyTierLogOutput.
 var (
@@ -131,6 +115,7 @@ type StartOptions struct {
 	MCPort             uint16   // HOST only: MC server port, used for whitelist
 	ConfigPath         string   // Path to TOML ACL config file (adds -c flag)
 	PortForwards       []string // Port forward entries (e.g. "tcp://0.0.0.0:12345/10.144.144.1:12345")
+	Peers              []string // Public peer addresses passed as -p arguments.
 	UpstreamCompatible bool     // Use the original PaperConnect EasyTier argument profile.
 }
 
@@ -156,7 +141,7 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 		"--console-log-level", "info",
 	}
 	if opts.UpstreamCompatible {
-		args = append(args, "--disable-p2p", "false")
+		args = append(args, "--no-tun", "--disable-p2p", "false")
 	} else {
 		args = append(args,
 			"--no-tun",
@@ -208,7 +193,7 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 		args = append(args, "--port-forward", pf)
 	}
 
-	for _, p := range publicPeers {
+	for _, p := range opts.Peers {
 		args = append(args, "-p", p)
 	}
 
@@ -427,9 +412,13 @@ func (m *EasyTierManager) RPCPortal() string {
 }
 
 func (m *EasyTierManager) AddPortForward(proto string, localAddr string, remoteAddr string) error {
+	rpcPortal := m.RPCPortal()
+	if rpcPortal == "" {
+		return fmt.Errorf("easytier-core 未运行，无法添加端口转发")
+	}
 	for attempt := 0; attempt < 3; attempt++ {
 		out, err := m.runCli(
-			"-p", m.rpcPortal,
+			"-p", rpcPortal,
 			"port-forward", "add",
 			proto, localAddr, remoteAddr,
 		)

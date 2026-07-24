@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { useClipboard } from '@vueuse/core'
 import { useRouter } from 'vue-router'
 import { usePaperConnectStore } from '@/stores/paperconnect'
+import { useWatermarkStore } from '@/stores/watermark'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { StopCircleOutline, CopyOutline, CheckmarkOutline } from '@vicons/ionicons5'
+import WatermarkShare from '@/components/WatermarkShare.vue'
+import PaperConnectPlayerList from '@/components/PaperConnectPlayerList.vue'
 
 const pcStore = usePaperConnectStore()
+const watermark = useWatermarkStore()
 const router = useRouter()
-const copied = ref(false)
+const { copy, copied } = useClipboard()
 const showStopDialog = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -16,6 +21,7 @@ onMounted(() => {
   pollTimer = setInterval(() => {
     pcStore.pcRefreshRoomStatus()
   }, 3000)
+  watermark.loadDemoImages()
 })
 
 onUnmounted(() => {
@@ -30,10 +36,7 @@ watch(() => pcStore.pcRoomStatus, (status) => {
 
 function copyCode() {
   const code = pcStore.hostRoomCodePc
-  if (!code) return
-  navigator.clipboard.writeText(code)
-  copied.value = true
-  setTimeout(() => { copied.value = false }, 2000)
+  if (code) copy(code)
 }
 
 async function handleStop() {
@@ -65,6 +68,11 @@ const players = () => pcStore.pcRoomStatus?.players ?? []
           </Button>
         </div>
 
+        <!-- Host hint -->
+        <div class="rounded-xl border border-primary/20 bg-primary/5 p-3">
+          <p class="text-sm text-muted-foreground">请确保 Minecraft 基岩版世界已开启局域网联机，GravityCone 会自动代理连接</p>
+        </div>
+
         <!-- Player list -->
         <div class="rounded-xl border border-border bg-card p-4 space-y-3">
           <div class="flex items-center justify-between">
@@ -72,23 +80,13 @@ const players = () => pcStore.pcRoomStatus?.players ?? []
             <span class="text-xs text-muted-foreground">{{ pcStore.pcRoomStatus?.online_count ?? 0 }} 人</span>
           </div>
 
-          <div v-if="players().length === 0" class="text-sm text-muted-foreground text-center py-2">
-            等待玩家加入...
-          </div>
-
-          <ul v-else class="space-y-2">
-            <li v-for="player in players()" :key="player.player"
-                class="flex items-center gap-3 rounded-lg px-3 py-2 bg-muted/50">
-              <div class="flex size-8 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
-                {{ player.player.charAt(0).toUpperCase() }}
-              </div>
-              <div class="flex-1 min-w-0">
-                <p class="text-sm font-medium truncate">{{ player.player }}</p>
-                <p class="text-xs text-muted-foreground">{{ player.isRoomHost ? '房主' : '玩家' }}</p>
-              </div>
-            </li>
-          </ul>
+          <PaperConnectPlayerList :players="players()" empty-text="等待玩家加入..." />
         </div>
+
+        <WatermarkShare
+          v-if="pcStore.hostRoomCodePc"
+          :room-code="pcStore.hostRoomCodePc"
+        />
 
         <!-- Stop button -->
         <Button variant="destructive" class="w-full" @click="showStopDialog = true">

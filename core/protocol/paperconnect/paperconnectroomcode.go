@@ -1,35 +1,14 @@
 package paperconnect
 
 import (
-	"crypto/rand"
 	"fmt"
 	"strings"
+
+	"gravitycone/core/utils"
 )
 
-const roomCodeCharset = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ" // 34 chars, excluding I and O
-
-var charToValueTable [256]int8
-
-func init() {
-	for i := range charToValueTable {
-		charToValueTable[i] = -1
-	}
-	for i := 0; i < len(roomCodeCharset); i++ {
-		charToValueTable[roomCodeCharset[i]] = int8(i)
-	}
-}
-
 func charToValue(c byte) (int, bool) {
-	v := int(charToValueTable[c])
-	return v, v >= 0
-}
-
-func randomCharsetChar() (byte, error) {
-	var buf [1]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return 0, err
-	}
-	return roomCodeCharset[buf[0]%byte(len(roomCodeCharset))], nil
+	return utils.Value(c)
 }
 
 const pcRoomCodeHeader = "P/"
@@ -76,10 +55,10 @@ func pcAdjustForDivisibilityBySeven(chars []byte) {
 	for i := 0; i < len(chars) && rem != 0; i++ {
 		v, _ := charToValue(chars[i])
 		if v >= int(rem) {
-			chars[i] = roomCodeCharset[v-int(rem)]
+			chars[i] = utils.Charset[v-int(rem)]
 			rem = 0
 		} else {
-			chars[i] = roomCodeCharset[0]
+			chars[i] = utils.Charset[0]
 			rem -= int64(v)
 		}
 	}
@@ -89,7 +68,7 @@ func pcAdjustForDivisibilityBySeven(chars []byte) {
 		lastIdx := len(chars) - 1
 		v, _ := charToValue(chars[lastIdx])
 		newV := (v + int(rem)) % 34
-		chars[lastIdx] = roomCodeCharset[newV]
+		chars[lastIdx] = utils.Charset[newV]
 	}
 
 	// Brute-force fallback: increment last character until divisible
@@ -98,19 +77,19 @@ func pcAdjustForDivisibilityBySeven(chars []byte) {
 		v, _ := charToValue(chars[lastIdx])
 		v++
 		if v >= 34 {
-			chars[lastIdx] = roomCodeCharset[0]
+			chars[lastIdx] = utils.Charset[0]
 			// Cascade carry
 			for j := lastIdx - 1; j >= 0; j-- {
 				vj, _ := charToValue(chars[j])
 				vj++
 				if vj < 34 {
-					chars[j] = roomCodeCharset[vj]
+					chars[j] = utils.Charset[vj]
 					break
 				}
-				chars[j] = roomCodeCharset[0]
+				chars[j] = utils.Charset[0]
 			}
 		} else {
-			chars[lastIdx] = roomCodeCharset[v]
+			chars[lastIdx] = utils.Charset[v]
 		}
 	}
 }
@@ -119,7 +98,7 @@ func GeneratePaperConnectRoomCode() (*PaperConnectRoomCode, error) {
 	// Generate N-part (8 random chars, no checksum constraint)
 	var nPart [8]byte
 	for i := range nPart {
-		c, err := randomCharsetChar()
+		c, err := utils.RandomChar()
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate random char: %w", err)
 		}
@@ -129,7 +108,7 @@ func GeneratePaperConnectRoomCode() (*PaperConnectRoomCode, error) {
 	// Generate S-part (8 random chars, then adjust for divisibility by 7)
 	var sPart [8]byte
 	for i := range sPart {
-		c, err := randomCharsetChar()
+		c, err := utils.RandomChar()
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate random char: %w", err)
 		}

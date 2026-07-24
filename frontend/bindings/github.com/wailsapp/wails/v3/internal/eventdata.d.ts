@@ -22,6 +22,9 @@ declare module "@wailsio/runtime" {
             "download.progress": easytier$0.DownloadProgressData;
             "lan.server_found": minecraft$0.LanServer;
             "lan.server_lost": { [_ in string]?: any } | null;
+            "paperconnect.connection.error": { [_ in string]?: string } | null;
+            "paperconnect.connection.port_busy": { [_ in string]?: string } | null;
+            "paperconnect.connection.ready": { [_ in string]?: string } | null;
             "room.closed": { [_ in string]?: string } | null;
             "room.disconnected": { [_ in string]?: string } | null;
             "room.guest_player_list_updated": scaffolding$0.PlayerInfo[] | null;

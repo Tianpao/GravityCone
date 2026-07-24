@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -22,6 +24,7 @@ type PCPingResponse struct {
 	GameType         string `json:"gameType"`
 	GameProtocolType string `json:"gameProtocolType"`
 	GamePort         int    `json:"gamePort"`
+	Protocol         string `json:"protocol"` // "nethernet" or "raknet"
 }
 
 type PCPlayerRequest struct {
@@ -131,4 +134,66 @@ func ReadPCResponse(conn net.Conn) (rawJson []byte, err error) {
 	}
 
 	return buf[:n], nil
+}
+
+// Protocol constants.
+const (
+	ProtocolNetherNet = "nethernet"
+	ProtocolRakNet    = "raknet"
+)
+
+// Hostname encoding:
+//   NetherNet: pcs-{tcpPort}-g-{gameRakNetPort}
+//   RakNet:   pcs-{tcpPort}-r-{gamePort}
+
+const hostnameRakNetMarker = "-r-"
+const hostnameNetherNetMarker = "-g-"
+
+func buildHostname(tcpPort uint16, gamePort uint16) string {
+	return fmt.Sprintf("%s%d%s%d", pcHostnamePrefix, tcpPort, hostnameNetherNetMarker, gamePort)
+}
+
+func buildHostnameRakNet(tcpPort uint16, gamePort uint16) string {
+	return fmt.Sprintf("%s%d%s%d", pcHostnamePrefix, tcpPort, hostnameRakNetMarker, gamePort)
+}
+
+// ParsedHostname holds values decoded from an EasyTier peer hostname.
+type ParsedHostname struct {
+	TCPPort  uint16
+	Protocol string // ProtocolNetherNet or ProtocolRakNet
+	GamePort uint16 // RakNet UDP game port (NetherNet mode) or native UDP game port (RakNet mode)
+}
+
+func parseHostname(hostname string) (*ParsedHostname, error) {
+	rest := strings.TrimPrefix(hostname, pcHostnamePrefix)
+	if rest == hostname {
+		return nil, fmt.Errorf("hostname missing prefix %q", pcHostnamePrefix)
+	}
+	if idx := strings.Index(rest, hostnameRakNetMarker); idx != -1 {
+		tcpStr := rest[:idx]
+		gameStr := rest[idx+len(hostnameRakNetMarker):]
+		tcpPort, err := strconv.ParseUint(tcpStr, 10, 16)
+		if err != nil {
+			return nil, fmt.Errorf("invalid TCP port in hostname: %s", tcpStr)
+		}
+		gamePort, err := strconv.ParseUint(gameStr, 10, 16)
+		if err != nil {
+			return nil, fmt.Errorf("invalid game port in hostname: %s", gameStr)
+		}
+		return &ParsedHostname{TCPPort: uint16(tcpPort), Protocol: ProtocolRakNet, GamePort: uint16(gamePort)}, nil
+	}
+	if idx := strings.Index(rest, hostnameNetherNetMarker); idx != -1 {
+		tcpStr := rest[:idx]
+		gameStr := rest[idx+len(hostnameNetherNetMarker):]
+		tcpPort, err := strconv.ParseUint(tcpStr, 10, 16)
+		if err != nil {
+			return nil, fmt.Errorf("invalid TCP port in hostname: %s", tcpStr)
+		}
+		gamePort, err := strconv.ParseUint(gameStr, 10, 16)
+		if err != nil {
+			return nil, fmt.Errorf("invalid game TCP port in hostname: %s", gameStr)
+		}
+		return &ParsedHostname{TCPPort: uint16(tcpPort), Protocol: ProtocolNetherNet, GamePort: uint16(gamePort)}, nil
+	}
+	return nil, fmt.Errorf("unrecognized hostname format: %s", hostname)
 }

@@ -10,7 +10,7 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
- * AddPeers appends peer addresses so they are included when EasyTier starts.
+ * AddPeers appends peer addresses for future EasyTier starts.
  */
 export function AddPeers(addrs: string[] | null): $CancellablePromise<void> {
     return $Call.ByID(261516947, addrs);

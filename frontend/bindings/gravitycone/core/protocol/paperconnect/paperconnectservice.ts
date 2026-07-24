@@ -21,6 +21,14 @@ export function Cleanup(): $CancellablePromise<void> {
     return $Call.ByID(3896148725);
 }
 
+/**
+ * ConfirmMinecraftEnded permits one new local NetherNet discovery bind attempt
+ * after the caller has released UDP port 7551 by closing Minecraft.
+ */
+export function ConfirmMinecraftEnded(): $CancellablePromise<void> {
+    return $Call.ByID(2648799012);
+}
+
 export function CreateRoom(playerName: string, vendorPrefix: string): $CancellablePromise<$models.PaperConnectRoomStatus | null> {
     return $Call.ByID(2101453668, playerName, vendorPrefix);
 }

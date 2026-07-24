@@ -5,10 +5,12 @@ import { usePaperConnectStore } from '@/stores/paperconnect'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { LogOutOutline } from '@vicons/ionicons5'
+import PaperConnectPlayerList from '@/components/PaperConnectPlayerList.vue'
 
 const pcStore = usePaperConnectStore()
 const router = useRouter()
 const showDisconnectDialog = ref(false)
+const confirmingMinecraftEnded = ref(false)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
@@ -32,6 +34,12 @@ async function handleLeave() {
   router.push('/')
 }
 
+async function handleMinecraftEnded() {
+  confirmingMinecraftEnded.value = true
+  await pcStore.pcConfirmMinecraftEnded()
+  confirmingMinecraftEnded.value = false
+}
+
 const players = () => pcStore.pcConnectionStatus?.players ?? []
 </script>
 
@@ -43,6 +51,11 @@ const players = () => pcStore.pcConnectionStatus?.players ?? []
         <div class="size-3 rounded-full" :class="pcStore.isConnectedPc ? 'bg-green-500' : 'bg-red-500'"></div>
         <span class="text-sm">{{ pcStore.isConnectedPc ? '已连接' : '连接断开' }}</span>
         <span v-if="pcStore.pcConnectionStatus?.heartbeating" class="text-xs text-muted-foreground">心跳正常</span>
+      </div>
+
+      <!-- NetherNet proxy hint -->
+      <div v-if="pcStore.isConnectedPc && !pcStore.pcPortBusyMessage" class="rounded-xl border border-primary/20 bg-primary/5 p-3">
+        <p class="text-sm text-muted-foreground">打开 Minecraft 基岩版，在局域网游戏中找到 <strong class="text-foreground">GravityCone Proxy</strong> 并加入</p>
       </div>
 
       <!-- Disconnect reason banner -->
@@ -64,22 +77,7 @@ const players = () => pcStore.pcConnectionStatus?.players ?? []
           <span class="text-xs text-muted-foreground">{{ pcStore.pcConnectionStatus?.online_count ?? 0 }} 人</span>
         </div>
 
-        <div v-if="players().length === 0" class="text-sm text-muted-foreground text-center py-2">
-          加载中...
-        </div>
-
-        <ul v-else class="space-y-2">
-          <li v-for="player in players()" :key="player.player"
-              class="flex items-center gap-3 rounded-lg px-3 py-2 bg-muted/50">
-            <div class="flex size-8 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
-              {{ player.player.charAt(0).toUpperCase() }}
-            </div>
-            <div class="flex-1 min-w-0">
-              <p class="text-sm font-medium truncate">{{ player.player }}</p>
-              <p class="text-xs text-muted-foreground">{{ player.isRoomHost ? '房主' : '玩家' }}</p>
-            </div>
-          </li>
-        </ul>
+        <PaperConnectPlayerList :players="players()" empty-text="加载中..." />
       </div>
 
       <!-- Leave button -->
@@ -88,6 +86,30 @@ const players = () => pcStore.pcConnectionStatus?.players ?? []
         退出房间
       </Button>
     </div>
+
+    <!-- Minecraft port conflict dialog -->
+    <Dialog :open="Boolean(pcStore.pcPortBusyMessage)">
+      <DialogContent
+        class="sm:max-w-sm"
+        :show-close-button="false"
+        @pointer-down-outside.prevent
+        @escape-key-down.prevent
+      >
+        <DialogHeader>
+          <DialogTitle>请结束 Minecraft</DialogTitle>
+        </DialogHeader>
+        <p class="text-sm text-muted-foreground">
+          {{ pcStore.pcPortBusyMessage }} 本地游戏广播需要使用 UDP 端口 7551。
+        </p>
+        <p v-if="pcStore.pcGuestError" class="text-sm text-destructive">{{ pcStore.pcGuestError }}</p>
+        <DialogFooter class="gap-2 sm:justify-between">
+          <Button variant="outline" :disabled="confirmingMinecraftEnded" @click="handleLeave">取消</Button>
+          <Button :disabled="confirmingMinecraftEnded" @click="handleMinecraftEnded">
+            {{ confirmingMinecraftEnded ? '正在确认...' : 'Minecraft 已结束' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <!-- Disconnect dialog -->
     <Dialog :open="showDisconnectDialog" @update:open="showDisconnectDialog = $event">

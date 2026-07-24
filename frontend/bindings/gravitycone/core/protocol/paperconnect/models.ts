@@ -14,6 +14,7 @@ export interface PaperConnectConnectionStatus {
     "room_code": string;
     "host_address": string;
     "game_port": number;
+    "sub_protocol": string;
     "connected": boolean;
     "online_count": number;
     "players": PCPlayerEntry[] | null;
@@ -27,6 +28,7 @@ export interface PaperConnectConnectionStatus {
 export interface PaperConnectRoomStatus {
     "code": string;
     "game_port": number;
+    "sub_protocol": string;
     "online_count": number;
     "players": PCPlayerEntry[] | null;
     "running": boolean;
