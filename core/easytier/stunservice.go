@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"runtime"
+	"syscall"
 )
 
 type StunResult struct {
@@ -23,7 +25,13 @@ func (s *StunService) TestStun() (*StunResult, error) {
 		return nil, err
 	}
 
-	out, err := exec.Command(exePath, "-o", "json", "stun").Output()
+	cmd := exec.Command(exePath, "-o", "json", "stun")
+	if runtime.GOOS == "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			CreationFlags: 0x08000000, // CREATE_NO_WINDOW
+		}
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("easytier-cli stun failed: %w", err)
 	}

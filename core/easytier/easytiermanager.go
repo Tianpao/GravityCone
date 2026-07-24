@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"gravitycone/core/utils"
@@ -206,6 +207,13 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 	cmd.Stdout = easytierStdout
 	cmd.Stderr = easytierStderr
 
+	// On Windows: DETACHED_PROCESS prevents the console window from appearing.
+	if runtime.GOOS == "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			CreationFlags: 0x00000008, // DETACHED_PROCESS
+		}
+	}
+
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("启动 easytier-core 失败: %w", err)
 	}
@@ -279,6 +287,9 @@ func (m *EasyTierManager) Stop() error {
 	// Kill the process tree outside of the lock to avoid holding it during I/O.
 	if runtime.GOOS == "windows" {
 		killCmd := exec.Command("taskkill", "/PID", fmt.Sprintf("%d", pid), "/T", "/F")
+		killCmd.SysProcAttr = &syscall.SysProcAttr{
+			CreationFlags: 0x08000000, // CREATE_NO_WINDOW
+		}
 		if out, err := killCmd.CombinedOutput(); err != nil {
 			slog.Error("taskkill failed", "pid", pid, "error", err, "output", string(out))
 		}
@@ -483,6 +494,11 @@ func (m *EasyTierManager) FindPeerByHostnamePrefix(hostnamePrefix string) (strin
 
 func (m *EasyTierManager) runCli(args ...string) (string, error) {
 	cmd := exec.Command(m.cliPath, args...)
+	if runtime.GOOS == "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			CreationFlags: 0x08000000, // CREATE_NO_WINDOW
+		}
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		slog.Error("easytier-cli failed", "path", m.cliPath, "args", args, "error", err, "output", string(out))
