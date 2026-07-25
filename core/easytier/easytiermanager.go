@@ -20,6 +20,8 @@ import (
 
 const hostVirtualIP = "10.144.144.1"
 
+// easytierLogOutput controls where easytier-core stdout/stderr is written.
+// Defaults to os.Stdout/os.Stderr. Override with SetEasyTierLogOutput.
 var (
 	easytierStdout io.Writer = os.Stdout
 	easytierStderr io.Writer = os.Stderr
@@ -365,6 +367,8 @@ func (m *EasyTierManager) DiscoverPeer(hostname string) (string, error) {
 	return "", fmt.Errorf("未找到主机 (%s)，请确认房间代码正确", hostname)
 }
 
+// DiscoverPeerByPrefix finds a peer whose hostname starts with the given prefix.
+// Returns the matching hostname and virtual IP.
 func (m *EasyTierManager) DiscoverPeerByPrefix(hostnamePrefix string) (hostname string, virtualIP string, err error) {
 	peers, err := m.listPeers()
 	if err != nil {

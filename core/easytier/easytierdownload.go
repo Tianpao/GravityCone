@@ -49,6 +49,7 @@ type DownloadErrorData struct {
 	Error string `json:"error"`
 }
 
+// easyTierPlatform holds the OS and arch segments used in the download URL.
 type easyTierPlatform struct {
 	sys  string
 	arch string
@@ -97,6 +98,9 @@ func SetEnsureEasyTierEmitter(emitter utils.EventEmitter) {
 
 var ensureMu sync.Mutex
 
+// EnsureEasyTier checks if easytier-core and easytier-cli exist locally,
+// and downloads them if missing. Emits "download.progress" and "download.error"
+// events via the configured emitter. Call this at startup before any EasyTier operations.
 func EnsureEasyTier() error {
 	ensureMu.Lock()
 	defer ensureMu.Unlock()

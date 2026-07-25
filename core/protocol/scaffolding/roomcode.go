@@ -12,6 +12,14 @@ type RoomCode struct {
 	SecretPart  string // 8 chars: SSSS-SSSS (without dash)
 }
 
+func charToValue(c byte) int {
+	value, ok := utils.Value(c)
+	if !ok {
+		return -1
+	}
+	return value
+}
+
 // isValidChecksum checks that the weighted sum of char values (position i
 // contributes value*6^(i%2)) is divisible by 7.
 func isValidChecksum(chars [16]byte) bool {
