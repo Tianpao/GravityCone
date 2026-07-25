@@ -675,9 +675,9 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 }
 
 type discoveredConn struct {
-	conn         net.Conn
-	localPort    uint16
-	directLocal  bool
+	conn        net.Conn
+	localPort   uint16
+	directLocal bool
 }
 
 func (s *ScaffoldingService) discoverHostAndConnect(manager *easytier.EasyTierManager, timeout time.Duration) (string, uint16, *discoveredConn, error) {
