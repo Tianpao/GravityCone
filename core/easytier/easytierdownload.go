@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"gravitycone/core/utils"
+	"gravitycone/core/utils/process"
 )
 
 const EasyTierVersion = "v2.6.4"
@@ -164,7 +165,7 @@ func downloadAndExtractEasyTier() error {
 	})
 
 	for _, name := range []string{"easytier-core", "easytier-cli"} {
-		exeName := platformExeName(name)
+		exeName := process.PlatformExeName(name)
 		if _, err := os.Stat(filepath.Join(targetDir, exeName)); err != nil {
 			return fmt.Errorf("%s not found in archive", exeName)
 		}

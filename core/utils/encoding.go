@@ -1,9 +1,8 @@
-package cli
+package utils
 
 import (
 	"bytes"
 	"io"
-	"os"
 	"unicode/utf8"
 
 	"golang.org/x/text/encoding"
@@ -12,20 +11,21 @@ import (
 	"golang.org/x/text/transform"
 )
 
-// newDecodedStdinReader wraps os.Stdin with encoding auto-detection
-// and transparent conversion to UTF-8.
-func newDecodedStdinReader() io.Reader {
+// NewDecodedReader wraps r with encoding auto-detection and transparent
+// conversion to UTF-8. It reads a few initial bytes to detect the encoding
+// (BOM or heuristic), then returns a reader that yields UTF-8 output.
+func NewDecodedReader(r io.Reader) io.Reader {
 	header := make([]byte, 3)
-	n, err := io.ReadAtLeast(os.Stdin, header, 1)
+	n, err := io.ReadAtLeast(r, header, 1)
 	if err != nil && n == 0 {
-		return os.Stdin
+		return r
 	}
 
 	data := header[:n]
 	enc, skip := detectEncoding(data)
 
 	remainder := data[skip:]
-	src := io.MultiReader(bytes.NewReader(remainder), os.Stdin)
+	src := io.MultiReader(bytes.NewReader(remainder), r)
 	return transform.NewReader(src, enc.NewDecoder())
 }
 

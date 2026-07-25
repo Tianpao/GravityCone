@@ -9,22 +9,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"gravitycone/core/utils"
+	"gravitycone/core/utils/process"
 )
 
 const hostVirtualIP = "10.144.144.1"
-
-const (
-	winDetachedProcess = 0x00000008
-	winCreateNoWindow  = 0x08000000
-)
 
 var (
 	easytierStdout io.Writer = os.Stdout
@@ -76,7 +70,7 @@ func NewEasyTierManager() (*EasyTierManager, error) {
 }
 
 func resolveEasyTierBinary(name string) (string, error) {
-	exeName := platformExeName(name)
+	exeName := process.PlatformExeName(name)
 
 	if p, err := exec.LookPath(exeName); err == nil {
 		return p, nil
@@ -200,15 +194,11 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 		args = append(args, "--machine-id", machineID)
 	}
 
-	cmd := newCmd(m.corePath, args...)
+	cmd := process.NewHiddenCmd(m.corePath, args...)
 	cmd.Stdout = easytierStdout
 	cmd.Stderr = easytierStderr
 
-	if runtime.GOOS == "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			CreationFlags: winDetachedProcess,
-		}
-	}
+	process.SetDetachedFlags(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("启动 easytier-core 失败: %w", err)
@@ -274,17 +264,9 @@ func (m *EasyTierManager) Stop() error {
 		return nil
 	}
 	cmd := m.cmd
-	pid := cmd.Process.Pid
 	m.mu.Unlock()
 
-	if runtime.GOOS == "windows" {
-		killCmd := newCmd("taskkill", "/PID", fmt.Sprintf("%d", pid), "/T", "/F")
-		if out, err := killCmd.CombinedOutput(); err != nil {
-			slog.Error("taskkill failed", "pid", pid, "error", err, "output", string(out))
-		}
-	} else {
-		_ = cmd.Process.Signal(os.Interrupt)
-	}
+	process.KillProcessTree(cmd.Process)
 
 	done := make(chan struct{})
 	go func() {
@@ -295,7 +277,7 @@ func (m *EasyTierManager) Stop() error {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		slog.Warn("easytier-core did not exit after 5s, force-killing", "pid", pid)
+		slog.Warn("easytier-core did not exit after 5s, force-killing", "pid", cmd.Process.Pid)
 		cmd.Process.Kill()
 		<-done
 	}
@@ -450,24 +432,13 @@ func (m *EasyTierManager) FindPeerByHostnamePrefix(hostnamePrefix string) (strin
 }
 
 func (m *EasyTierManager) runCli(args ...string) (string, error) {
-	cmd := newCmd(m.cliPath, args...)
+	cmd := process.NewHiddenCmd(m.cliPath, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		slog.Error("easytier-cli failed", "path", m.cliPath, "args", args, "error", err, "output", string(out))
 		return "", err
 	}
 	return string(out), nil
-}
-
-// newCmd creates an exec.Cmd with CREATE_NO_WINDOW on Windows to suppress console popups.
-func newCmd(name string, args ...string) *exec.Cmd {
-	cmd := exec.Command(name, args...)
-	if runtime.GOOS == "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			CreationFlags: winCreateNoWindow,
-		}
-	}
-	return cmd
 }
 
 // stripCIDR removes the CIDR suffix from an IP address (e.g. "10.144.0.1/24" -> "10.144.0.1").
@@ -478,13 +449,6 @@ func stripCIDR(ip string) string {
 	return ip
 }
 
-// platformExeName appends .exe on Windows.
-func platformExeName(name string) string {
-	if runtime.GOOS == "windows" {
-		return name + ".exe"
-	}
-	return name
-}
 
 // easyTierBaseDir returns the shared easytier binary directory, or empty string if unavailable.
 func easyTierBaseDir() string {
