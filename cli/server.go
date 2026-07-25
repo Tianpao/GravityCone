@@ -153,10 +153,9 @@ func resolveLogPaths() (string, string, string, string, error) {
 		return "", "", "", "", err
 	}
 	dir := filepath.Dir(exe)
-	// Resolve symlinks
-	dir, err = filepath.EvalSymlinks(dir)
-	if err != nil {
-		return "", "", "", "", err
+	// Resolve symlinks if possible; non-fatal on failure
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
 	}
 	logsDir := filepath.Join(dir, "logs")
 	return logsDir, filepath.Join(logsDir, "stdio.log"), filepath.Join(logsDir, "easytier.log"), filepath.Join(logsDir, "gccore.log"), nil
