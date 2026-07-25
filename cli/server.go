@@ -94,7 +94,7 @@ func Run(peers []string, vendorPrefix string, motd string) {
 
 	// Read loop on stdin
 	go func() {
-		scanner := bufio.NewScanner(os.Stdin)
+		scanner := bufio.NewScanner(utils.NewDecodedReader(os.Stdin))
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
 			line := scanner.Text()

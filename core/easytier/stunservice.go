@@ -3,9 +3,8 @@ package easytier
 import (
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"runtime"
-	"syscall"
+
+	"gravitycone/core/utils/process"
 )
 
 type StunResult struct {
@@ -20,17 +19,12 @@ type StunResult struct {
 type StunService struct{}
 
 func (s *StunService) TestStun() (*StunResult, error) {
-	exePath, err := getEasytierCliPath()
+	exePath, err := resolveEasyTierBinary("easytier-cli")
 	if err != nil {
 		return nil, err
 	}
 
-	cmd := exec.Command(exePath, "-o", "json", "stun")
-	if runtime.GOOS == "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			CreationFlags: 0x08000000, // CREATE_NO_WINDOW
-		}
-	}
+	cmd := process.NewHiddenCmd(exePath, "-o", "json", "stun")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("easytier-cli stun failed: %w", err)
@@ -42,8 +36,4 @@ func (s *StunService) TestStun() (*StunResult, error) {
 	}
 
 	return &result, nil
-}
-
-func getEasytierCliPath() (string, error) {
-	return resolveEasyTierBinary("easytier-cli")
 }
