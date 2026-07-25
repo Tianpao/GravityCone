@@ -449,7 +449,6 @@ func stripCIDR(ip string) string {
 	return ip
 }
 
-
 // easyTierBaseDir returns the shared easytier binary directory, or empty string if unavailable.
 func easyTierBaseDir() string {
 	if configDir, err := os.UserConfigDir(); err == nil {
