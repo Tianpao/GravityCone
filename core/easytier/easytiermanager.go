@@ -21,8 +21,11 @@ import (
 
 const hostVirtualIP = "10.144.144.1"
 
-// easytierLogOutput controls where easytier-core stdout/stderr is written.
-// Defaults to os.Stdout/os.Stderr. Override with SetEasyTierLogOutput.
+const (
+	winDetachedProcess = 0x00000008
+	winCreateNoWindow  = 0x08000000
+)
+
 var (
 	easytierStdout io.Writer = os.Stdout
 	easytierStderr io.Writer = os.Stderr
@@ -32,6 +35,9 @@ var (
 // Pass empty string to reset to default (os.Stdout/os.Stderr).
 func SetEasyTierLogOutput(path string) {
 	if path == "" {
+		if f, ok := easytierStdout.(*os.File); ok && f != os.Stdout {
+			f.Close()
+		}
 		easytierStdout = os.Stdout
 		easytierStderr = os.Stderr
 		return
@@ -41,6 +47,9 @@ func SetEasyTierLogOutput(path string) {
 		slog.Warn("failed to open easytier log file", "path", path, "error", err)
 		return
 	}
+	if old, ok := easytierStdout.(*os.File); ok && old != os.Stdout {
+		old.Close()
+	}
 	easytierStdout = f
 	easytierStderr = f
 }
@@ -49,10 +58,9 @@ type EasyTierManager struct {
 	corePath  string
 	cliPath   string
 	cmd       *exec.Cmd
-	rpcPortal string // e.g. "127.0.0.1:15888"
+	rpcPortal string
 	virtualIP string
 	mu        sync.Mutex
-	running   bool
 }
 
 func NewEasyTierManager() (*EasyTierManager, error) {
@@ -68,26 +76,15 @@ func NewEasyTierManager() (*EasyTierManager, error) {
 }
 
 func resolveEasyTierBinary(name string) (string, error) {
-	exeName := name
-	if runtime.GOOS == "windows" {
-		exeName = name + ".exe"
-	}
+	exeName := platformExeName(name)
 
 	if p, err := exec.LookPath(exeName); err == nil {
 		return p, nil
 	}
 
-	// Check config directory (shared across installations)
-	if configDir, err := os.UserConfigDir(); err == nil {
-		p := filepath.Join(configDir, "GravityCone", "easytier", exeName)
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
-	}
-
-	// Fallback: next to executable
-	if exeDir, err := os.Executable(); err == nil {
-		p := filepath.Join(filepath.Dir(exeDir), "easytier", exeName)
+	baseDir := easyTierBaseDir()
+	if baseDir != "" {
+		p := filepath.Join(baseDir, exeName)
 		if _, err := os.Stat(p); err == nil {
 			return p, nil
 		}
@@ -96,7 +93,6 @@ func resolveEasyTierBinary(name string) (string, error) {
 	return "", fmt.Errorf("%s not found", exeName)
 }
 
-// allocateRPCPort finds a free TCP port on localhost.
 func allocateRPCPort() (string, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -122,13 +118,14 @@ type StartOptions struct {
 
 func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 	m.mu.Lock()
-	if m.running {
-		m.mu.Unlock()
-		return "", fmt.Errorf("EasyTier 已在运行")
+	if m.cmd != nil && m.cmd.Process != nil {
+		if m.cmd.ProcessState == nil || !m.cmd.ProcessState.Exited() {
+			m.mu.Unlock()
+			return "", fmt.Errorf("EasyTier 已在运行")
+		}
 	}
 	m.mu.Unlock()
 
-	// Allocate a dedicated RPC port for this instance
 	rpcPortal, err := allocateRPCPort()
 	if err != nil {
 		return "", fmt.Errorf("分配RPC端口失败: %w", err)
@@ -203,14 +200,13 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 		args = append(args, "--machine-id", machineID)
 	}
 
-	cmd := exec.Command(m.corePath, args...)
+	cmd := newCmd(m.corePath, args...)
 	cmd.Stdout = easytierStdout
 	cmd.Stderr = easytierStderr
 
-	// On Windows: DETACHED_PROCESS prevents the console window from appearing.
 	if runtime.GOOS == "windows" {
 		cmd.SysProcAttr = &syscall.SysProcAttr{
-			CreationFlags: 0x00000008, // DETACHED_PROCESS
+			CreationFlags: winDetachedProcess,
 		}
 	}
 
@@ -221,10 +217,8 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 	m.mu.Lock()
 	m.cmd = cmd
 	m.rpcPortal = rpcPortal
-	m.running = true
 	m.mu.Unlock()
 
-	// Poll cli until the virtual IP is available
 	virtualIP, err := m.waitForVirtualIP(30 * time.Second)
 	if err != nil {
 		m.Stop()
@@ -259,7 +253,7 @@ func (m *EasyTierManager) waitForVirtualIP(timeout time.Duration) (string, error
 }
 
 func (m *EasyTierManager) getSelfVirtualIP() (string, error) {
-	out, err := m.runCli("-o", "json", "-p", m.rpcPortal, "node", "info")
+	out, err := m.runCli("-o", "json", "-p", m.RPCPortal(), "node", "info")
 	if err != nil {
 		return "", err
 	}
@@ -270,61 +264,44 @@ func (m *EasyTierManager) getSelfVirtualIP() (string, error) {
 	if err := json.Unmarshal([]byte(out), &info); err != nil {
 		return "", err
 	}
-	// Remove CIDR suffix if present (e.g. "10.144.0.1/24" -> "10.144.0.1")
-	ip, _, _ := strings.Cut(info.VirtualIP, "/")
-	return ip, nil
+	return stripCIDR(info.VirtualIP), nil
 }
 
 func (m *EasyTierManager) Stop() error {
 	m.mu.Lock()
-	if !m.running || m.cmd == nil || m.cmd.Process == nil {
+	if m.cmd == nil || m.cmd.Process == nil {
 		m.mu.Unlock()
 		return nil
 	}
-	pid := m.cmd.Process.Pid
+	cmd := m.cmd
+	pid := cmd.Process.Pid
 	m.mu.Unlock()
 
-	// Kill the process tree outside of the lock to avoid holding it during I/O.
 	if runtime.GOOS == "windows" {
-		killCmd := exec.Command("taskkill", "/PID", fmt.Sprintf("%d", pid), "/T", "/F")
-		killCmd.SysProcAttr = &syscall.SysProcAttr{
-			CreationFlags: 0x08000000, // CREATE_NO_WINDOW
-		}
+		killCmd := newCmd("taskkill", "/PID", fmt.Sprintf("%d", pid), "/T", "/F")
 		if out, err := killCmd.CombinedOutput(); err != nil {
 			slog.Error("taskkill failed", "pid", pid, "error", err, "output", string(out))
 		}
 	} else {
-		m.mu.Lock()
-		_ = m.cmd.Process.Signal(os.Interrupt)
-		m.mu.Unlock()
+		_ = cmd.Process.Signal(os.Interrupt)
 	}
 
-	// Wait for the process to actually exit.
 	done := make(chan struct{})
 	go func() {
-		m.mu.Lock()
-		if m.cmd != nil {
-			m.cmd.Wait()
-		}
-		m.mu.Unlock()
+		cmd.Wait()
 		close(done)
 	}()
 
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		m.mu.Lock()
-		if m.cmd != nil && m.cmd.Process != nil {
-			slog.Warn("easytier-core did not exit after 5s, force-killing", "pid", pid)
-			m.cmd.Process.Kill()
-		}
-		m.mu.Unlock()
+		slog.Warn("easytier-core did not exit after 5s, force-killing", "pid", pid)
+		cmd.Process.Kill()
 		<-done
 	}
 
 	m.mu.Lock()
 	m.cmd = nil
-	m.running = false
 	m.virtualIP = ""
 	m.rpcPortal = ""
 	m.mu.Unlock()
@@ -338,10 +315,9 @@ func (m *EasyTierManager) IsRunning() bool {
 		return false
 	}
 	if m.cmd.ProcessState != nil && m.cmd.ProcessState.Exited() {
-		m.running = false
 		return false
 	}
-	return m.running
+	return true
 }
 
 func (m *EasyTierManager) SelfVirtualIP() string {
@@ -356,45 +332,43 @@ type peerInfo struct {
 	Hostname  string          `json:"hostname"`
 }
 
-func (m *EasyTierManager) DiscoverPeer(hostname string) (string, error) {
-	out, err := m.runCli("-o", "json", "-p", m.rpcPortal, "peer", "list")
+func (m *EasyTierManager) listPeers() ([]peerInfo, error) {
+	out, err := m.runCli("-o", "json", "-p", m.RPCPortal(), "peer", "list")
 	if err != nil {
-		return "", fmt.Errorf("查询对等节点失败: %w", err)
+		return nil, fmt.Errorf("查询对等节点失败: %w", err)
 	}
 
 	var peers []peerInfo
 	if err := json.Unmarshal([]byte(out), &peers); err != nil {
-		return "", fmt.Errorf("解析对等节点列表失败: %w", err)
+		return nil, fmt.Errorf("解析对等节点列表失败: %w", err)
+	}
+	return peers, nil
+}
+
+func (m *EasyTierManager) DiscoverPeer(hostname string) (string, error) {
+	peers, err := m.listPeers()
+	if err != nil {
+		return "", err
 	}
 
 	for _, p := range peers {
 		if p.Hostname == hostname && p.VirtualIP != "" {
-			// Remove CIDR suffix if present (e.g. "10.144.0.1/24" -> "10.144.0.1")
-			ip, _, _ := strings.Cut(p.VirtualIP, "/")
-			return ip, nil
+			return stripCIDR(p.VirtualIP), nil
 		}
 	}
 
 	return "", fmt.Errorf("未找到主机 (%s)，请确认房间代码正确", hostname)
 }
 
-// DiscoverPeerByPrefix finds a peer whose hostname starts with the given prefix.
-// Returns the matching hostname and virtual IP.
 func (m *EasyTierManager) DiscoverPeerByPrefix(hostnamePrefix string) (hostname string, virtualIP string, err error) {
-	out, err := m.runCli("-o", "json", "-p", m.rpcPortal, "peer", "list")
+	peers, err := m.listPeers()
 	if err != nil {
-		return "", "", fmt.Errorf("查询对等节点失败: %w", err)
-	}
-
-	var peers []peerInfo
-	if err := json.Unmarshal([]byte(out), &peers); err != nil {
-		return "", "", fmt.Errorf("解析对等节点列表失败: %w", err)
+		return "", "", err
 	}
 
 	for _, p := range peers {
 		if strings.HasPrefix(p.Hostname, hostnamePrefix) && p.VirtualIP != "" {
-			ip, _, _ := strings.Cut(p.VirtualIP, "/")
-			return p.Hostname, ip, nil
+			return p.Hostname, stripCIDR(p.VirtualIP), nil
 		}
 	}
 
@@ -402,7 +376,7 @@ func (m *EasyTierManager) DiscoverPeerByPrefix(hostnamePrefix string) (hostname 
 }
 
 func (m *EasyTierManager) GetPeerID() (string, error) {
-	out, err := m.runCli("-o", "json", "-p", m.rpcPortal, "node", "info")
+	out, err := m.runCli("-o", "json", "-p", m.RPCPortal(), "node", "info")
 	if err != nil {
 		return "", err
 	}
@@ -423,58 +397,41 @@ func (m *EasyTierManager) RPCPortal() string {
 }
 
 func (m *EasyTierManager) AddPortForward(proto string, localAddr string, remoteAddr string) error {
-	rpcPortal := m.RPCPortal()
-	if rpcPortal == "" {
-		return fmt.Errorf("easytier-core 未运行，无法添加端口转发")
-	}
-	for attempt := 0; attempt < 3; attempt++ {
-		out, err := m.runCli(
-			"-p", rpcPortal,
-			"port-forward", "add",
-			proto, localAddr, remoteAddr,
-		)
-		if err != nil {
-			if attempt < 2 {
-				time.Sleep(time.Duration(attempt+1) * time.Second)
-				continue
-			}
-			return fmt.Errorf("添加端口转发失败 (%s %s -> %s): %w, output: %s", proto, localAddr, remoteAddr, err, out)
-		}
-		return nil
-	}
-	return nil
+	return m.runPortForwardCmd("add", proto, localAddr, remoteAddr, "添加端口转发失败")
 }
 
 func (m *EasyTierManager) RemovePortForward(proto string, localAddr string, remoteAddr string) error {
-	for attempt := 0; attempt < 3; attempt++ {
-		out, err := m.runCli(
-			"-p", m.rpcPortal,
-			"port-forward", "remove",
-			proto, localAddr, remoteAddr,
-		)
-		if err != nil {
-			if attempt < 2 {
-				time.Sleep(time.Duration(attempt+1) * time.Second)
-				continue
-			}
-			return fmt.Errorf("删除端口转发失败 (%s %s -> %s): %w, output: %s", proto, localAddr, remoteAddr, err, out)
-		}
-		return nil
-	}
-	return nil
+	return m.runPortForwardCmd("remove", proto, localAddr, remoteAddr, "删除端口转发失败")
 }
 
-// FindPeerByHostnamePrefix scans the EasyTier peer list and returns the virtual IP
-// and port of the first peer whose hostname starts with the given prefix.
-func (m *EasyTierManager) FindPeerByHostnamePrefix(hostnamePrefix string) (string, uint16, error) {
-	out, err := m.runCli("-o", "json", "-p", m.RPCPortal(), "peer", "list")
-	if err != nil {
-		return "", 0, fmt.Errorf("查询对等节点失败: %w", err)
+func (m *EasyTierManager) runPortForwardCmd(action, proto, localAddr, remoteAddr, errMsg string) error {
+	rpcPortal := m.RPCPortal()
+	if rpcPortal == "" {
+		return fmt.Errorf("easytier-core 未运行，无法%s", errMsg)
 	}
+	var lastErr error
+	var lastOut string
+	for attempt := 0; attempt < 3; attempt++ {
+		out, err := m.runCli(
+			"-p", rpcPortal,
+			"port-forward", action,
+			proto, localAddr, remoteAddr,
+		)
+		if err == nil {
+			return nil
+		}
+		lastErr, lastOut = err, out
+		if attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * time.Second)
+		}
+	}
+	return fmt.Errorf("%s (%s %s -> %s): %w, output: %s", errMsg, proto, localAddr, remoteAddr, lastErr, lastOut)
+}
 
-	var peers []peerInfo
-	if err := json.Unmarshal([]byte(out), &peers); err != nil {
-		return "", 0, fmt.Errorf("解析对等节点列表失败: %w", err)
+func (m *EasyTierManager) FindPeerByHostnamePrefix(hostnamePrefix string) (string, uint16, error) {
+	peers, err := m.listPeers()
+	if err != nil {
+		return "", 0, err
 	}
 
 	for _, p := range peers {
@@ -486,23 +443,56 @@ func (m *EasyTierManager) FindPeerByHostnamePrefix(hostnamePrefix string) (strin
 		if err != nil || port <= 1024 || port > 65535 {
 			continue
 		}
-		return p.VirtualIP, uint16(port), nil
+		return stripCIDR(p.VirtualIP), uint16(port), nil
 	}
 
 	return "", 0, fmt.Errorf("未找到联机中心，请确认房间代码正确且房主已开启房间")
 }
 
 func (m *EasyTierManager) runCli(args ...string) (string, error) {
-	cmd := exec.Command(m.cliPath, args...)
-	if runtime.GOOS == "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			CreationFlags: 0x08000000, // CREATE_NO_WINDOW
-		}
-	}
+	cmd := newCmd(m.cliPath, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		slog.Error("easytier-cli failed", "path", m.cliPath, "args", args, "error", err, "output", string(out))
 		return "", err
 	}
 	return string(out), nil
+}
+
+// newCmd creates an exec.Cmd with CREATE_NO_WINDOW on Windows to suppress console popups.
+func newCmd(name string, args ...string) *exec.Cmd {
+	cmd := exec.Command(name, args...)
+	if runtime.GOOS == "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			CreationFlags: winCreateNoWindow,
+		}
+	}
+	return cmd
+}
+
+// stripCIDR removes the CIDR suffix from an IP address (e.g. "10.144.0.1/24" -> "10.144.0.1").
+func stripCIDR(ip string) string {
+	if i := strings.IndexByte(ip, '/'); i >= 0 {
+		return ip[:i]
+	}
+	return ip
+}
+
+// platformExeName appends .exe on Windows.
+func platformExeName(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+	return name
+}
+
+// easyTierBaseDir returns the shared easytier binary directory, or empty string if unavailable.
+func easyTierBaseDir() string {
+	if configDir, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(configDir, "GravityCone", "easytier")
+	}
+	if exeDir, err := os.Executable(); err == nil {
+		return filepath.Join(filepath.Dir(exeDir), "easytier")
+	}
+	return ""
 }
