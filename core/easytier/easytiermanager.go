@@ -24,7 +24,7 @@ var (
 	easytierStdout io.Writer = os.Stdout
 	easytierStderr io.Writer = os.Stderr
 
-	customEasyTierDir string
+	customEasyTierDir    string
 	skipEasyTierDownload bool
 )
 
