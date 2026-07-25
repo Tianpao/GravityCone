@@ -1,10 +1,12 @@
 package scaffolding
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,9 +22,21 @@ import (
 // BaseVendor is the default vendor suffix. Call MakeVendor to append optional prefixes.
 const BaseVendor = "GVC v0.1.0, EasyTier " + easytier.EasyTierVersion
 
+const hostnamePrefix = "scaffolding-mc-server-"
+
 var scaffoldingBuiltinPeers = []string{
 	"https://etnode.zkitefly.eu.org/node1",
 	"wss://center.node.1tmc.top",
+}
+
+// serverProtocols is the list of protocols this host supports (excluding
+// ProtocolPlayerEasyTierID, which is negotiated separately).
+var serverProtocols = []string{
+	ProtocolPing,
+	ProtocolProtocols,
+	ProtocolServerPort,
+	ProtocolPlayerPing,
+	ProtocolPlayerProfilesList,
 }
 
 func MakeVendor(prefixes ...string) string {
@@ -60,6 +74,29 @@ type ConnectionStatus struct {
 type playerEntry struct {
 	info     *PlayerInfo
 	lastSeen time.Time
+}
+
+// copyPlayers returns a snapshot of all player infos from the host player map.
+// Caller must NOT hold hostPlayerMu.
+func (s *ScaffoldingService) copyPlayers() []PlayerInfo {
+	s.hostPlayerMu.Lock()
+	players := make([]PlayerInfo, 0, len(s.hostPlayers))
+	for _, e := range s.hostPlayers {
+		players = append(players, *e.info)
+	}
+	s.hostPlayerMu.Unlock()
+	return players
+}
+
+// newGuestPlayerInfo constructs a PlayerInfo for a guest player.
+func newGuestPlayerInfo(machineID, playerName, easytierID, vendorPrefix string) PlayerInfo {
+	return PlayerInfo{
+		Name:       playerName,
+		MachineID:  machineID,
+		EasyTierID: easytierID,
+		Vendor:     MakeVendor(vendorPrefix),
+		Kind:       KindGuest,
+	}
 }
 
 func NewScaffoldingService(emitter utils.EventEmitter) *ScaffoldingService {
@@ -185,7 +222,7 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 		return nil, err
 	}
 
-	hostname := fmt.Sprintf("scaffolding-mc-server-%d", tcpPort)
+	hostname := fmt.Sprintf("%s%d", hostnamePrefix, tcpPort)
 	virtualIP, err := manager.Start(easytier.StartOptions{
 		NetworkName:   rc.EasyTierNetworkName(),
 		NetworkSecret: rc.EasyTierNetworkSecret(),
@@ -224,7 +261,7 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 			Name:      playerName,
 			MachineID: machineID,
 			Vendor:    MakeVendor(vendorPrefix),
-			Kind:      "HOST",
+			Kind:      KindHost,
 		},
 		lastSeen: time.Now(),
 	}
@@ -298,12 +335,7 @@ func (s *ScaffoldingService) GetRoomStatus() (*RoomStatus, error) {
 }
 
 func (s *ScaffoldingService) buildRoomStatus(virtualIP string) *RoomStatus {
-	s.hostPlayerMu.Lock()
-	players := make([]PlayerInfo, 0, len(s.hostPlayers))
-	for _, e := range s.hostPlayers {
-		players = append(players, *e.info)
-	}
-	s.hostPlayerMu.Unlock()
+	players := s.copyPlayers()
 
 	code := ""
 	if s.roomCode != nil {
@@ -332,7 +364,7 @@ func (s *ScaffoldingService) hostPlayerCleanupLoop() {
 			s.hostPlayerMu.Lock()
 			now := time.Now()
 			for id, e := range s.hostPlayers {
-				if e.info.Kind == "GUEST" && now.Sub(e.lastSeen) > guestTimeout {
+				if e.info.Kind == KindGuest && now.Sub(e.lastSeen) > guestTimeout {
 					s.eventEmitter.Emit("room.player_left", *e.info)
 					delete(s.hostPlayers, id)
 				}
@@ -454,20 +486,12 @@ func (s *ScaffoldingService) handlePing(conn net.Conn, body []byte) {
 
 func (s *ScaffoldingService) handleProtocols(conn net.Conn, body []byte) {
 	clientProtocols := strings.Split(string(body), "\x00")
-	clientSet := make(map[string]bool)
+	clientSet := make(map[string]bool, len(clientProtocols))
 	for _, p := range clientProtocols {
 		p = strings.TrimSpace(p)
 		if p != "" {
 			clientSet[p] = true
 		}
-	}
-
-	serverProtocols := []string{
-		ProtocolPing,
-		ProtocolProtocols,
-		ProtocolServerPort,
-		ProtocolPlayerPing,
-		ProtocolPlayerProfilesList,
 	}
 
 	var common []string
@@ -488,10 +512,9 @@ func (s *ScaffoldingService) handleServerPort(conn net.Conn) {
 		WriteProtocolResponse(conn, StatusServerNotStarted, nil)
 		return
 	}
-	buf := make([]byte, 2)
-	buf[0] = byte(s.mcPort >> 8)
-	buf[1] = byte(s.mcPort)
-	WriteProtocolResponse(conn, StatusOK, buf)
+	var buf [2]byte
+	binary.BigEndian.PutUint16(buf[:], s.mcPort)
+	WriteProtocolResponse(conn, StatusOK, buf[:])
 }
 
 func (s *ScaffoldingService) handlePlayerPing(conn net.Conn, body []byte) {
@@ -503,10 +526,10 @@ func (s *ScaffoldingService) handlePlayerPing(conn net.Conn, body []byte) {
 
 	s.hostPlayerMu.Lock()
 	if player.Kind == "" {
-		player.Kind = "GUEST"
+		player.Kind = KindGuest
 	}
 	isNew := false
-	if _, exists := s.hostPlayers[player.MachineID]; !exists && player.Kind == "GUEST" {
+	if _, exists := s.hostPlayers[player.MachineID]; !exists && player.Kind == KindGuest {
 		isNew = true
 	}
 	s.hostPlayers[player.MachineID] = &playerEntry{
@@ -523,12 +546,7 @@ func (s *ScaffoldingService) handlePlayerPing(conn net.Conn, body []byte) {
 }
 
 func (s *ScaffoldingService) handlePlayerProfilesList(conn net.Conn) {
-	s.hostPlayerMu.Lock()
-	players := make([]PlayerInfo, 0, len(s.hostPlayers))
-	for _, e := range s.hostPlayers {
-		players = append(players, *e.info)
-	}
-	s.hostPlayerMu.Unlock()
+	players := s.copyPlayers()
 
 	data, err := json.Marshal(players)
 	if err != nil {
@@ -603,14 +621,13 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 		manager.Stop()
 		return nil, fmt.Errorf("加入已取消")
 	}
-	hostIP, _, err := s.discoverHostAndConnect(manager, 60*time.Second)
+	hostIP, _, dc, err := s.discoverHostAndConnect(manager, 60*time.Second)
 	if err != nil {
 		manager.Stop()
 		return nil, fmt.Errorf("连接主机失败: %w", err)
 	}
 
-	// 4. We already have a working TCP connection from discoverHostAndConnect
-	conn := s.guestConn
+	conn := dc.conn
 
 	easytierID := ""
 	if peerID, err := manager.GetPeerID(); err == nil {
@@ -622,7 +639,7 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 		return nil, err
 	}
 
-	// 8. Store state and start heartbeat (MC port-forward is set up asynchronously)
+	// Store state and start heartbeat
 	s.guestMu.Lock()
 	s.guestManager = manager
 	s.guestConn = conn
@@ -635,6 +652,8 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 	s.guestPlayerName = playerName
 	s.guestNegotiatedEasyTierID = negotiatedEasyTierID
 	s.guestMotd = motd
+	s.guestScaffoldingLocalPort = dc.localPort
+	s.guestDirectLocal = dc.directLocal
 	s.guestMu.Unlock()
 
 	// Set up MC port-forward via EasyTier (compatible with both GravityCone and Terracotta hosts)
@@ -655,78 +674,73 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 	return s.buildConnectionStatus(), nil
 }
 
-func (s *ScaffoldingService) discoverHostAndConnect(manager *easytier.EasyTierManager, timeout time.Duration) (string, uint16, error) {
+type discoveredConn struct {
+	conn         net.Conn
+	localPort    uint16
+	directLocal  bool
+}
+
+func (s *ScaffoldingService) discoverHostAndConnect(manager *easytier.EasyTierManager, timeout time.Duration) (string, uint16, *discoveredConn, error) {
 	deadline := time.Now().Add(timeout)
 
 	var lastErr error
-	var prevForwardProto string
 	var prevForwardLocal string
 	var prevForwardRemote string
 
 	for time.Now().Before(deadline) {
 		s.reportJoinProgress("waiting_peer")
 		if s.joinCancelled.Load() {
-			return "", 0, fmt.Errorf("加入已取消")
+			return "", 0, nil, fmt.Errorf("加入已取消")
 		}
 		if !manager.IsRunning() {
-			return "", 0, fmt.Errorf("easytier-core 进程已退出")
+			return "", 0, nil, fmt.Errorf("easytier-core 进程已退出")
 		}
 
-		hostIP, scaffoldingPort, err := manager.FindPeerByHostnamePrefix("scaffolding-mc-server-")
+		hostIP, scaffoldingPort, err := manager.FindPeerByHostnamePrefix(hostnamePrefix)
 		if err != nil {
 			lastErr = err
 			time.Sleep(2 * time.Second)
 			continue
 		}
 
-		if s.tryDirectLocalhost(scaffoldingPort) {
+		if dc := s.tryDirectLocalhost(scaffoldingPort); dc != nil {
 			slog.Info("connected via direct localhost", "port", scaffoldingPort)
-			return hostIP, scaffoldingPort, nil
+			return hostIP, scaffoldingPort, dc, nil
 		}
 
 		localPort, conn, err := s.tryP2PConnect(manager, hostIP, scaffoldingPort)
 		if err != nil {
 			lastErr = err
-			prevForwardProto = "tcp"
 			prevForwardLocal = fmt.Sprintf("0.0.0.0:%d", localPort)
 			prevForwardRemote = fmt.Sprintf("%s:%d", hostIP, scaffoldingPort)
 			time.Sleep(2 * time.Second)
 			continue
 		}
 
-		if prevForwardProto != "" {
-			manager.RemovePortForward(prevForwardProto, prevForwardLocal, prevForwardRemote)
+		if prevForwardLocal != "" {
+			manager.RemovePortForward("tcp", prevForwardLocal, prevForwardRemote)
 		}
 
-		s.guestMu.Lock()
-		s.guestConn = conn
-		s.guestScaffoldingLocalPort = localPort
-		s.guestMu.Unlock()
-		return hostIP, scaffoldingPort, nil
+		return hostIP, scaffoldingPort, &discoveredConn{conn: conn, localPort: localPort}, nil
 	}
 
-	return "", 0, lastErr
+	return "", 0, nil, lastErr
 }
 
-func (s *ScaffoldingService) tryDirectLocalhost(scaffoldingPort uint16) bool {
+func (s *ScaffoldingService) tryDirectLocalhost(scaffoldingPort uint16) *discoveredConn {
 	directConn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", scaffoldingPort), 2*time.Second)
 	if err != nil {
-		return false
+		return nil
 	}
 	if WriteProtocolRequest(directConn, ProtocolPing, nil) != nil {
 		directConn.Close()
-		return false
+		return nil
 	}
 	if _, _, err := ReadProtocolResponse(directConn); err != nil {
 		directConn.Close()
-		return false
+		return nil
 	}
-	s.guestMu.Lock()
-	s.guestConn = directConn
-	s.guestScaffoldingLocalPort = scaffoldingPort
-	s.guestDirectLocal = true
-	s.guestMu.Unlock()
-	return true
+	return &discoveredConn{conn: directConn, localPort: scaffoldingPort, directLocal: true}
 }
 
 func (s *ScaffoldingService) tryP2PConnect(manager *easytier.EasyTierManager, hostIP string, scaffoldingPort uint16) (uint16, net.Conn, error) {
@@ -762,23 +776,23 @@ func (s *ScaffoldingService) tryP2PConnect(manager *easytier.EasyTierManager, ho
 }
 
 func (s *ScaffoldingService) joinHandshake(conn net.Conn, manager *easytier.EasyTierManager, machineID, playerName, easytierID, vendorPrefix string) (bool, uint16, error) {
+	var handshakeErr error
+	defer func() {
+		if handshakeErr != nil {
+			conn.Close()
+			manager.Stop()
+		}
+	}()
+
 	// Send c:player_ping
-	pingData, _ := json.Marshal(PlayerInfo{
-		Name:       playerName,
-		MachineID:  machineID,
-		EasyTierID: easytierID,
-		Vendor:     MakeVendor(vendorPrefix),
-		Kind:       "GUEST",
-	})
+	pingData, _ := json.Marshal(newGuestPlayerInfo(machineID, playerName, easytierID, vendorPrefix))
 	if err := WriteProtocolRequest(conn, ProtocolPlayerPing, pingData); err != nil {
-		conn.Close()
-		manager.Stop()
-		return false, 0, fmt.Errorf("发送心跳失败: %w", err)
+		handshakeErr = fmt.Errorf("发送心跳失败: %w", err)
+		return false, 0, handshakeErr
 	}
 	if _, _, err := ReadProtocolResponse(conn); err != nil {
-		conn.Close()
-		manager.Stop()
-		return false, 0, fmt.Errorf("心跳响应失败: %w", err)
+		handshakeErr = fmt.Errorf("心跳响应失败: %w", err)
+		return false, 0, handshakeErr
 	}
 
 	// Protocol negotiation
@@ -791,47 +805,36 @@ func (s *ScaffoldingService) joinHandshake(conn net.Conn, manager *easytier.Easy
 		ProtocolPlayerEasyTierID,
 	}, "\x00")
 	if err := WriteProtocolRequest(conn, ProtocolProtocols, []byte(supportedProtocols)); err != nil {
-		conn.Close()
-		manager.Stop()
-		return false, 0, fmt.Errorf("协议协商失败: %w", err)
+		handshakeErr = fmt.Errorf("协议协商失败: %w", err)
+		return false, 0, handshakeErr
 	}
 	status, respBody, err := ReadProtocolResponse(conn)
 	if err != nil || status != StatusOK {
-		conn.Close()
-		manager.Stop()
-		return false, 0, fmt.Errorf("协议协商失败")
+		handshakeErr = fmt.Errorf("协议协商失败")
+		return false, 0, handshakeErr
 	}
-	negotiated := strings.Split(string(respBody), "\x00")
-	negotiatedEasyTierID := false
-	for _, p := range negotiated {
-		if p == ProtocolPlayerEasyTierID {
-			negotiatedEasyTierID = true
-		}
-	}
+	negotiatedEasyTierID := slices.Contains(strings.Split(string(respBody), "\x00"), ProtocolPlayerEasyTierID)
 
 	s.reportJoinProgress("handshaking")
 
 	// Get MC server port
 	if err := WriteProtocolRequest(conn, ProtocolServerPort, nil); err != nil {
-		conn.Close()
-		manager.Stop()
-		return false, 0, fmt.Errorf("获取服务器端口失败: %w", err)
+		handshakeErr = fmt.Errorf("获取服务器端口失败: %w", err)
+		return false, 0, handshakeErr
 	}
 	status, respBody, err = ReadProtocolResponse(conn)
 	if err != nil {
-		conn.Close()
-		manager.Stop()
-		return false, 0, fmt.Errorf("获取服务器端口失败: %w", err)
+		handshakeErr = fmt.Errorf("获取服务器端口失败: %w", err)
+		return false, 0, handshakeErr
 	}
 	if status != StatusOK && status != StatusServerNotStarted {
-		conn.Close()
-		manager.Stop()
-		return false, 0, fmt.Errorf("获取服务器端口失败: 状态=%d", status)
+		handshakeErr = fmt.Errorf("获取服务器端口失败: 状态=%d", status)
+		return false, 0, handshakeErr
 	}
 
 	var mcPort uint16
 	if status == StatusOK && len(respBody) >= 2 {
-		mcPort = uint16(respBody[0])<<8 | uint16(respBody[1])
+		mcPort = binary.BigEndian.Uint16(respBody[:2])
 	}
 	return negotiatedEasyTierID, mcPort, nil
 }
@@ -864,20 +867,16 @@ func (s *ScaffoldingService) GetConnectionStatus() (*ConnectionStatus, error) {
 	running := s.guestRunning
 	s.guestMu.Unlock()
 
-	slog.Info("GetConnectionStatus", "running", running)
-
 	if !running {
 		s.guestMu.Lock()
 		reason := s.guestDisconnectReason
 		s.guestMu.Unlock()
-		slog.Info("GetConnectionStatus not running", "reason", reason)
 		if reason != "" {
 			return s.buildConnectionStatus(), nil
 		}
 		return nil, fmt.Errorf("未连接到任何房间")
 	}
 
-	// Try to refresh player list
 	s.refreshGuestPlayerList()
 
 	return s.buildConnectionStatus(), nil
@@ -953,7 +952,7 @@ func (s *ScaffoldingService) guestHeartbeatLoop(machineID, easytierID, playerNam
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	slog.Info("Heartbeat started")
+	pingData, _ := json.Marshal(newGuestPlayerInfo(machineID, playerName, easytierID, vendorPrefix))
 
 	for {
 		select {
@@ -964,17 +963,8 @@ func (s *ScaffoldingService) guestHeartbeatLoop(machineID, easytierID, playerNam
 			s.guestMu.Unlock()
 
 			if !running || conn == nil {
-				slog.Info("Heartbeat exiting", "running", running)
 				return
 			}
-
-			pingData, _ := json.Marshal(PlayerInfo{
-				Name:       playerName,
-				MachineID:  machineID,
-				EasyTierID: easytierID,
-				Vendor:     MakeVendor(vendorPrefix),
-				Kind:       "GUEST",
-			})
 
 			status, _, err := s.writeAndWait(conn, ProtocolPlayerPing, pingData)
 			if err != nil {
@@ -990,7 +980,6 @@ func (s *ScaffoldingService) guestHeartbeatLoop(machineID, easytierID, playerNam
 			s.refreshGuestPlayerList()
 
 		case <-s.guestStopCh:
-			slog.Info("Heartbeat exiting on stopCh")
 			return
 		}
 	}
