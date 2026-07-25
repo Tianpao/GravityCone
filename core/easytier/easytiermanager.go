@@ -23,7 +23,22 @@ const hostVirtualIP = "10.144.144.1"
 var (
 	easytierStdout io.Writer = os.Stdout
 	easytierStderr io.Writer = os.Stderr
+
+	customEasyTierDir string
+	skipEasyTierDownload bool
 )
+
+// SetCustomEasyTierDir sets a custom directory for locating EasyTier binaries.
+// When set, resolveEasyTierBinary searches this directory instead of the default path.
+func SetCustomEasyTierDir(dir string) {
+	customEasyTierDir = dir
+}
+
+// SetSkipEasyTierDownload disables automatic EasyTier download.
+// Call this when the user provides their own EasyTier directory via CLI flag.
+func SetSkipEasyTierDownload(skip bool) {
+	skipEasyTierDownload = skip
+}
 
 // SetEasyTierLogOutput redirects easytier-core process output to the given file path.
 // Pass empty string to reset to default (os.Stdout/os.Stderr).
@@ -74,6 +89,14 @@ func resolveEasyTierBinary(name string) (string, error) {
 
 	if p, err := exec.LookPath(exeName); err == nil {
 		return p, nil
+	}
+
+	// Custom directory takes priority over the default base dir
+	if customEasyTierDir != "" {
+		p := filepath.Join(customEasyTierDir, exeName)
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
 	}
 
 	baseDir := easyTierBaseDir()

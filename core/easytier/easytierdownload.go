@@ -110,6 +110,10 @@ func EnsureEasyTier() error {
 		}
 	}
 
+	if skipEasyTierDownload {
+		return fmt.Errorf("EasyTier binaries not found and auto-download is disabled")
+	}
+
 	slog.Info("EasyTier binaries not found, starting auto-download")
 	if err := downloadAndExtractEasyTier(); err != nil {
 		return emitDownloadError(fmt.Errorf("auto-download failed: %w", err))
