@@ -18,12 +18,18 @@ export interface PlayerInfo {
     "machine_id": string;
     "easytier_id"?: string;
     "vendor": string;
-
-    /**
-     * "HOST" or "GUEST"
-     */
-    "kind": string;
+    "kind": PlayerKind;
 }
+
+export enum PlayerKind {
+    /**
+     * The Go zero value for the underlying type of the enum.
+     */
+    $zero = "",
+
+    KindHost = "HOST",
+    KindGuest = "GUEST",
+};
 
 export interface RoomStatus {
     "code": string;

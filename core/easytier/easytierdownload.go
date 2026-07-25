@@ -14,13 +14,16 @@ import (
 	"time"
 
 	"gravitycone/core/utils"
+	"gravitycone/core/utils/process"
 )
 
-// EasyTierVersion is the expected EasyTier release version.
 const EasyTierVersion = "v2.6.4"
 
-// easyTierBaseURL is the base URL for downloading EasyTier releases.
-// Override with SetEasyTierBaseURL or the EASYTIER_MIRROR_URL env var.
+const (
+	EventDownloadProgress = "download.progress"
+	EventDownloadError    = "download.error"
+)
+
 var easyTierBaseURL = "https://github.com/EasyTier/EasyTier/releases/download"
 
 func init() {
@@ -29,34 +32,29 @@ func init() {
 	}
 }
 
-// SetEasyTierBaseURL replaces the default download base URL (for mirror/acceleration).
-// Pass a URL without trailing slash. Empty string is a no-op.
 func SetEasyTierBaseURL(url string) {
 	if url != "" {
 		easyTierBaseURL = strings.TrimRight(url, "/")
 	}
 }
 
-// DownloadProgressData is the data shape emitted during download progress events.
 type DownloadProgressData struct {
-	Step      string `json:"step"`       // "downloading" or "extracting"
-	Percent   int    `json:"percent"`    // 0-100
-	TotalSize int64  `json:"total_size"` // total bytes (0 if unknown)
-	Speed     int64  `json:"speed"`      // bytes/sec (download step only)
+	Step      string `json:"step"`
+	Percent   int    `json:"percent"`
+	TotalSize int64  `json:"total_size"`
+	Speed     int64  `json:"speed"`
 }
 
-// DownloadErrorData is emitted when the EasyTier download fails.
 type DownloadErrorData struct {
 	Error string `json:"error"`
 }
 
 // easyTierPlatform holds the OS and arch segments used in the download URL.
 type easyTierPlatform struct {
-	sys  string // "windows", "macos", "linux", "freebsd"
-	arch string // "x86_64", "aarch64", "loongarch64", "riscv64"
+	sys  string
+	arch string
 }
 
-// detectEasyTierPlatform maps runtime.GOOS/GOARCH to EasyTier release naming.
 func detectEasyTierPlatform() (easyTierPlatform, error) {
 	switch runtime.GOOS {
 	case "windows":
@@ -90,15 +88,15 @@ func (p easyTierPlatform) downloadURL() string {
 		easyTierBaseURL, EasyTierVersion, p.sys, p.arch, EasyTierVersion)
 }
 
-// ensureEasyTierEmitter is the event emitter used by EnsureEasyTier for progress reporting.
 var ensureEasyTierEmitter utils.EventEmitter = utils.NilEventEmitter{}
 
-// SetEnsureEasyTierEmitter sets the event emitter for download progress reporting.
 func SetEnsureEasyTierEmitter(emitter utils.EventEmitter) {
 	if emitter != nil {
 		ensureEasyTierEmitter = emitter
 	}
 }
+
+var ensureMu sync.Mutex
 
 // EnsureEasyTier checks if easytier-core and easytier-cli exist locally,
 // and downloads them if missing. Emits "download.progress" and "download.error"
@@ -116,114 +114,76 @@ func EnsureEasyTier() error {
 		}
 	}
 
-	slog.Info("EasyTier binaries not found, starting auto-download")
-	_, err = downloadEasyTierBinary("easytier-core")
-	if err != nil {
-		return emitDownloadError(fmt.Errorf("auto-download easytier-core failed: %w", err))
+	if skipEasyTierDownload {
+		return fmt.Errorf("EasyTier binaries not found and auto-download is disabled")
 	}
-	_, err = downloadEasyTierBinary("easytier-cli")
-	if err != nil {
-		return emitDownloadError(fmt.Errorf("auto-download easytier-cli failed: %w", err))
+
+	slog.Info("EasyTier binaries not found, starting auto-download")
+	if err := downloadAndExtractEasyTier(); err != nil {
+		return emitDownloadError(fmt.Errorf("auto-download failed: %w", err))
 	}
 	slog.Info("EasyTier binaries ready")
 	return nil
 }
 
 func emitDownloadError(err error) error {
-	ensureEasyTierEmitter.Emit("download.error", DownloadErrorData{Error: err.Error()})
+	ensureEasyTierEmitter.Emit(EventDownloadError, DownloadErrorData{Error: err.Error()})
 	return err
 }
 
-// ensureMu serializes full EnsureEasyTier calls, including retries.
-var ensureMu sync.Mutex
+var downloadClient = &http.Client{Timeout: 120 * time.Second}
 
-// downloadMu serializes download+extract to prevent concurrent goroutines from
-// downloading the same zip simultaneously.
-var downloadMu sync.Mutex
-
-// downloadEasyTierBinary downloads the EasyTier release zip and extracts the
-// requested binary (plus supporting DLLs on Windows) into the easytier/ directory.
-// Returns the absolute path to the extracted binary.
-func downloadEasyTierBinary(name string) (string, error) {
-	exeName := name
-	if runtime.GOOS == "windows" {
-		exeName = name + ".exe"
-	}
-
-	targetDir := resolveEasyTierDir()
-
-	downloadMu.Lock()
-	defer downloadMu.Unlock()
-
-	// Double-check: another goroutine may have downloaded while we waited
-	if p := filepath.Join(targetDir, exeName); fileExists(p) {
-		abs, _ := filepath.Abs(p)
-		return abs, nil
+func downloadAndExtractEasyTier() error {
+	targetDir := easyTierBaseDir()
+	if targetDir == "" {
+		return fmt.Errorf("cannot determine easytier directory")
 	}
 
 	plat, err := detectEasyTierPlatform()
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	url := plat.downloadURL()
 	slog.Info("downloading EasyTier", "url", url, "target", targetDir)
 
-	// Download zip to temp file with progress tracking
 	tmpFile, err := os.CreateTemp("", "easytier-*.zip")
 	if err != nil {
-		return "", fmt.Errorf("create temp file: %w", err)
+		return fmt.Errorf("create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
 	if err := downloadFileWithProgress(tmpFile, url); err != nil {
 		tmpFile.Close()
-		return "", fmt.Errorf("download failed: %w", err)
+		return fmt.Errorf("download failed: %w", err)
 	}
 	tmpFile.Close()
 
-	// Extract needed files from zip
-	ensureEasyTierEmitter.Emit("download.progress", DownloadProgressData{
+	ensureEasyTierEmitter.Emit(EventDownloadProgress, DownloadProgressData{
 		Step:    "extracting",
 		Percent: 0,
 	})
 	if err := extractEasyTierZip(tmpPath, targetDir); err != nil {
-		return "", fmt.Errorf("extract failed: %w", err)
+		return fmt.Errorf("extract failed: %w", err)
 	}
-	ensureEasyTierEmitter.Emit("download.progress", DownloadProgressData{
+	ensureEasyTierEmitter.Emit(EventDownloadProgress, DownloadProgressData{
 		Step:    "extracting",
 		Percent: 100,
 	})
 
-	// Verify the binary we need is now present
-	result := filepath.Join(targetDir, exeName)
-	if !fileExists(result) {
-		return "", fmt.Errorf("%s not found in archive", exeName)
+	for _, name := range []string{"easytier-core", "easytier-cli"} {
+		exeName := process.PlatformExeName(name)
+		if _, err := os.Stat(filepath.Join(targetDir, exeName)); err != nil {
+			return fmt.Errorf("%s not found in archive", exeName)
+		}
 	}
-	abs, _ := filepath.Abs(result)
-	slog.Info("EasyTier binary extracted", "path", abs)
-	return abs, nil
+
+	return nil
 }
 
-// resolveEasyTierDir returns the easytier/ directory where binaries should be placed.
-// Uses os.UserConfigDir()/GravityCone/easytier/ so all GravityCone installations share
-// the same EasyTier binaries. Falls back to next-to-executable if unavailable.
-func resolveEasyTierDir() string {
-	if configDir, err := os.UserConfigDir(); err == nil {
-		return filepath.Join(configDir, "GravityCone", "easytier")
-	}
-	if exeDir, err := os.Executable(); err == nil {
-		return filepath.Join(filepath.Dir(exeDir), "easytier")
-	}
-	abs, _ := filepath.Abs("easytier")
-	return abs
-}
-
-// downloadFileWithProgress downloads url into dst with progress events emitted every second.
 func downloadFileWithProgress(dst io.Writer, url string) error {
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := downloadClient.Get(url)
 	if err != nil {
 		return err
 	}
@@ -262,7 +222,7 @@ func downloadFileWithProgress(dst io.Writer, url string) error {
 				percent = int(written * 100 / total)
 			}
 
-			ensureEasyTierEmitter.Emit("download.progress", DownloadProgressData{
+			ensureEasyTierEmitter.Emit(EventDownloadProgress, DownloadProgressData{
 				Step:      "downloading",
 				Percent:   percent,
 				TotalSize: total,
@@ -280,8 +240,7 @@ func downloadFileWithProgress(dst io.Writer, url string) error {
 		}
 	}
 
-	// Final progress event
-	ensureEasyTierEmitter.Emit("download.progress", DownloadProgressData{
+	ensureEasyTierEmitter.Emit(EventDownloadProgress, DownloadProgressData{
 		Step:      "downloading",
 		Percent:   100,
 		TotalSize: total,
@@ -291,8 +250,6 @@ func downloadFileWithProgress(dst io.Writer, url string) error {
 	return nil
 }
 
-// extractEasyTierZip extracts easytier-core, easytier-cli, and (on Windows)
-// .dll/.sys files from the zip into targetDir.
 func extractEasyTierZip(zipPath, targetDir string) error {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
@@ -310,8 +267,8 @@ func extractEasyTierZip(zipPath, targetDir string) error {
 			continue
 		}
 
-		shouldExtract := false
 		mode := os.FileMode(0755)
+		shouldExtract := false
 
 		switch {
 		case base == "easytier-core" || base == "easytier-core.exe":
@@ -336,7 +293,6 @@ func extractEasyTierZip(zipPath, targetDir string) error {
 	return nil
 }
 
-// extractZipEntry writes a single zip file entry to dstPath with the given mode.
 func extractZipEntry(f *zip.File, dstPath string, mode os.FileMode) error {
 	rc, err := f.Open()
 	if err != nil {
@@ -352,9 +308,4 @@ func extractZipEntry(f *zip.File, dstPath string, mode os.FileMode) error {
 
 	_, err = io.Copy(dst, rc)
 	return err
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }

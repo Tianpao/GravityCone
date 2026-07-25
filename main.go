@@ -38,8 +38,8 @@ var (
 var assets embed.FS
 
 func init() {
-	application.RegisterEvent[easytier.DownloadProgressData]("download.progress")
-	application.RegisterEvent[easytier.DownloadErrorData]("download.error")
+	application.RegisterEvent[easytier.DownloadProgressData](easytier.EventDownloadProgress)
+	application.RegisterEvent[easytier.DownloadErrorData](easytier.EventDownloadError)
 	application.RegisterEvent[scaffolding.PlayerInfo]("room.player_joined")
 	application.RegisterEvent[scaffolding.PlayerInfo]("room.player_left")
 	application.RegisterEvent[map[string]string]("room.closed")
@@ -160,9 +160,6 @@ func main() {
 		URL:              "/",
 	})
 
-	if err := natayarkSvc.RestoreSession(); err != nil {
-		slog.Warn("failed to restore session", "error", err)
-	}
 	if err := minecraftSvc.RestoreSession(); err != nil {
 		slog.Warn("failed to restore Minecraft session", "error", err)
 	}

@@ -6,6 +6,10 @@ export {
     ScaffoldingService
 };
 
+export {
+    PlayerKind
+} from "./models.js";
+
 export type {
     ConnectionStatus,
     PlayerInfo,

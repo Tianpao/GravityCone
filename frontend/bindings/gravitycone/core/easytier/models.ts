@@ -12,24 +12,9 @@ export interface DownloadErrorData {
  * DownloadProgressData is the data shape emitted during download progress events.
  */
 export interface DownloadProgressData {
-    /**
-     * "downloading" or "extracting"
-     */
     "step": string;
-
-    /**
-     * 0-100
-     */
     "percent": number;
-
-    /**
-     * total bytes (0 if unknown)
-     */
     "total_size": number;
-
-    /**
-     * bytes/sec (download step only)
-     */
     "speed": number;
 }
 

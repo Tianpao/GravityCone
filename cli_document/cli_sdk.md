@@ -26,7 +26,7 @@ task build:cli:dev
 ### 命令行参数
 
 ```
-gravitycone-cli [-p <addr>] [--peers <addr>] [-v <prefix>] [--vendor <prefix>] [-m <motd>] [--motd <motd>]
+gravitycone-cli [-p <addr>] [--peers <addr>] [-v <prefix>] [--vendor <prefix>] [-m <motd>] [--motd <motd>] [-e <dir>] [--easytier-dir <dir>]
 ```
 
 | 参数 | 说明 |
@@ -37,6 +37,8 @@ gravitycone-cli [-p <addr>] [--peers <addr>] [-v <prefix>] [--vendor <prefix>] [
 | `--vendor <prefix>` | 同 `-v` |
 | `-m <motd>` | 自定义局域网广播 MOTD，其他玩家在多人游戏列表中看到的房间名称 |
 | `--motd <motd>` | 同 `-m` |
+| `-e <dir>` | 指定 EasyTier 二进制文件所在目录，指定后跳过自动下载 |
+| `--easytier-dir <dir>` | 同 `-e` |
 
 地址支持逗号分隔，以下写法均合法：
 
@@ -57,9 +59,13 @@ gravitycone-cli --vendor GC -p tcp://1.2.3.4:5678
 # 自定义局域网广播 MOTD
 gravitycone-cli -m "PCL CE 联机房间"
 gravitycone-cli --motd "PCL CE 联机房间" -p tcp://1.2.3.4:5678
+
+# 指定 EasyTier 目录（跳过自动下载）
+gravitycone-cli -e /path/to/easytier
+gravitycone-cli --easytier-dir ./easytier -p tcp://1.2.3.4:5678
 ```
 
-不指定节点则使用内置默认节点，不指定厂商前缀则默认为空，不指定 MOTD 则使用默认值 `§6§l双击进入联机房间（请保持GravityCone运行）`。
+不指定节点则使用内置默认节点，不指定厂商前缀则默认为空，不指定 MOTD 则使用默认值 `§6§l双击进入联机房间（请保持GravityCone运行）`。指定 `--easytier-dir` 后，程序从该目录查找 `easytier-core` 和 `easytier-cli`，不再自动下载；若目录中找不到二进制文件则启动时报错。
 
 ### 日志文件
 
@@ -457,7 +463,7 @@ printf '{"id":1,"method":"system.ping","params":{}}\n{"id":2,"method":"system.sh
 ```
 宿主进程                        CLI 进程
    │                              │
-   │──── 启动 CLI (-p ... -v ... -m ...) ──>│
+   │──── 启动 CLI (-p ... -v ... -m ... -e ...) ──>│
    │                              │  初始化服务，日志写入 logs/
    │<─── system.ready 事件 ───────│  {"event":"system.ready","data":{"version":"1.0.0"}}
    │                              │

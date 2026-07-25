@@ -28,16 +28,26 @@ const (
 	StatusUnknownError     = 255
 )
 
+type PlayerKind string
+
+const (
+	KindHost  PlayerKind = "HOST"
+	KindGuest PlayerKind = "GUEST"
+)
+
 type PlayerInfo struct {
-	Name       string `json:"name"`
-	MachineID  string `json:"machine_id"`
-	EasyTierID string `json:"easytier_id,omitempty"`
-	Vendor     string `json:"vendor"`
-	Kind       string `json:"kind"` // "HOST" or "GUEST"
+	Name       string     `json:"name"`
+	MachineID  string     `json:"machine_id"`
+	EasyTierID string     `json:"easytier_id,omitempty"`
+	Vendor     string     `json:"vendor"`
+	Kind       PlayerKind `json:"kind"`
 }
 
+const ioDeadline = 10 * time.Second
+const maxBodySize = 1024 * 1024 // 1MB
+
 func ReadProtocolRequest(conn net.Conn) (typeName string, body []byte, err error) {
-	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	conn.SetReadDeadline(time.Now().Add(ioDeadline))
 
 	var typeLenBuf [1]byte
 	if _, err := io.ReadFull(conn, typeLenBuf[:]); err != nil {
@@ -59,7 +69,7 @@ func ReadProtocolRequest(conn net.Conn) (typeName string, body []byte, err error
 	}
 	bodyLen := int(binary.BigEndian.Uint32(bodyLenBuf[:]))
 
-	if bodyLen > 1024*1024 { // 1MB max
+	if bodyLen > maxBodySize {
 		return "", nil, fmt.Errorf("请求体过大: %d bytes", bodyLen)
 	}
 
@@ -74,7 +84,7 @@ func ReadProtocolRequest(conn net.Conn) (typeName string, body []byte, err error
 }
 
 func WriteProtocolRequest(conn net.Conn, typeName string, body []byte) error {
-	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	conn.SetWriteDeadline(time.Now().Add(ioDeadline))
 
 	typeBytes := []byte(typeName)
 	if len(typeBytes) > 255 {
@@ -84,9 +94,9 @@ func WriteProtocolRequest(conn net.Conn, typeName string, body []byte) error {
 	buf := make([]byte, 0, 1+len(typeBytes)+4+len(body))
 	buf = append(buf, byte(len(typeBytes)))
 	buf = append(buf, typeBytes...)
-	bodyLen := make([]byte, 4)
-	binary.BigEndian.PutUint32(bodyLen, uint32(len(body)))
-	buf = append(buf, bodyLen...)
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(body)))
+	buf = append(buf, lenBuf[:]...)
 	buf = append(buf, body...)
 
 	_, err := conn.Write(buf)
@@ -94,7 +104,7 @@ func WriteProtocolRequest(conn net.Conn, typeName string, body []byte) error {
 }
 
 func ReadProtocolResponse(conn net.Conn) (status uint8, body []byte, err error) {
-	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	conn.SetReadDeadline(time.Now().Add(ioDeadline))
 
 	var header [5]byte
 	if _, err := io.ReadFull(conn, header[:]); err != nil {
@@ -104,7 +114,7 @@ func ReadProtocolResponse(conn net.Conn) (status uint8, body []byte, err error) 
 	status = header[0]
 	bodyLen := int(binary.BigEndian.Uint32(header[1:5]))
 
-	if bodyLen > 1024*1024 {
+	if bodyLen > maxBodySize {
 		return status, nil, fmt.Errorf("响应体过大: %d bytes", bodyLen)
 	}
 
@@ -119,18 +129,13 @@ func ReadProtocolResponse(conn net.Conn) (status uint8, body []byte, err error) 
 }
 
 func WriteProtocolResponse(conn net.Conn, status uint8, body []byte) error {
-	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	conn.SetWriteDeadline(time.Now().Add(ioDeadline))
 
-	header := [5]byte{}
-	header[0] = status
-	binary.BigEndian.PutUint32(header[1:5], uint32(len(body)))
+	buf := make([]byte, 5, 5+len(body))
+	buf[0] = status
+	binary.BigEndian.PutUint32(buf[1:5], uint32(len(body)))
+	buf = append(buf, body...)
 
-	if _, err := conn.Write(header[:]); err != nil {
-		return err
-	}
-	if len(body) > 0 {
-		_, err := conn.Write(body)
-		return err
-	}
-	return nil
+	_, err := conn.Write(buf)
+	return err
 }

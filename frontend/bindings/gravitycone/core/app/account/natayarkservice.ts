@@ -18,12 +18,12 @@ export function Logout(): $CancellablePromise<void> {
 }
 
 /**
- * RestoreSession is called at startup to reload the persisted session.
+ * RestoreSession validates the given access token and restores the in-memory session.
  */
-export function RestoreSession(): $CancellablePromise<void> {
-    return $Call.ByID(1559736164);
+export function RestoreSession(token: string): $CancellablePromise<$models.NatayarkUser | null> {
+    return $Call.ByID(1559736164, token);
 }
 
-export function StartLogin(): $CancellablePromise<$models.NatayarkUser | null> {
+export function StartLogin(): $CancellablePromise<$models.NatayarkLoginResult | null> {
     return $Call.ByID(3788033663);
 }

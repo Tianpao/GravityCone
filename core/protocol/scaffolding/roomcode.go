@@ -7,9 +7,6 @@ import (
 	"gravitycone/core/utils"
 )
 
-// pow34Mod7[i] = 34^i mod 7. Since 34 mod 7 = 6, the pattern is 1,6,1,6,...
-var pow34Mod7 = [16]int{1, 6, 1, 6, 1, 6, 1, 6, 1, 6, 1, 6, 1, 6, 1, 6}
-
 type RoomCode struct {
 	NetworkPart string // 8 chars: NNNN-NNNN (without dash)
 	SecretPart  string // 8 chars: SSSS-SSSS (without dash)
@@ -23,35 +20,59 @@ func charToValue(c byte) int {
 	return value
 }
 
+// isValidChecksum checks that the weighted sum of char values (position i
+// contributes value*6^(i%2)) is divisible by 7.
 func isValidChecksum(chars [16]byte) bool {
 	sum := 0
 	for i := 0; i < 16; i++ {
-		v := charToValue(chars[i])
-		if v < 0 {
+		v, ok := utils.Value(chars[i])
+		if !ok {
 			return false
 		}
-		sum += v * pow34Mod7[i]
+		if i%2 == 1 {
+			v *= 6
+		}
+		sum += v
 	}
 	return sum%7 == 0
 }
 
+// GenerateRoomCode generates a valid room code deterministically:
+// the first 15 characters are random, and the 16th is computed so
+// the checksum passes, eliminating rejection sampling.
 func GenerateRoomCode() (*RoomCode, error) {
-	for {
-		var chars [16]byte
-		for i := range chars {
-			c, err := utils.RandomChar()
-			if err != nil {
-				return nil, fmt.Errorf("failed to generate random char: %w", err)
-			}
-			chars[i] = c
+	var chars [16]byte
+	for i := 0; i < 15; i++ {
+		c, err := utils.RandomChar()
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate random char: %w", err)
 		}
-		if isValidChecksum(chars) {
-			return &RoomCode{
-				NetworkPart: string(chars[:8]),
-				SecretPart:  string(chars[8:]),
-			}, nil
+		chars[i] = c
+	}
+
+	// Compute partial checksum for positions 0..14, then find chars[15].
+	sum := 0
+	for i := 0; i < 15; i++ {
+		v, _ := utils.Value(chars[i])
+		if i%2 == 1 {
+			v *= 6
+		}
+		sum += v
+	}
+	// Position 15 is odd, so its weight is 6. We need (sum + v*6) % 7 == 0.
+	// v*6 mod 7 == (-v) mod 7, so we need v ≡ sum (mod 7).
+	rem := sum % 7
+	for ci := range utils.Charset {
+		if ci%7 == rem {
+			chars[15] = utils.Charset[ci]
+			break
 		}
 	}
+
+	return &RoomCode{
+		NetworkPart: string(chars[:8]),
+		SecretPart:  string(chars[8:]),
+	}, nil
 }
 
 func ParseRoomCode(s string) (*RoomCode, error) {
@@ -59,7 +80,6 @@ func ParseRoomCode(s string) (*RoomCode, error) {
 	s = strings.TrimPrefix(s, "U/")
 	s = strings.TrimPrefix(s, "u/")
 
-	// Remove all dashes for validation
 	clean := strings.ReplaceAll(s, "-", "")
 	if len(clean) != 16 {
 		return nil, fmt.Errorf("房间代码格式错误：应为16个字符，实际为%d", len(clean))
@@ -67,15 +87,15 @@ func ParseRoomCode(s string) (*RoomCode, error) {
 
 	clean = strings.ToUpper(clean)
 	var chars [16]byte
-	for i := 0; i < 16; i++ {
-		c := clean[i]
-		if charToValue(c) < 0 {
-			return nil, fmt.Errorf("房间代码包含无效字符: %c", c)
-		}
-		chars[i] = c
-	}
+	copy(chars[:], clean)
 
 	if !isValidChecksum(chars) {
+		// Find the first invalid char for a better error message.
+		for i := 0; i < 16; i++ {
+			if _, ok := utils.Value(chars[i]); !ok {
+				return nil, fmt.Errorf("房间代码包含无效字符: %c", chars[i])
+			}
+		}
 		return nil, fmt.Errorf("房间代码校验失败，请检查输入")
 	}
 

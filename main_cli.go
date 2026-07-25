@@ -9,11 +9,11 @@ import (
 )
 
 func main() {
-	peers, vendorPrefix, motd := parseArgs(os.Args[1:])
-	cli.Run(peers, vendorPrefix, motd)
+	peers, vendorPrefix, motd, easytierDir := parseArgs(os.Args[1:])
+	cli.Run(peers, vendorPrefix, motd, easytierDir)
 }
 
-// parseArgs extracts --peers/-p, --vendor/-v and --motd/-m flags from command-line arguments.
+// parseArgs extracts --peers/-p, --vendor/-v, --motd/-m and --easytier-dir/-e flags from command-line arguments.
 // Supports space-separated values only:
 //
 //	--peers addr1 --peers addr2
@@ -23,7 +23,9 @@ func main() {
 //	-v MyPrefix
 //	--motd "Custom MOTD"
 //	-m "Custom MOTD"
-func parseArgs(args []string) (peers []string, vendorPrefix string, motd string) {
+//	--easytier-dir /path/to/easytier
+//	-e /path/to/easytier
+func parseArgs(args []string) (peers []string, vendorPrefix string, motd string, easytierDir string) {
 	for i := 0; i < len(args); i++ {
 		if val, ok := matchFlag(args, &i, "--peers", "-p"); ok {
 			for _, p := range strings.Split(val, ",") {
@@ -35,6 +37,8 @@ func parseArgs(args []string) (peers []string, vendorPrefix string, motd string)
 			vendorPrefix = val
 		} else if val, ok := matchFlag(args, &i, "--motd", "-m"); ok {
 			motd = val
+		} else if val, ok := matchFlag(args, &i, "--easytier-dir", "-e"); ok {
+			easytierDir = val
 		}
 	}
 	return
