@@ -51,10 +51,9 @@ jobs:
             NAIDS_CLIENT_SECRET="${{ secrets.NAIDS_CLIENT_SECRET || '' }}"
 
       - name: Package
-        shell: bash
+        shell: pwsh
         run: |
-          cd bin
-          zip "gravitycone-windows-${{ matrix.arch }}.zip" gravitycone.exe
+          Compress-Archive -Path bin\gravitycone.exe -DestinationPath bin\gravitycone-windows-${{ matrix.arch }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
