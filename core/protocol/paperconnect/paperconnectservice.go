@@ -1108,23 +1108,55 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 		slog.Info("NetherNet listening for local client", "network_id", disc.NetworkID())
 		s.pcGuestConnectionReady(manager, protocol)
 
-		nnConn, err := nnLn.Accept()
-		if err != nil {
-			if s.pcGuestActive(manager) {
-				slog.Error("NetherNet accept failed", "err", err)
-				s.pcGuestSetupError(manager, protocol)
+		for {
+			nnConn, err := nnLn.Accept()
+			if err != nil {
+				if s.pcGuestActive(manager) {
+					slog.Error("NetherNet accept failed", "err", err)
+					s.pcGuestSetupError(manager, protocol)
+				}
+				return
 			}
-			return
-		}
-		slog.Info("local MC client connected via NetherNet", "remote", nnConn.RemoteAddr())
+			slog.Info("local MC client connected via NetherNet", "remote", nnConn.RemoteAddr())
 
-		proxyCtx, proxyCancel := context.WithCancel(context.Background())
-		if !pcAttachGuest(s, manager, &s.guestCancelFunc, proxyCancel) {
-			proxyCancel()
-			return
+			proxyCtx, proxyCancel := context.WithCancel(context.Background())
+			if !pcAttachGuest(s, manager, &s.guestCancelFunc, proxyCancel) {
+				proxyCancel()
+				_ = nnConn.Close()
+				return
+			}
+			proxyPackets(proxyCtx, slog.Default(), nnConn.(*nethernet.Conn), rkConn)
+
+			s.guestMu.Lock()
+			active := s.pcGuestActiveLocked(manager)
+			if active {
+				s.guestCancelFunc = nil
+				if s.guestRakConn == rkConn {
+					s.guestRakConn = nil
+				}
+			}
+			s.guestMu.Unlock()
+			if !active {
+				return
+			}
+
+			dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			rkConn, err = (raknet.Dialer{
+				MaxMTU:   rakNetMTU,
+				ErrorLog: slog.Default(),
+			}).DialContext(dialCtx, fmt.Sprintf("127.0.0.1:%d", rakLocalPort))
+			dialCancel()
+			if err != nil {
+				slog.Error("RakNet re-dial to host failed", "err", err)
+				s.pcGuestSetupError(manager, protocol)
+				return
+			}
+			if !pcAttachGuest(s, manager, &s.guestRakConn, rkConn) {
+				_ = rkConn.Close()
+				return
+			}
+			slog.Info("RakNet tunnel re-established, waiting for local Minecraft")
 		}
-		go proxyPackets(proxyCtx, slog.Default(), nnConn.(*nethernet.Conn), rkConn)
-		return
 	}
 
 	// ---- RakNet path ----
