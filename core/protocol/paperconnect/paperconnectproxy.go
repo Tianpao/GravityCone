@@ -17,7 +17,7 @@ import (
 	raknet "github.com/sandertv/go-raknet"
 )
 
-const maxHostSessions = 20
+const maxHostSessions = 50
 
 const tcpReadTimeout = 30 * time.Second
 
