@@ -20,12 +20,13 @@ import (
 // The API surface mirrors core/easytier.EasyTierManager so it can be used
 // as a drop-in replacement on Android builds.
 type FFIManager struct {
-	mu          sync.Mutex
-	instName    string // instance name in FFI name cache
-	virtualIP   string // cached self virtual IP
-	isRunning   bool
-	startOpts   StartOptions
-	runningInfo *RunningInfo // latest collected info
+	mu            sync.Mutex
+	instName      string // instance name in FFI name cache
+	virtualIP     string // cached self virtual IP
+	isRunning     bool
+	startOpts     StartOptions
+	runningInfo   *RunningInfo // latest collected info
+	TunFdProvider func(instName string, virtualIP string, cidr string) (int, error) // optional TUN fd injection callback
 }
 
 // RunningInfo holds runtime information collected from EasyTier FFI.
@@ -40,6 +41,16 @@ type RunningInfo struct {
 func NewFFIManager() *FFIManager {
 	return &FFIManager{}
 }
+
+// DefaultTunFdProvider is a package-level TUN fd provider.
+// On Android, ffi/common/bridge.go sets this to callJavaVpnServiceCallback
+// (the reverse-JNI bridge that requests a VpnService TUN fd from Java).
+// When FFIManager.TunFdProvider is nil, Start() falls back to this.
+//
+// Even in no_tun=true mode, EasyTier's mobile build (tun_mobile.rs) still
+// expects a TUN fd to be injected via set_tun_fd(), so this must be set
+// for Android builds. Desktop builds leave it nil.
+var DefaultTunFdProvider func(instName string, virtualIP string, cidr string) (int, error)
 
 // Start builds a TOML config and starts an EasyTier instance in-process.
 // Returns the virtual IP once the instance is ready.
@@ -68,6 +79,26 @@ func (m *FFIManager) Start(opts StartOptions) (string, error) {
 	if instName == "" {
 		instName = fmt.Sprintf("gravitycone-%s", opts.NetworkName)
 	}
+
+	// --- TUN fd injection (Android VpnService) ---
+	// On Android, EasyTier's mobile build (tun_mobile.rs) expects a TUN fd
+	// to be injected via set_tun_fd(), even when no_tun=true is set in config.
+	// This triggers the VpnService callback on the Java side, which blocks
+	// until the host app establishes the VPN connection.
+	provider := m.TunFdProvider
+	if provider == nil {
+		provider = DefaultTunFdProvider
+	}
+	if provider != nil {
+		fd, err := m.injectTunFd(instName, opts, provider)
+		if err != nil {
+			// Clean up the instance if TUN fd injection fails.
+			DeleteNetworkInstance([]string{instName})
+			return "", fmt.Errorf("TUN fd注入失败: %w", err)
+		}
+		_ = fd // fd is now owned by EasyTier's tun_mobile runtime
+	}
+	// --- End TUN fd injection ---
 
 	m.mu.Lock()
 	m.instName = instName
@@ -231,6 +262,75 @@ func (m *FFIManager) RemovePortForward(proto string, localAddr string, remoteAdd
 }
 
 // --- Internal helpers ---
+
+// injectTunFd determines the virtual IP, calls the provider to get a TUN fd
+// from VpnService, and injects it into EasyTier via SetTunFd.
+//
+// For HOST: the virtual IP is known upfront (10.144.144.1 from config).
+// For GUEST: the IP is assigned by DHCP; we poll collect_network_infos briefly.
+func (m *FFIManager) injectTunFd(instName string, opts StartOptions, provider func(string, string, string) (int, error)) (int, error) {
+	var virtualIP string
+	var cidr string
+
+	if opts.IsHost {
+		// Host: fixed virtual IP, known from config
+		virtualIP = hostVirtualIP // "10.144.144.1"
+		cidr = "10.144.144.0/24"
+	} else {
+		// Guest: DHCP-assigned IP. Poll briefly to get the IP before calling VpnService.
+		// In no_tun=true mode, EasyTier assigns IPs via DHCP without needing a TUN fd first,
+		// so the IP should be available within a few seconds.
+		ip, err := m.pollVirtualIP(instName, 5*time.Second)
+		if err != nil {
+			// Fall back to a default route. The VpnService will still provide
+			// routing capabilities, and the actual IP will be resolved later.
+			virtualIP = "10.144.144.0"
+			cidr = "10.144.144.0/24"
+		} else {
+			virtualIP = ip
+			cidr = "10.144.144.0/24"
+		}
+	}
+
+	// Call the provider (JNI → Java onVpnServiceStateChanged → VpnService).
+	// This BLOCKS until the Android app establishes or rejects the VPN.
+	fd, err := provider(instName, virtualIP, cidr)
+	if err != nil {
+		return -1, fmt.Errorf("TUN fd provider回调失败: %w", err)
+	}
+
+	// Inject the fd into EasyTier.
+	if err := SetTunFd(instName, fd); err != nil {
+		return -1, fmt.Errorf("set_tun_fd失败: %w", err)
+	}
+
+	return fd, nil
+}
+
+// pollVirtualIP polls collect_network_infos for the virtual IP assigned to this instance.
+// Used by GUEST mode (DHCP) to get the IP before calling the VpnService callback.
+func (m *FFIManager) pollVirtualIP(instName string, timeout time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		infos, err := CollectNetworkInfos(32)
+		if err == nil {
+			for _, info := range infos {
+				if info.Name != instName {
+					continue
+				}
+				var ri RunningInfo
+				if err := json.Unmarshal([]byte(info.Info), &ri); err != nil {
+					continue
+				}
+				if ri.VirtualIP != "" && ri.ErrorMsg == "" {
+					return stripCIDR(ri.VirtualIP), nil
+				}
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return "", fmt.Errorf("轮询虚拟IP超时 (%v)", timeout)
+}
 
 func (m *FFIManager) waitForVirtualIP(timeout time.Duration) (string, error) {
 	deadline := time.Now().Add(timeout)

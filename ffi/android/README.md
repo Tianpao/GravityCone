@@ -215,13 +215,16 @@ String metaJson = GravityConeAndroidAPI.getMetadata();
 
 ## VpnService（TUN 模式）
 
-当前 GravityCone 使用 `no_tun` 模式（仅端口转发），**不需要 VpnService**。`VpnServiceCallback` 参数传 `null` 即可。
+GravityCone 使用 `no_tun` 模式（端口转发），但 EasyTier 的 Android 构建仍需要通过 VpnService 注入 TUN 文件描述符。
 
-未来支持 TUN 模式时，需要：
+**集成方必须提供 `VpnServiceCallback` 实现**，不能传 `null`。流程如下：
 
 1. 传入 `VpnServiceCallback` 实现
-2. 在回调中调用 `GravityConeAndroidAPI.getPendingVpnServiceRequest()` 获取请求
-3. 在 30 秒内调用 `startVpnService()` 或 `reject()`
+2. 当 EasyTier 需要网络接口时，回调的 `onStartVpnService()` 会被调用
+3. 在回调中调用 `GravityConeAndroidAPI.getPendingVpnServiceRequest()` 获取请求
+4. 在 30 秒内调用 `startVpnService()` 或 `reject()`
+
+如果 VpnService 请求超时或被拒绝，房间创建/加入将失败并进入错误状态。
 
 ## 线程安全
 

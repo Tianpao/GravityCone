@@ -175,6 +175,10 @@ char *gc_stun_probe(void);
  * Attach a TUN file descriptor to a network instance.
  *
  * Used on Android to inject the VpnService TUN fd into EasyTier.
+ * Even in no_tun mode, EasyTier's mobile build (tun_mobile.rs) expects
+ * a TUN fd to be injected via set_tun_fd(). This is called internally
+ * after the VpnService callback returns; direct calls are also supported.
+ *
  * On platforms that use native TUN devices (Linux, macOS), this is
  * typically not needed.
  *

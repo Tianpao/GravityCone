@@ -49,6 +49,7 @@ type StartOptions struct {
 	PortForwards       []string
 	Peers              []string
 	UpstreamCompatible bool
+	TunFdProvider      func(instName string, virtualIP string, cidr string) (int, error) // optional TUN fd injection (Android)
 }
 
 // --- EasyTierManager (wraps ffi/easytier.FFIManager) ---
@@ -74,6 +75,12 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 		PortForwards:       opts.PortForwards,
 		Peers:              opts.Peers,
 		UpstreamCompatible: opts.UpstreamCompatible,
+	}
+	// Pass through the TUN fd provider if set (for Android VpnService).
+	// When nil, FFIManager.Start() falls back to DefaultTunFdProvider
+	// (set by vpn_init.go via the et_ffi build tag).
+	if opts.TunFdProvider != nil {
+		m.ffi.TunFdProvider = opts.TunFdProvider
 	}
 	virtualIP, err := m.ffi.Start(ffiOpts)
 	if err != nil {

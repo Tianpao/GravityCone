@@ -148,11 +148,12 @@ func gc_stun_probe() *C.char {
 //export gc_set_tun_fd
 // gc_set_tun_fd attaches a TUN file descriptor to a named EasyTier instance.
 // Used on Android to pass the VpnService TUN fd to EasyTier.
-// Currently a no-op in GravityCone (uses no_tun / port-forward mode).
+// On non-Android platforms, this is a no-op.
 func gc_set_tun_fd(instName *C.char, fd C.int) C.int {
-	// Reserved for future TUN mode support.
-	_ = instName
-	_ = fd
+	name := C.GoString(instName)
+	if err := setTunFdBridge(name, int(fd)); err != nil {
+		return -1
+	}
 	return 0
 }
 
