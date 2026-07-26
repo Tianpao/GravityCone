@@ -192,7 +192,7 @@ func (h *Handler) handleRoomJoin(req Request) {
 	}
 
 	if isPaperConnectCode(code) {
-		result, err := h.paperConnectSvc.JoinRoom(code, playerName, h.vendorPrefix)
+		result, err := h.paperConnectSvc.JoinRoom(code, playerName, h.vendorPrefix, h.motd)
 		if err != nil {
 			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
 			return
