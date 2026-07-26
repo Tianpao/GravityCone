@@ -96,6 +96,7 @@ type PaperConnectService struct {
 	guestRakNetFakeStop   chan struct{} // Stop channel for fake RakNet broadcaster
 	guestPortBusy         bool
 	guestPortBusyConfirm  chan struct{}
+	guestMotd             string // custom MOTD for LAN broadcast
 
 	joinCancelled atomic.Bool
 }
@@ -602,7 +603,7 @@ func (s *PaperConnectService) ConfirmMinecraftEnded() error {
 	}
 }
 
-func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPrefix string) (*PaperConnectConnectionStatus, error) {
+func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPrefix string, motd string) (*PaperConnectConnectionStatus, error) {
 	s.joinCancelled.Store(false)
 	s.guestMu.Lock()
 	if s.guestRunning {
@@ -761,6 +762,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	s.guestTCPLocalPort = tcpLocalPort
 	s.guestProtocol = protocol
 	s.guestGamePort = gamePort
+	s.guestMotd = motd
 	s.pcResetGuestPortBusyLocked()
 	s.guestMu.Unlock()
 
@@ -1077,7 +1079,7 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 		s.pcClearGuestPortBusy(manager)
 
 		disc.ServerData(&discovery.ServerData{
-			ServerName:            "GravityCone Proxy",
+			ServerName:            s.guestMotd,
 			LevelName:             "Join",
 			GameType:              discovery.GameTypeSurvival,
 			PlayerCount:           0,
@@ -1126,10 +1128,7 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 	}
 
 	// ---- RakNet path ----
-	serverName := "GravityCone Proxy"
-	if playerName != "" {
-		serverName = playerName
-	}
+	serverName := s.guestMotd
 	readyCh := make(chan error, 1)
 	fakeStop := make(chan struct{})
 	go broadcastRakNetFakeServer(context.Background(), fakeStop, serverName, rakLocalPort, readyCh)

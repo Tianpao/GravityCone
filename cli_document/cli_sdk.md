@@ -52,11 +52,11 @@ gravitycone-cli -p tcp://1.2.3.4:5678,tcp://5.6.7.8:9012
 # 混用
 gravitycone-cli -p tcp://1.2.3.4:5678 --peers tcp://5.6.7.8:9012
 
-# 指定厂商前缀
+# 指定Vendor
 gravitycone-cli -v GC
 gravitycone-cli --vendor GC -p tcp://1.2.3.4:5678
 
-# 自定义局域网广播 MOTD
+# 自定义局域网广播 MOTD (ScaffoldingMC和PaperConnect皆可使用)
 gravitycone-cli -m "PCL CE 联机房间"
 gravitycone-cli --motd "PCL CE 联机房间" -p tcp://1.2.3.4:5678
 
