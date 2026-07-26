@@ -74,6 +74,69 @@ func TestTunnelForwardsLargePacket(t *testing.T) {
 	}
 }
 
+func BenchmarkTunnelLargePacket(b *testing.B) {
+	listener, err := (raknet.ListenConfig{
+		MaxMTU:   rakNetMTU,
+		ErrorLog: slog.Default(),
+	}).Listen("127.0.0.1:0")
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer listener.Close()
+
+	accepted := make(chan *raknet.Conn, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			accepted <- conn.(*raknet.Conn)
+		}
+	}()
+
+	client, err := (raknet.Dialer{
+		MaxMTU:   rakNetMTU,
+		ErrorLog: slog.Default(),
+	}).Dial(listener.Addr().String())
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer client.Close()
+
+	var server *raknet.Conn
+	select {
+	case server = <-accepted:
+	case <-time.After(5 * time.Second):
+		b.Fatal("listener did not accept client")
+	}
+	defer server.Close()
+
+	payload := bytes.Repeat([]byte{0xA5}, 26_185)
+
+	// Pre-warm: let one packet through so MTU negotiation completes.
+	if err := writeTunnelPacket(client, payload); err != nil {
+		b.Fatal(err)
+	}
+	reader := newTunnelReader(server)
+	if _, err := reader.ReadPacket(); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		if err := writeTunnelPacket(client, payload); err != nil {
+			b.Fatal(err)
+		}
+		// Read back to apply backpressure and avoid RakNet flow-control overflow.
+		// Small delay to prevent RakNet ACK queue overflow under
+		// benchmark's sustained maximum throughput.
+		time.Sleep(time.Millisecond)
+		if _, err := reader.ReadPacket(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func TestTunnelSessionsRemainIsolated(t *testing.T) {
 	listener, err := (raknet.ListenConfig{
 		MaxMTU:   rakNetMTU,
