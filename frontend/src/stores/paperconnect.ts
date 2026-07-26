@@ -82,14 +82,14 @@ export const usePaperConnectStore = defineStore('paperconnect', {
       }
     },
 
-    async pcJoinRoom(roomCode: string, playerName: string) {
+    async pcJoinRoom(roomCode: string, playerName: string, motd: string = 'GravityCone联机房间') {
       this.pcJoining = true
       this.pcGuestError = ''
       // Subscribe before JoinRoom starts its asynchronous game-bridge setup so an
       // immediate port_busy event cannot be emitted before the UI is listening.
       this.startGuestEvents()
       try {
-        const result = await JoinRoom(roomCode, playerName, '')
+        const result = await JoinRoom(roomCode, playerName, '', motd)
         this.pcConnectionStatus = result
         return result
       } catch (e: any) {
