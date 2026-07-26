@@ -169,6 +169,19 @@ int gc_set_guesting(const char *room, const char *player);
 char *gc_stun_probe(void);
 
 /**
+ * Attach a TUN file descriptor to a network instance.
+ *
+ * Used on Android to inject the VpnService TUN fd into EasyTier.
+ * On platforms that use native TUN devices (Linux, macOS), this is
+ * typically not needed.
+ *
+ * @param inst_name  Instance name (from collect_network_infos).
+ * @param fd         TUN file descriptor from VpnService.establish().
+ * @return 0 on success, non-zero on failure.
+ */
+int gc_set_tun_fd(const char *inst_name, int fd);
+
+/**
  * Check the type of a room code without connecting.
  *
  * @param code  Room code string.
