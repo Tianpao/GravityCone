@@ -20,7 +20,7 @@ import (
 )
 
 // BaseVendor is the default vendor suffix. Call MakeVendor to append optional prefixes.
-const BaseVendor = "GVC v0.1.0, EasyTier " + easytier.EasyTierVersion
+const BaseVendor = "GVC v0.1.3-alpha, EasyTier " + easytier.EasyTierVersion
 
 const hostnamePrefix = "scaffolding-mc-server-"
 

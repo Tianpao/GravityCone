@@ -41,8 +41,8 @@ export function GetRoomStatus(): $CancellablePromise<$models.PaperConnectRoomSta
     return $Call.ByID(2260811612);
 }
 
-export function JoinRoom(code: string, playerName: string, vendorPrefix: string): $CancellablePromise<$models.PaperConnectConnectionStatus | null> {
-    return $Call.ByID(3220456788, code, playerName, vendorPrefix);
+export function JoinRoom(code: string, playerName: string, vendorPrefix: string, motd: string): $CancellablePromise<$models.PaperConnectConnectionStatus | null> {
+    return $Call.ByID(3220456788, code, playerName, vendorPrefix, motd);
 }
 
 export function LeaveRoom(): $CancellablePromise<void> {

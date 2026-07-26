@@ -108,7 +108,7 @@ func main() {
 
 	app := application.New(application.Options{
 		Name:        "GravityCone",
-		Description: "A demo of using raw HTML & CSS",
+		Description: "GravityCone",
 		Services: []application.Service{
 			application.NewService(&easytier.StunService{}),
 			application.NewService(&easytier.EasyTierDownloadService{}),
