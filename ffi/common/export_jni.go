@@ -66,9 +66,10 @@ func Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeInit(
 	env *C.JNIEnv, clazz C.jclass, baseDir C.jstring, loggingFd C.jint,
 ) C.jint {
 	dir := jniToGoString(env, baseDir)
-	_ = dir
-	_ = loggingFd
-	return gc_init(nil) // baseDir is unused for now
+	_ = loggingFd // TODO: wire up logging fd to Go log output
+	cDir := C.CString(dir)
+	defer C.free(unsafe.Pointer(cDir))
+	return gc_init(cDir)
 }
 
 //export Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeGetState

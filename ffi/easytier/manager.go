@@ -109,19 +109,21 @@ func (m *FFIManager) Stop() error {
 // IsRunning returns true if the instance is active.
 func (m *FFIManager) IsRunning() bool {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	isRunning := m.isRunning
+	instName := m.instName
+	m.mu.Unlock()
 
-	if !m.isRunning {
+	if !isRunning {
 		return false
 	}
 
-	// Double-check: ask FFI if the instance still exists
+	// Double-check: ask FFI if the instance still exists (outside lock to avoid blocking other operations).
 	infos, err := ListInstances(32)
 	if err != nil {
 		return false
 	}
 	for _, info := range infos {
-		if info.Name == m.instName {
+		if info.Name == instName {
 			return true
 		}
 	}

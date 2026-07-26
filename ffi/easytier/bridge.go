@@ -31,7 +31,7 @@ int set_tun_fd(const char *inst_name, int fd);
 // JSON RPC bridge:
 int call_json_rpc(const char *service_name, const char *method_name,
                   const char *domain_name, const char *payload_json,
-                  const char **out_response_json);
+                  char **out_response_json);
 
 // Error handling:
 void get_error_msg(const char **out);

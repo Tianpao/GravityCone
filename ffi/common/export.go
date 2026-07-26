@@ -27,8 +27,11 @@ import (
 // baseDir: writable directory for logs, machine-id, and EasyTier binaries.
 // Returns 0 on success.
 func gc_init(baseDir *C.char) C.int {
-	dir := C.GoString(baseDir)
-	_ = dir // Reserved for future use (EasyTier dir, logging config, machine-id storage)
+	dir := ""
+	if baseDir != nil {
+		dir = C.GoString(baseDir)
+	}
+	setBaseDir(dir)
 	return 0
 }
 
@@ -86,6 +89,9 @@ func gc_set_scanning(room, player, protocol *C.char) {
 // Returns 1 if the room code is valid and the connection process started,
 // 0 if the room code is invalid or the engine is not idle.
 func gc_set_guesting(room, player *C.char) C.int {
+	if room == nil {
+		return 0
+	}
 	r := C.GoString(room)
 	p := ""
 	if player != nil {
@@ -105,7 +111,10 @@ func gc_set_guesting(room, player *C.char) C.int {
 // The caller MUST free the returned string with gc_free_string().
 // This is a blocking call that takes 3-10 seconds.
 //
-// Response format:
+// NOTE: In FFI mode (Android), STUN probing is not available and this
+// function always returns an error JSON: {"error":"stun probe failed: ..."}
+//
+// Response format (desktop only):
 //
 //	{
 //	  "udp_nat_type": 1,

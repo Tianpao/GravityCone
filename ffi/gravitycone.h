@@ -147,7 +147,10 @@ int gc_set_guesting(const char *room, const char *player);
  *
  * This is a blocking call that takes 3-10 seconds.
  *
- * On success, returns JSON:
+ * NOTE: In FFI mode (Android), STUN probing is not available and this
+ * function always returns an error JSON: {"error":"stun probe failed: ..."}
+ *
+ * On success (desktop only), returns JSON:
  *   {"udp_nat_type":1,"tcp_nat_type":2,"last_update_time":1720246800,
  *    "public_ip":["203.0.113.1"],"min_port":30000,"max_port":40000}
  *

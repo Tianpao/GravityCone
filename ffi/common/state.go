@@ -27,11 +27,26 @@ type stateHolder struct {
 	state     AppState
 	extra     interface{}  // protocol-specific state data
 	lastError string
+	baseDir   string       // writable directory for logs, machine-id, etc.
 }
 
 var globalState = &stateHolder{
 	index: 0,
 	state: StateIdle,
+}
+
+// setBaseDir stores the base directory for the engine.
+func setBaseDir(dir string) {
+	globalState.mu.Lock()
+	defer globalState.mu.Unlock()
+	globalState.baseDir = dir
+}
+
+// getBaseDir returns the stored base directory.
+func getBaseDir() string {
+	globalState.mu.Lock()
+	defer globalState.mu.Unlock()
+	return globalState.baseDir
 }
 
 // getStateJSON returns the current state serialized as a JSON string.
@@ -100,10 +115,7 @@ type hostContext struct {
 	roomCode    string
 	mcPort      uint16 // ScaffoldingMC
 	gamePort    int    // PaperConnect
-	// Service references for cleanup
-	scaffoldingSvc interface{}
-	paperConnectSvc interface{}
-	stopFn         func()
+	stopFn      func()
 }
 
 // guestContext holds protocol-agnostic guest state.
@@ -112,10 +124,7 @@ type guestContext struct {
 	subProtocol string // "nethernet" or "raknet" (PaperConnect only)
 	roomCode    string
 	mcURL       string // "127.0.0.1:port" or "127.0.0.1"
-	// Service references for cleanup
-	scaffoldingSvc  interface{}
-	paperConnectSvc interface{}
-	leaveFn         func()
+	leaveFn     func()
 }
 
 // --- State transition helpers ---

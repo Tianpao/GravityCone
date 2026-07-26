@@ -3,12 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"gravitycone/core/easytier"
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
-	"gravitycone/core/utils"
 )
 
 // ffiEventEmitter bridges events from core services to the FFI layer.
@@ -110,7 +108,6 @@ func startScaffoldingHost(playerName string) {
 	// In the future, we can integrate MinecraftScanner like Terracotta does.
 	mcPort := uint16(25565)
 
-	ctx.scaffoldingSvc = svc
 	transitionTo(StateHostStarting, ctx)
 
 	result, err := svc.CreateRoom(mcPort, playerName, "", "")
@@ -136,7 +133,6 @@ func startPaperConnectHost(playerName string) {
 
 	svc := paperconnect.NewPaperConnectService(ffiEventEmitter{})
 
-	ctx.paperConnectSvc = svc
 	transitionTo(StateHostStarting, ctx)
 
 	result, err := svc.CreateRoom(playerName, "")
@@ -174,8 +170,6 @@ func joinScaffoldingRoom(roomCode, playerName string) {
 	// Inject progress callback equivalent to CLI mode.
 	scaffolding.SetScaffoldingJoinProgress(svc, progress)
 
-	ctx.scaffoldingSvc = svc
-
 	result, err := svc.JoinRoom(roomCode, playerName, "", "")
 	if err != nil {
 		transitionToError(fmt.Sprintf("加入房间失败: %v", err))
@@ -200,8 +194,6 @@ func joinPaperConnectRoom(roomCode, playerName string) {
 	transitionTo(StateGuestConnecting, ctx)
 
 	svc := paperconnect.NewPaperConnectService(ffiEventEmitter{})
-
-	ctx.paperConnectSvc = svc
 
 	result, err := svc.JoinRoom(roomCode, playerName, "", "")
 	if err != nil {
@@ -257,8 +249,3 @@ func ffCleanup(scaffoldingSvc *scaffolding.ScaffoldingService, paperConnectSvc *
 	}
 	goBackToIdle()
 }
-
-// Ensure imports are used.
-var _ = strings.TrimSpace
-var _ = easytier.EasyTierVersion
-var _ = utils.NilEventEmitter{}
