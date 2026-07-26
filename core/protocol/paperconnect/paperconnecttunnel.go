@@ -1,18 +1,21 @@
 package paperconnect
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math"
+	"sync"
 	"sync/atomic"
 
 	raknet "github.com/sandertv/go-raknet"
 )
 
-const rakNetMTU = 1200
+const rakNetMTU = 1400
 
-const tunnelChunkSize = 900
+// tunnelChunkSize is the maximum payload size per tunnel chunk frame.
+// With RakNet MTU=1400: effectiveMTU=1372, maxSize=1358 (no internal split),
+// chunk frame overhead=9 bytes, so max payload=1349.
+const tunnelChunkSize = 1349
 
 const maxTunnelChunks = 1024
 
@@ -28,6 +31,16 @@ type tunnelReader struct {
 }
 
 var tunnelMessageID atomic.Uint32
+
+// tunnelFramePool recycles byte slices used for tunnel chunk frames.
+// go-raknet's Conn.Write copies data into its own internal buffer,
+// so the caller's slice is not referenced after Write returns.
+var tunnelFramePool = sync.Pool{
+	New: func() any {
+		b := make([]byte, 9+tunnelChunkSize)
+		return &b
+	},
+}
 
 func newTunnelReader(conn *raknet.Conn) *tunnelReader {
 	return &tunnelReader{conn: conn, chunks: make(map[uint32][][]byte), ids: make([]uint32, 0)}
@@ -51,13 +64,23 @@ func writeTunnelPacket(conn *raknet.Conn, packet []byte) error {
 	for i := 0; i < chunkCount; i++ {
 		start := i * tunnelChunkSize
 		end := min(start+tunnelChunkSize, len(packet))
-		frame := make([]byte, 1+4+2+2+len(packet[start:end]))
+		chunkLen := end - start
+
+		framePtr := tunnelFramePool.Get().(*[]byte)
+		if cap(*framePtr) < 9+chunkLen {
+			*framePtr = make([]byte, 9+chunkLen)
+		}
+		frame := (*framePtr)[:9+chunkLen]
+
 		frame[0] = tunnelChunk
 		binary.BigEndian.PutUint32(frame[1:], messageID)
 		binary.BigEndian.PutUint16(frame[5:], uint16(chunkCount))
 		binary.BigEndian.PutUint16(frame[7:], uint16(i))
 		copy(frame[9:], packet[start:end])
-		if _, err := conn.Write(frame); err != nil {
+
+		_, err := conn.Write(frame)
+		tunnelFramePool.Put(framePtr)
+		if err != nil {
 			return err
 		}
 	}
@@ -82,7 +105,7 @@ func (r *tunnelReader) ReadPacket() ([]byte, error) {
 			if length != len(frame)-5 {
 				return nil, fmt.Errorf("invalid tunnel packet length: got %d, expected %d", len(frame)-5, length)
 			}
-			return bytes.Clone(frame[5:]), nil
+			return frame[5:], nil
 		case tunnelChunk:
 			if len(frame) < 9 {
 				return nil, fmt.Errorf("invalid tunnel chunk frame")
@@ -107,7 +130,7 @@ func (r *tunnelReader) ReadPacket() ([]byte, error) {
 			if len(parts) != count {
 				return nil, fmt.Errorf("inconsistent tunnel chunk count")
 			}
-			parts[index] = bytes.Clone(frame[9:])
+			parts[index] = frame[9:]
 			complete := true
 			for _, part := range parts {
 				if part == nil {
@@ -121,11 +144,22 @@ func (r *tunnelReader) ReadPacket() ([]byte, error) {
 			delete(r.chunks, messageID)
 			for i, id := range r.ids {
 				if id == messageID {
-					r.ids = append(r.ids[:i], r.ids[i+1:]...)
+					r.ids[i] = r.ids[len(r.ids)-1]
+					r.ids = r.ids[:len(r.ids)-1]
 					break
 				}
 			}
-			return bytes.Join(parts, nil), nil
+			// Pre-allocate result buffer and copy parts into it.
+			totalSize := 0
+			for _, part := range parts {
+				totalSize += len(part)
+			}
+			result := make([]byte, totalSize)
+			offset := 0
+			for _, part := range parts {
+				offset += copy(result[offset:], part)
+			}
+			return result, nil
 		default:
 			return nil, fmt.Errorf("unknown tunnel frame type %d", frame[0])
 		}
