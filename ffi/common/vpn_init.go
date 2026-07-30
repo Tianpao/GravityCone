@@ -1,4 +1,4 @@
-//go:build et_ffi
+//go:build et_ffi && linux
 
 package main
 

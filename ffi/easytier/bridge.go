@@ -260,19 +260,19 @@ func CallJSONRPC(serviceName, methodName, domainName, payloadJSON string) (strin
 // NodeInfoResponse is the JSON response from show_node_info RPC.
 type NodeInfoResponse struct {
 	NodeInfo *struct {
-		VirtualIP    string `json:"ipv4_addr"`
-		PeerID       string `json:"peer_id"`
-		Hostname     string `json:"hostname"`
+		VirtualIP string `json:"ipv4_addr"`
+		PeerID    string `json:"peer_id"`
+		Hostname  string `json:"hostname"`
 	} `json:"node_info,omitempty"`
 	Error string `json:"error,omitempty"`
 }
 
 // PeerRouteEntry is a single route entry from list_route RPC.
 type PeerRouteEntry struct {
-	Hostname    string `json:"hostname"`
-	IPv4Addr    string `json:"ipv4_addr"`
-	PeerID      string `json:"peer_id"`
-	ProxyCIDRs  []string `json:"proxy_cidrs"`
+	Hostname   string   `json:"hostname"`
+	IPv4Addr   string   `json:"ipv4_addr"`
+	PeerID     string   `json:"peer_id"`
+	ProxyCIDRs []string `json:"proxy_cidrs"`
 }
 
 // ListRouteResponse is the JSON response from list_route RPC.
@@ -292,7 +292,7 @@ type PatchConfig struct {
 
 // PortForwardPatch is a single port forward entry in a config patch.
 type PortForwardPatch struct {
-	Action int             `json:"action"` // 1=Add, 2=Remove
+	Action int               `json:"action"` // 1=Add, 2=Remove
 	Cfg    PortForwardConfig `json:"cfg"`
 }
 

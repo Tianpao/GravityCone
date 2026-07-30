@@ -1,5 +1,4 @@
 //go:build ignore
-
 // +build ignore
 
 // ensure_easytier_ffi downloads libeasytier_ffi.so from the qteasytier

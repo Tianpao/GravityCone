@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	ffi_toml "gravitycone/ffi/easytier/tomlconfig"
 )
 
 // FFIManager is the FFI-based replacement for core/easytier.EasyTierManager.
@@ -25,16 +27,16 @@ type FFIManager struct {
 	virtualIP     string // cached self virtual IP
 	isRunning     bool
 	startOpts     StartOptions
-	runningInfo   *RunningInfo // latest collected info
+	runningInfo   *RunningInfo                                                      // latest collected info
 	TunFdProvider func(instName string, virtualIP string, cidr string) (int, error) // optional TUN fd injection callback
 }
 
 // RunningInfo holds runtime information collected from EasyTier FFI.
 type RunningInfo struct {
-	VirtualIP  string   `json:"ipv4_addr"`
-	PeerID     string   `json:"peer_id"`
-	Hostname   string   `json:"hostname"`
-	ErrorMsg   string   `json:"error_msg,omitempty"`
+	VirtualIP string `json:"ipv4_addr"`
+	PeerID    string `json:"peer_id"`
+	Hostname  string `json:"hostname"`
+	ErrorMsg  string `json:"error_msg,omitempty"`
 }
 
 // NewFFIManager creates a new FFIManager (does not start EasyTier).
@@ -54,7 +56,7 @@ var DefaultTunFdProvider func(instName string, virtualIP string, cidr string) (i
 
 // Start builds a TOML config and starts an EasyTier instance in-process.
 // Returns the virtual IP once the instance is ready.
-func (m *FFIManager) Start(opts StartOptions) (string, error) {
+func (m *FFIManager) Start(opts ffi_toml.StartOptions) (string, error) {
 	m.mu.Lock()
 	if m.isRunning {
 		m.mu.Unlock()
@@ -62,7 +64,7 @@ func (m *FFIManager) Start(opts StartOptions) (string, error) {
 	}
 	m.mu.Unlock()
 
-	tomlCfg := BuildTOMLConfig(opts)
+	tomlCfg := ffi_toml.BuildTOMLConfig(opts)
 
 	// Validate config first
 	if err := ParseConfig(tomlCfg); err != nil {
@@ -378,20 +380,13 @@ func (m *FFIManager) fetchSelfVirtualIP() (string, error) {
 }
 
 // protoToInt converts protocol string to EasyTier proto enum.
-// SocketType: 0 = TCP, 1 = UDP.
+// Delegates to the pure-Go tomlconfig package.
 func protoToInt(proto string) int {
-	switch strings.ToLower(proto) {
-	case "udp":
-		return 1
-	default:
-		return 0
-	}
+	return ffi_toml.ProtoToInt(proto)
 }
 
 // stripCIDR removes CIDR suffix from IP (e.g. "10.144.0.1/24" → "10.144.0.1").
+// Delegates to the pure-Go tomlconfig package.
 func stripCIDR(ip string) string {
-	if i := strings.IndexByte(ip, '/'); i >= 0 {
-		return ip[:i]
-	}
-	return ip
+	return ffi_toml.StripCIDR(ip)
 }

@@ -1,4 +1,4 @@
-//go:build et_ffi
+//go:build et_ffi && linux
 
 // JNI exports for Android. These functions are registered by the JVM when
 // GravityConeAndroidAPI.java calls System.loadLibrary("gravitycone").
