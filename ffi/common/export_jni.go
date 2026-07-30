@@ -88,7 +88,7 @@ import (
 
 func jniToGoString(env *C.JNIEnv, jstr C.jstring) string {
 	cstr := C.jni_GetStringUTFChars(env, jstr)
-	if cstr == nil || *cstr == 0 {
+	if cstr == nil {
 		return ""
 	}
 	defer C.jni_ReleaseStringUTFChars(env, jstr, cstr)
@@ -302,7 +302,7 @@ func callJavaVpnServiceCallback(instName string, virtualIP string, cidr string) 
 	// Signature: (byte, byte, byte, byte, short, String) -> int
 	methodName := C.CString("onVpnServiceStateChanged")
 	defer C.free(unsafe.Pointer(methodName))
-	methodSig := C.CString("(BBBBLjava/lang/String;)I")
+	methodSig := C.CString("(BBBBSLjava/lang/String;)I")
 	defer C.free(unsafe.Pointer(methodSig))
 	methodID := C.jni_GetStaticMethodID(env, cachedClassRef, methodName, methodSig)
 	if methodID == nil {
