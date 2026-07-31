@@ -1,0 +1,113 @@
+name: Android FFI SDK
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ['v*.*.*', 'v*.*.*-*']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # needed for softprops/action-gh-release on tag push
+
+jobs:
+  build-sdk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      # ------------------------------------------------------------------
+      # Android NDK r26d (≈ 500 MB download, extracted once per runner)
+      # ------------------------------------------------------------------
+      - name: Setup Android NDK
+        run: |
+          NDK_DIR="$HOME/android-ndk-r26d"
+          if [ ! -d "$NDK_DIR" ]; then
+            echo "Downloading Android NDK r26d..."
+            curl -sSL -o /tmp/ndk.zip \
+              https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
+            unzip -q /tmp/ndk.zip -d "$HOME"
+            rm /tmp/ndk.zip
+            echo "NDK extracted to $NDK_DIR"
+          else
+            echo "NDK already present at $NDK_DIR"
+          fi
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
+
+      # ------------------------------------------------------------------
+      # Task runner (consistent with existing ci.yml / release.yml)
+      # ------------------------------------------------------------------
+      - name: Install Task
+        run: |
+          go install github.com/go-task/task/v3/cmd/task@latest
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      # ------------------------------------------------------------------
+      # 1. Download libeasytier_ffi.so (from qteasytier/easytier-ffi-bin)
+      # ------------------------------------------------------------------
+      - name: Download EasyTier FFI .so
+        run: task build:android:ffi:download
+
+      # ------------------------------------------------------------------
+      # 2. Cross-compile libgravitycone.so for arm64 + amd64
+      #    (calls download again internally → no-op since files exist)
+      # ------------------------------------------------------------------
+      - name: Compile libgravitycone.so
+        run: task build:android:ffi:compile
+
+      # ------------------------------------------------------------------
+      # 3. Package SDK zip (.so + generated .h + hand-written .h + Java)
+      # ------------------------------------------------------------------
+      - name: Package SDK
+        run: |
+          cd ffi/android
+          mkdir -p dist
+
+          # gravitycone.h lives one level up; copy it in so zip stores a
+          # flat path instead of "../gravitycone.h"
+          cp ../gravitycone.h .
+
+          zip -r dist/gravitycone-android-sdk.zip \
+            jniLibs/arm64-v8a/libeasytier_ffi.so \
+            jniLibs/arm64-v8a/libgravitycone.so \
+            jniLibs/arm64-v8a/libgravitycone.h \
+            jniLibs/x86_64/libeasytier_ffi.so \
+            jniLibs/x86_64/libgravitycone.so \
+            jniLibs/x86_64/libgravitycone.h \
+            java/net/gravitycone/ffi/GravityConeAndroidAPI.java \
+            gravitycone.h
+
+          rm gravitycone.h
+
+          echo "=== SDK contents ==="
+          unzip -l dist/gravitycone-android-sdk.zip
+
+      # ------------------------------------------------------------------
+      # Always upload as a workflow artifact
+      # ------------------------------------------------------------------
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gravitycone-android-sdk
+          path: ffi/android/dist/gravitycone-android-sdk.zip
+          if-no-files-found: error
+
+      # ------------------------------------------------------------------
+      # On tag push → attach SDK to the GitHub Release.
+      # Works alongside release.yml: whichever workflow creates the
+      # release first generates the auto-notes; the other just appends
+      # its files to the already-existing release.
+      # ------------------------------------------------------------------
+      - name: Upload to Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ffi/android/dist/gravitycone-android-sdk.zip
+          generate_release_notes: true
