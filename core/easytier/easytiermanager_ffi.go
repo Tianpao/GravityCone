@@ -119,6 +119,13 @@ func (m *EasyTierManager) Stop() error {
 	return m.ffi.Stop()
 }
 
+// HasTUN reports true: on Android the VpnService TUN is established during
+// Start() (via the TUN fd provider callback), after which virtual IPs are
+// directly reachable without port forwarding. Protocol services use this to
+// skip dynamic AddPortForward calls (unsupported in FFI mode) and dial the
+// virtual IP directly.
+func (m *EasyTierManager) HasTUN() bool { return true }
+
 func (m *EasyTierManager) IsRunning() bool            { return m.ffi.IsRunning() }
 func (m *EasyTierManager) SelfVirtualIP() string      { return m.virtualIP }
 func (m *EasyTierManager) RPCPortal() string          { return "" }

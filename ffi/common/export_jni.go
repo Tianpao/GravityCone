@@ -71,6 +71,20 @@ static jint jni_CallVpnServiceCallback(JNIEnv *env, jclass clazz, jmethodID meth
 	return (*env)->CallStaticIntMethod(env, clazz, methodID,
 		ip1, ip2, ip3, ip4, networkLength, cidr);
 }
+
+// Check whether a Java exception is pending on the current thread.
+// The JNI call above may throw (e.g. SecurityException when the VPN
+// permission was never granted, or IllegalStateException on reject) —
+// in that case the return value is garbage and the exception must be
+// cleared before any further JNI calls.
+static jboolean jni_ExceptionCheck(JNIEnv *env) {
+	return (*env)->ExceptionCheck(env);
+}
+
+// Clear a pending Java exception.
+static void jni_ExceptionClear(JNIEnv *env) {
+	(*env)->ExceptionClear(env);
+}
 */
 import "C"
 import (
@@ -334,6 +348,15 @@ func callJavaVpnServiceCallback(instName string, virtualIP string, cidr string) 
 		C.jbyte(int8(ipBytes[3])),
 		C.jshort(int16(networkLength)),
 		jcidr))
+
+	// A Java exception here means the callback threw (e.g. VPN permission
+	// never granted → SecurityException from establish(), or reject()).
+	// The int return value is garbage in that case — report the failure
+	// instead of passing a bogus fd to EasyTier.
+	if C.jni_ExceptionCheck(env) != 0 {
+		C.jni_ExceptionClear(env)
+		return -1, fmt.Errorf("VpnService 回调抛异常（VPN 未授权或请求被拒绝）")
+	}
 
 	if fd < 0 {
 		return -1, fmt.Errorf("VpnService callback returned error fd: %d", fd)

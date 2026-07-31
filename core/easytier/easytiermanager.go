@@ -415,6 +415,15 @@ func (m *EasyTierManager) RemovePortForward(proto string, localAddr string, remo
 	return m.runPortForwardCmd("remove", proto, localAddr, remoteAddr, "删除端口转发失败")
 }
 
+// HasTUN reports whether this manager provides a TUN device through which
+// virtual IPs are directly reachable. Desktop builds create a TUN adapter,
+// so true would be accurate — but the desktop flow is designed around port
+// forwarding (proxy mode), so we report false to keep the existing paths.
+// FFI/Android builds (VpnService) return true; see easytiermanager_ffi.go.
+func (m *EasyTierManager) HasTUN() bool {
+	return false
+}
+
 func (m *EasyTierManager) runPortForwardCmd(action, proto, localAddr, remoteAddr, errMsg string) error {
 	rpcPortal := m.RPCPortal()
 	if rpcPortal == "" {

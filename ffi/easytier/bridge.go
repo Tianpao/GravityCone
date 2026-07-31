@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
+	"strconv"
 	"sync"
 	"unsafe"
 
@@ -26,20 +27,39 @@ import (
 
 // --- C function type declarations (registered at init) ---
 
+// IMPORTANT: This table must match the symbols actually exported by
+// easytier-ffi v2.6.4 (see ffi/android/.cache/easytier/easytier-contrib/
+// easytier-ffi/src/lib.rs). Registering a symbol that dlsym cannot resolve
+// makes purego panic ("cfn is nil") on the first call — an unrecoverable
+// crash in the c-shared build. If a symbol is missing here, etInit fails
+// gracefully and all FFI calls return an error instead.
+//
+// v2.6.4 exports: parse_config, run_network_instance, retain_network_instance,
+// collect_network_infos, set_tun_fd, get_error_msg, free_string.
 var (
 	etFnParseConfig         func(cfg *byte) int32
 	etFnRunNetworkInstance  func(cfg *byte) int32
-	etFnDeleteNetworkInst   func(instNames **byte, length uint64) int32
-	etFnListInstance        func(infos unsafe.Pointer, maxLength uint64) int32
+	etFnRetainNetworkInst   func(instNames **byte, length uint64) int32
 	etFnCollectNetworkInfos func(infos unsafe.Pointer, maxLength uint64) int32
 	etFnSetTunFd            func(instName *byte, fd int32) int32
-	etFnCallJSONRPC         func(service, method, domain, payload *byte, outResponse **byte) int32
 	etFnGetErrorMsg         func(out **byte)
 	etFnFreeString          func(s *byte)
 
 	etInitOnce sync.Once
 	etInitErr  error
 )
+
+// registerFFIFunc resolves one symbol and registers it with purego.
+// Returns an error (instead of panicking inside purego) when the symbol
+// does not exist in the loaded library.
+func registerFFIFunc(fptr interface{}, handle unsafe.Pointer, name string) error {
+	cfn := dlsymLib(handle, name)
+	if cfn == 0 {
+		return fmt.Errorf("dlsym %s: symbol not found in libeasytier_ffi.so", name)
+	}
+	purego.RegisterFunc(fptr, cfn)
+	return nil
+}
 
 // etInit performs one-time library loading and function registration.
 // Safe to call concurrently; subsequent calls are no-ops.
@@ -54,15 +74,29 @@ func etInit() {
 			return
 		}
 
-		purego.RegisterFunc(&etFnParseConfig, dlsymLib(etHandle, "parse_config"))
-		purego.RegisterFunc(&etFnRunNetworkInstance, dlsymLib(etHandle, "run_network_instance"))
-		purego.RegisterFunc(&etFnDeleteNetworkInst, dlsymLib(etHandle, "delete_network_instance"))
-		purego.RegisterFunc(&etFnListInstance, dlsymLib(etHandle, "list_instance"))
-		purego.RegisterFunc(&etFnCollectNetworkInfos, dlsymLib(etHandle, "collect_network_infos"))
-		purego.RegisterFunc(&etFnSetTunFd, dlsymLib(etHandle, "set_tun_fd"))
-		purego.RegisterFunc(&etFnCallJSONRPC, dlsymLib(etHandle, "call_json_rpc"))
-		purego.RegisterFunc(&etFnGetErrorMsg, dlsymLib(etHandle, "get_error_msg"))
-		purego.RegisterFunc(&etFnFreeString, dlsymLib(etHandle, "free_string"))
+		var err error
+		if err = registerFFIFunc(&etFnParseConfig, etHandle, "parse_config"); err == nil {
+			err = registerFFIFunc(&etFnRunNetworkInstance, etHandle, "run_network_instance")
+		}
+		if err == nil {
+			err = registerFFIFunc(&etFnRetainNetworkInst, etHandle, "retain_network_instance")
+		}
+		if err == nil {
+			err = registerFFIFunc(&etFnCollectNetworkInfos, etHandle, "collect_network_infos")
+		}
+		if err == nil {
+			err = registerFFIFunc(&etFnSetTunFd, etHandle, "set_tun_fd")
+		}
+		if err == nil {
+			err = registerFFIFunc(&etFnGetErrorMsg, etHandle, "get_error_msg")
+		}
+		if err == nil {
+			err = registerFFIFunc(&etFnFreeString, etHandle, "free_string")
+		}
+		if err != nil {
+			etInitErr = err
+			return
+		}
 	})
 }
 
@@ -156,31 +190,75 @@ func RunNetworkInstance(tomlCfg string) error {
 }
 
 // DeleteNetworkInstance stops named instances.
+//
+// easytier-ffi v2.6.4 has no delete_network_instance export; the equivalent
+// primitive is retain_network_instance (keep only the given names). Deleting
+// a set of instances therefore means retaining everything else, computed by
+// first enumerating the running instances via collect_network_infos.
 func DeleteNetworkInstance(instNames []string) error {
 	etInit()
 	if etInitErr != nil {
 		return fmt.Errorf("delete_network_instance: %w", etInitErr)
 	}
 
+	// Go semantics: deleting nothing is a no-op. (retain_network_instance
+	// with an empty list would clear ALL instances, so guard against it.)
 	if len(instNames) == 0 {
 		return nil
 	}
 
+	toDelete := make(map[string]struct{}, len(instNames))
+	for _, n := range instNames {
+		toDelete[n] = struct{}{}
+	}
+
+	infos, err := CollectNetworkInfos(64)
+	if err != nil {
+		return fmt.Errorf("delete_network_instance: 枚举实例失败: %w", err)
+	}
+
+	retain := make([]string, 0, len(infos))
+	for _, info := range infos {
+		if _, del := toDelete[info.Name]; !del {
+			retain = append(retain, info.Name)
+		}
+	}
+
+	if len(infos) == 0 {
+		// Nothing running; nothing to do.
+		return nil
+	}
+
+	if err := callRetainNetworkInstance(retain); err != nil {
+		return fmt.Errorf("delete_network_instance: %w", err)
+	}
+	return nil
+}
+
+// callRetainNetworkInstance invokes retain_network_instance with the given
+// names (empty = clear all instances).
+func callRetainNetworkInstance(retainNames []string) error {
 	// Build array of C string pointers.
-	strPtrs := make([]*byte, len(instNames))
-	for i, name := range instNames {
+	strPtrs := make([]*byte, len(retainNames))
+	for i, name := range retainNames {
 		b := cstrBytes(name)
 		strPtrs[i] = ptr(b)
 	}
 
-	// const char** is a pointer to the first element.
-	ret := etFnDeleteNetworkInst(&strPtrs[0], uint64(len(instNames)))
+	// const char** is a pointer to the first element. With zero elements we
+	// pass a non-nil pointer to a zero-length slice (safe: Rust checks length
+	// before dereferencing).
+	if len(strPtrs) == 0 {
+		empty := make([]*byte, 1)
+		strPtrs = empty
+	}
+	ret := etFnRetainNetworkInst(&strPtrs[0], uint64(len(retainNames)))
 	runtime.KeepAlive(strPtrs)
 	if ret != 0 {
 		if msg := getFFIError(); msg != "" {
-			return fmt.Errorf("delete_network_instance: %s", msg)
+			return fmt.Errorf("retain_network_instance: %s", msg)
 		}
-		return fmt.Errorf("delete_network_instance: unknown error (ret=%d)", ret)
+		return fmt.Errorf("retain_network_instance: unknown error (ret=%d)", ret)
 	}
 	return nil
 }
@@ -234,39 +312,12 @@ func CollectNetworkInfos(maxCount int) ([]InstanceInfo, error) {
 	return result, nil
 }
 
-// ListInstances returns running instance names and IDs.
+// ListInstances returns running instance names and their info JSON.
+//
+// easytier-ffi v2.6.4 has no list_instance export; collect_network_infos
+// returns the same name → info map, so we reuse it.
 func ListInstances(maxCount int) ([]InstanceInfo, error) {
-	etInit()
-	if etInitErr != nil {
-		return nil, fmt.Errorf("list_instance: %w", etInitErr)
-	}
-
-	if maxCount <= 0 {
-		maxCount = 32
-	}
-
-	infos := make([]cKeyValuePair, maxCount)
-	ret := etFnListInstance(unsafe.Pointer(&infos[0]), uint64(maxCount))
-	runtime.KeepAlive(infos)
-	if ret < 0 {
-		if msg := getFFIError(); msg != "" {
-			return nil, fmt.Errorf("list_instance: %s", msg)
-		}
-		return nil, fmt.Errorf("list_instance: unknown error (ret=%d)", ret)
-	}
-
-	count := int(ret)
-	result := make([]InstanceInfo, 0, count)
-	for i := 0; i < count; i++ {
-		info := InstanceInfo{
-			Name: cGoString(infos[i].key),
-			Info: cGoString(infos[i].value),
-		}
-		etFnFreeString(infos[i].key)
-		etFnFreeString(infos[i].value)
-		result = append(result, info)
-	}
-	return result, nil
+	return CollectNetworkInfos(maxCount)
 }
 
 // --- TUN fd ---
@@ -291,59 +342,93 @@ func SetTunFd(instName string, fd int) error {
 	return nil
 }
 
-// --- JSON RPC ---
-
-// CallJSONRPC calls an EasyTier RPC method with protobuf JSON payload.
+// --- Instance info (collect_network_infos JSON) ---
 //
-// serviceName examples:
-//   - "api.manage.PeerManageService"
-//   - "api.instance.InstanceService"
-//   - "api.config.ConfigService"
+// easytier-ffi v2.6.4 has no JSON-RPC export (no call_json_rpc), so all
+// runtime queries go through collect_network_infos. Its value JSON is the
+// prost-generated serde serialization of NetworkInstanceRunningInfo:
 //
-// domainName is only used by TcpProxyRpcService; pass "" for most calls.
-//
-// payloadJSON must include any "instance" selector required by the RPC.
-// Returns the response JSON string. Caller should parse it.
-func CallJSONRPC(serviceName, methodName, domainName, payloadJSON string) (string, error) {
-	etInit()
-	if etInitErr != nil {
-		return "", fmt.Errorf("call_json_rpc(%s.%s): %w", serviceName, methodName, etInitErr)
-	}
+//	NetworkInstanceRunningInfo {
+//	  dev_name: string, my_node_info: MyNodeInfo, events: [string],
+//	  routes: [Route], peers: [...], peer_route_pairs: [...],
+//	  running: bool, error_msg: string?
+//	}
+//	MyNodeInfo { virtual_ipv4: Ipv4Inet?, hostname, version, ips, peer_id: uint32 }
+//	Route { peer_id: uint32, ipv4_addr: Ipv4Inet, hostname, proxy_cidrs: [string], ... }
+//	Ipv4Inet { address: Ipv4Addr, network_length: uint32 }
+//	Ipv4Addr { addr: uint32 }   // dotted-quad packed big-endian
 
-	sb := cstrBytes(serviceName)
-	mb := cstrBytes(methodName)
-	pb := cstrBytes(payloadJSON)
-
-	var db []byte
-	if domainName != "" {
-		db = cstrBytes(domainName)
-	}
-
-	var outJSON *byte
-
-	ret := etFnCallJSONRPC(ptr(sb), ptr(mb), ptr(db), ptr(pb), &outJSON)
-	runtime.KeepAlive(sb)
-	runtime.KeepAlive(mb)
-	runtime.KeepAlive(pb)
-	runtime.KeepAlive(db)
-	if ret != 0 {
-		if msg := getFFIError(); msg != "" {
-			return "", fmt.Errorf("call_json_rpc(%s.%s): %s", serviceName, methodName, msg)
-		}
-		return "", fmt.Errorf("call_json_rpc(%s.%s): unknown error (ret=%d)", serviceName, methodName, ret)
-	}
-
-	if outJSON == nil {
-		return "", fmt.Errorf("call_json_rpc(%s.%s): null response", serviceName, methodName)
-	}
-	defer etFnFreeString(outJSON)
-
-	return cGoString(outJSON), nil
+type ffiIPv4Addr struct {
+	Addr uint32 `json:"addr"`
 }
 
-// --- Node info helpers (commonly used RPCs) ---
+type ffiIPv4Inet struct {
+	Address       ffiIPv4Addr `json:"address"`
+	NetworkLength uint32      `json:"network_length"`
+}
 
-// NodeInfoResponse is the JSON response from show_node_info RPC.
+type ffiMyNodeInfo struct {
+	VirtualIP4 *ffiIPv4Inet `json:"virtual_ipv4"`
+	Hostname   string       `json:"hostname"`
+	PeerID     uint32       `json:"peer_id"`
+}
+
+type ffiRoute struct {
+	PeerID     uint32       `json:"peer_id"`
+	IPv4Addr   *ffiIPv4Inet `json:"ipv4_addr"`
+	Hostname   string       `json:"hostname"`
+	ProxyCIDRs []string     `json:"proxy_cidrs"`
+}
+
+type ffiRunningInfo struct {
+	DevName    string         `json:"dev_name"`
+	MyNodeInfo *ffiMyNodeInfo `json:"my_node_info"`
+	Routes     []ffiRoute     `json:"routes"`
+	Running    bool           `json:"running"`
+	ErrorMsg   string         `json:"error_msg"`
+}
+
+// ipv4InetString renders an Ipv4Inet as "a.b.c.d/nn" (CIDR suffix included
+// when network_length is set), or "" when nil.
+func ipv4InetString(in *ffiIPv4Inet) string {
+	if in == nil {
+		return ""
+	}
+	addr := in.Address.Addr
+	s := fmt.Sprintf("%d.%d.%d.%d", byte(addr>>24), byte(addr>>16), byte(addr>>8), byte(addr))
+	if in.NetworkLength > 0 && in.NetworkLength <= 32 {
+		return fmt.Sprintf("%s/%d", s, in.NetworkLength)
+	}
+	return s
+}
+
+// firstRunningInfo fetches the collect_network_infos payload of the first
+// running instance (FFI mode runs a single EasyTier instance at a time).
+func firstRunningInfo() (*ffiRunningInfo, error) {
+	etInit()
+	if etInitErr != nil {
+		return nil, etInitErr
+	}
+	infos, err := CollectNetworkInfos(32)
+	if err != nil {
+		return nil, err
+	}
+	for _, info := range infos {
+		var ri ffiRunningInfo
+		if err := json.Unmarshal([]byte(info.Info), &ri); err != nil {
+			continue
+		}
+		if ri.ErrorMsg != "" {
+			return nil, fmt.Errorf("实例运行错误: %s", ri.ErrorMsg)
+		}
+		return &ri, nil
+	}
+	return nil, fmt.Errorf("无运行中的 EasyTier 实例")
+}
+
+// --- Node info helpers (from collect_network_infos, no RPC) ---
+
+// NodeInfoResponse mirrors the shape of show_node_info for compatibility.
 type NodeInfoResponse struct {
 	NodeInfo *struct {
 		VirtualIP string `json:"ipv4_addr"`
@@ -353,7 +438,7 @@ type NodeInfoResponse struct {
 	Error string `json:"error,omitempty"`
 }
 
-// PeerRouteEntry is a single route entry from list_route RPC.
+// PeerRouteEntry is a single route entry (from the instance's route table).
 type PeerRouteEntry struct {
 	Hostname   string   `json:"hostname"`
 	IPv4Addr   string   `json:"ipv4_addr"`
@@ -361,122 +446,48 @@ type PeerRouteEntry struct {
 	ProxyCIDRs []string `json:"proxy_cidrs"`
 }
 
-// ListRouteResponse is the JSON response from list_route RPC.
+// ListRouteResponse is the parsed route table.
 type ListRouteResponse struct {
 	Routes []PeerRouteEntry `json:"routes"`
 }
 
-// PatchConfigRequest is the request for patch_config RPC.
-type PatchConfigRequest struct {
-	Patch *PatchConfig `json:"patch"`
-}
-
-// PatchConfig is the config patch payload.
-type PatchConfig struct {
-	PortForwards []PortForwardPatch `json:"port_forwards"`
-}
-
-// PortForwardPatch is a single port forward entry in a config patch.
-type PortForwardPatch struct {
-	Action int               `json:"action"` // 1=Add, 2=Remove
-	Cfg    PortForwardConfig `json:"cfg"`
-}
-
-// PortForwardConfig is a port forward configuration.
-type PortForwardConfig struct {
-	BindAddr string `json:"bind_addr"`
-	DstAddr  string `json:"dst_addr"`
-	Proto    int    `json:"socket_type"` // 0=TCP, 1=UDP
-}
-
-// GetNodeInfo returns the local node's virtual IP and peer ID.
+// GetNodeInfo returns the local node's virtual IP, peer ID and hostname.
 func GetNodeInfo() (*NodeInfoResponse, error) {
-	respJSON, err := CallJSONRPC(
-		"api.manage.PeerManageService",
-		"show_node_info",
-		"",
-		`{}`,
-	)
+	ri, err := firstRunningInfo()
 	if err != nil {
 		return nil, err
 	}
-
-	var resp NodeInfoResponse
-	if err := json.Unmarshal([]byte(respJSON), &resp); err != nil {
-		return nil, fmt.Errorf("parse node_info response: %w", err)
+	if ri.MyNodeInfo == nil {
+		return nil, fmt.Errorf("节点信息为空")
 	}
-	return &resp, nil
+	ni := ri.MyNodeInfo
+	return &NodeInfoResponse{
+		NodeInfo: &struct {
+			VirtualIP string `json:"ipv4_addr"`
+			PeerID    string `json:"peer_id"`
+			Hostname  string `json:"hostname"`
+		}{
+			VirtualIP: ipv4InetString(ni.VirtualIP4),
+			PeerID:    strconv.FormatUint(uint64(ni.PeerID), 10),
+			Hostname:  ni.Hostname,
+		},
+	}, nil
 }
 
 // ListRoutes returns all peer routes (includes hostname, IP, peer_id).
 func ListRoutes() (*ListRouteResponse, error) {
-	respJSON, err := CallJSONRPC(
-		"api.instance.InstanceService",
-		"list_route",
-		"",
-		`{}`,
-	)
+	ri, err := firstRunningInfo()
 	if err != nil {
 		return nil, err
 	}
-
-	var resp ListRouteResponse
-	if err := json.Unmarshal([]byte(respJSON), &resp); err != nil {
-		return nil, fmt.Errorf("parse list_route response: %w", err)
+	routes := make([]PeerRouteEntry, 0, len(ri.Routes))
+	for _, r := range ri.Routes {
+		routes = append(routes, PeerRouteEntry{
+			Hostname:   r.Hostname,
+			IPv4Addr:   ipv4InetString(r.IPv4Addr),
+			PeerID:     strconv.FormatUint(uint64(r.PeerID), 10),
+			ProxyCIDRs: r.ProxyCIDRs,
+		})
 	}
-	return &resp, nil
-}
-
-// AddPortForwardRPC adds a port forward via the config RPC.
-func AddPortForwardRPC(proto int, bindAddr, dstAddr string) error {
-	req := PatchConfigRequest{
-		Patch: &PatchConfig{
-			PortForwards: []PortForwardPatch{
-				{
-					Action: 1, // Add
-					Cfg: PortForwardConfig{
-						BindAddr: bindAddr,
-						DstAddr:  dstAddr,
-						Proto:    proto,
-					},
-				},
-			},
-		},
-	}
-	payload, _ := json.Marshal(req)
-
-	_, err := CallJSONRPC(
-		"api.config.ConfigService",
-		"patch_config",
-		"",
-		string(payload),
-	)
-	return err
-}
-
-// RemovePortForwardRPC removes a port forward via the config RPC.
-func RemovePortForwardRPC(proto int, bindAddr, dstAddr string) error {
-	req := PatchConfigRequest{
-		Patch: &PatchConfig{
-			PortForwards: []PortForwardPatch{
-				{
-					Action: 2, // Remove
-					Cfg: PortForwardConfig{
-						BindAddr: bindAddr,
-						DstAddr:  dstAddr,
-						Proto:    proto,
-					},
-				},
-			},
-		},
-	}
-	payload, _ := json.Marshal(req)
-
-	_, err := CallJSONRPC(
-		"api.config.ConfigService",
-		"patch_config",
-		"",
-		string(payload),
-	)
-	return err
+	return &ListRouteResponse{Routes: routes}, nil
 }

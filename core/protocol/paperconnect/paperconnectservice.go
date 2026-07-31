@@ -686,8 +686,13 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		return nil, err
 	}
 
-	portForwards := []string{
-		fmt.Sprintf("tcp://127.0.0.1:%d/%s:%d", tcpLocalPort, hostIP, serverPort),
+	// Proxy 模式（桌面）：TCP 控制通道经本地转发端口进入虚拟网络。
+	// TUN 模式（Android VpnService）：虚拟 IP 直达 host，无需端口转发。
+	var portForwards []string
+	if !manager.HasTUN() {
+		portForwards = []string{
+			fmt.Sprintf("tcp://127.0.0.1:%d/%s:%d", tcpLocalPort, hostIP, serverPort),
+		}
 	}
 
 	_, err = manager.Start(easytier.StartOptions{
@@ -710,7 +715,11 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 			return nil, fmt.Errorf("加入已取消")
 		}
 
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", tcpLocalPort), 2*time.Second)
+		pingAddr := fmt.Sprintf("127.0.0.1:%d", tcpLocalPort)
+		if manager.HasTUN() {
+			pingAddr = fmt.Sprintf("%s:%d", hostIP, serverPort)
+		}
+		conn, err := net.DialTimeout("tcp", pingAddr, 2*time.Second)
 		if err != nil {
 			time.Sleep(1 * time.Second)
 			continue
@@ -749,7 +758,11 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 
 	clientId := scaffolding.MakeVendor(vendorPrefix)
 
-	s.pcGuestRegister("127.0.0.1", tcpLocalPort, clientId, playerName)
+	if manager.HasTUN() {
+		s.pcGuestRegister(hostIP, serverPort, clientId, playerName)
+	} else {
+		s.pcGuestRegister("127.0.0.1", tcpLocalPort, clientId, playerName)
+	}
 
 	s.guestMu.Lock()
 	s.guestManager = manager
@@ -766,7 +779,11 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	s.pcResetGuestPortBusyLocked()
 	s.guestMu.Unlock()
 
-	go s.pcGuestHeartbeatLoop(clientId, playerName, "127.0.0.1", tcpLocalPort)
+	if manager.HasTUN() {
+		go s.pcGuestHeartbeatLoop(clientId, playerName, hostIP, serverPort)
+	} else {
+		go s.pcGuestHeartbeatLoop(clientId, playerName, "127.0.0.1", tcpLocalPort)
+	}
 	go s.pcGuestSetupConnection(manager, playerName, protocol, rakLocalPort)
 
 	status := s.pcBuildConnectionStatus()
@@ -1020,16 +1037,22 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 	gamePort := s.guestGamePort
 	s.guestMu.Unlock()
 
-	localHost := "0.0.0.0"
-	if protocol == ProtocolNetherNet {
-		localHost = "127.0.0.1"
-	}
-	localAddr := fmt.Sprintf("%s:%d", localHost, rakLocalPort)
-	remoteAddr := fmt.Sprintf("%s:%d", hostIP, gamePort)
-	if err := manager.AddPortForward("udp", localAddr, remoteAddr); err != nil {
-		slog.Error("add UDP port forward failed", "err", err, "local", localAddr, "remote", remoteAddr)
-		s.pcGuestSetupError(manager, protocol)
-		return
+	// RakNet 隧道目标：TUN 模式（Android）直连 host 虚拟 IP 的游戏端口；
+	// Proxy 模式（桌面）经本地 UDP 转发端口进入虚拟网络。
+	rakDialAddr := fmt.Sprintf("%s:%d", hostIP, gamePort)
+	if !manager.HasTUN() {
+		localHost := "0.0.0.0"
+		if protocol == ProtocolNetherNet {
+			localHost = "127.0.0.1"
+		}
+		localAddr := fmt.Sprintf("%s:%d", localHost, rakLocalPort)
+		remoteAddr := fmt.Sprintf("%s:%d", hostIP, gamePort)
+		if err := manager.AddPortForward("udp", localAddr, remoteAddr); err != nil {
+			slog.Error("add UDP port forward failed", "err", err, "local", localAddr, "remote", remoteAddr)
+			s.pcGuestSetupError(manager, protocol)
+			return
+		}
+		rakDialAddr = fmt.Sprintf("127.0.0.1:%d", rakLocalPort)
 	}
 
 	if protocol == ProtocolNetherNet {
@@ -1040,10 +1063,10 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 		rkConn, err := (raknet.Dialer{
 			MaxMTU:   rakNetMTU,
 			ErrorLog: slog.Default(),
-		}).DialContext(dialCtx, fmt.Sprintf("127.0.0.1:%d", rakLocalPort))
+		}).DialContext(dialCtx, rakDialAddr)
 		dialCancel()
 		if err != nil {
-			slog.Error("RakNet dial to host failed", "err", err)
+			slog.Error("RakNet dial to host failed", "err", err, "addr", rakDialAddr)
 			s.pcGuestSetupError(manager, protocol)
 			return
 		}
@@ -1144,10 +1167,10 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 			rkConn, err = (raknet.Dialer{
 				MaxMTU:   rakNetMTU,
 				ErrorLog: slog.Default(),
-			}).DialContext(dialCtx, fmt.Sprintf("127.0.0.1:%d", rakLocalPort))
+			}).DialContext(dialCtx, rakDialAddr)
 			dialCancel()
 			if err != nil {
-				slog.Error("RakNet re-dial to host failed", "err", err)
+				slog.Error("RakNet re-dial to host failed", "err", err, "addr", rakDialAddr)
 				s.pcGuestSetupError(manager, protocol)
 				return
 			}

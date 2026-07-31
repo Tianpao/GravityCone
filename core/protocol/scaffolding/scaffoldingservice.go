@@ -744,6 +744,24 @@ func (s *ScaffoldingService) tryDirectLocalhost(scaffoldingPort uint16) *discove
 }
 
 func (s *ScaffoldingService) tryP2PConnect(manager *easytier.EasyTierManager, hostIP string, scaffoldingPort uint16) (uint16, net.Conn, error) {
+	if manager.HasTUN() {
+		// TUN 模式（Android VpnService）：虚拟 IP 直达 host 的 Scaffolding
+		// 端口，无需端口转发。
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", hostIP, scaffoldingPort), 5*time.Second)
+		if err != nil {
+			return 0, nil, fmt.Errorf("TUN直连失败 (%s:%d): %w", hostIP, scaffoldingPort, err)
+		}
+		if err := WriteProtocolRequest(conn, ProtocolPing, nil); err != nil {
+			conn.Close()
+			return 0, nil, fmt.Errorf("P2P隧道验证失败: %w", err)
+		}
+		if _, _, err := ReadProtocolResponse(conn); err != nil {
+			conn.Close()
+			return 0, nil, fmt.Errorf("P2P隧道验证失败: %w", err)
+		}
+		return 0, conn, nil
+	}
+
 	localListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, nil, fmt.Errorf("分配本地端口失败: %w", err)
@@ -995,6 +1013,19 @@ func (s *ScaffoldingService) setupMCPortForward(hostIP string, mcPort uint16) {
 	s.guestMu.Unlock()
 
 	if !running || manager == nil {
+		return
+	}
+
+	// TUN 模式（Android VpnService）：MC 客户端直接连 host 虚拟 IP:mcPort，
+	// 无需本地转发（动态 AddPortForward 在 FFI 模式下也不可用）。
+	if manager.HasTUN() {
+		s.guestMu.Lock()
+		if s.guestRunning {
+			s.guestMCAddr = hostIP
+			s.guestMCPort = mcPort
+			s.guestMCRemoteAddr = fmt.Sprintf("%s:%d", hostIP, mcPort)
+		}
+		s.guestMu.Unlock()
 		return
 	}
 

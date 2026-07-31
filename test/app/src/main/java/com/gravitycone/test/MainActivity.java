@@ -1,6 +1,7 @@
 package com.gravitycone.test;
 
 import android.content.Intent;
+import android.net.VpnService;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -76,6 +77,11 @@ public class MainActivity extends AppCompatActivity {
     private int lastStateIndex = -1;
     private String lastEngineLog = "";
 
+    /** VPN 授权请求码（VpnService.prepare）。 */
+    private static final int REQ_VPN_AUTH = 1001;
+    /** 用户是否已授予 VPN 权限（未授权时 establish() 必然失败）。 */
+    private boolean vpnAuthorized = false;
+
     /**
      * 保存已建立的 VPN fd 引用，防止 ParcelFileDescriptor 被 GC 回收时
      * 意外关闭 TUN 文件描述符（fd 已交给 native 侧 EasyTier 使用）。
@@ -107,7 +113,10 @@ public class MainActivity extends AppCompatActivity {
         scrollOpLog = findViewById(R.id.scroll_op_log);
         scrollEngineLog = findViewById(R.id.scroll_engine_log);
 
-        btnInit.setOnClickListener(v -> doInit());
+        btnInit.setOnClickListener(v -> {
+            requestVpnPermission();
+            doInit();
+        });
         btnShutdown.setOnClickListener(v -> doShutdown());
         btnHost.setOnClickListener(v -> doHost());
         btnGuest.setOnClickListener(v -> doGuest());
@@ -135,6 +144,37 @@ public class MainActivity extends AppCompatActivity {
     // =====================================================================
     // 引擎操作
     // =====================================================================
+
+    /**
+     * 申请 VPN 权限（VpnService.prepare）。
+     *
+     * <p>Android 11+ 上未授权时 {@code VpnService.Builder.establish()} 会直接抛
+     * SecurityException——必须先通过 prepare 弹授权框。授权结果在
+     * {@link #onActivityResult} 里记录。</p>
+     */
+    private void requestVpnPermission() {
+        try {
+            Intent prepare = VpnService.prepare(this);
+            if (prepare != null) {
+                startActivityForResult(prepare, REQ_VPN_AUTH);
+            } else {
+                vpnAuthorized = true;
+            }
+        } catch (Throwable t) {
+            appendOpLog("VPN 权限检查异常：" + t);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_VPN_AUTH) {
+            vpnAuthorized = resultCode == RESULT_OK;
+            appendOpLog(vpnAuthorized
+                    ? "VPN 授权成功 ✓（之后创建/加入房间会自动建立 VPN）"
+                    : "VPN 授权被拒绝——不授权将无法联机");
+        }
+    }
 
     /** 初始化引擎：启动 Go 运行时 + EasyTier（进程内）。 */
     private void doInit() {

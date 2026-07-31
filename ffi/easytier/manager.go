@@ -28,17 +28,12 @@ type FFIManager struct {
 	virtualIP     string // cached self virtual IP
 	isRunning     bool
 	startOpts     StartOptions
-	runningInfo   *RunningInfo                                                      // latest collected info
 	TunFdProvider func(instName string, virtualIP string, cidr string) (int, error) // optional TUN fd injection callback
 }
 
-// RunningInfo holds runtime information collected from EasyTier FFI.
-type RunningInfo struct {
-	VirtualIP string `json:"ipv4_addr"`
-	PeerID    string `json:"peer_id"`
-	Hostname  string `json:"hostname"`
-	ErrorMsg  string `json:"error_msg,omitempty"`
-}
+// NOTE: Runtime info is parsed from collect_network_infos' prost serde JSON
+// (see ffiRunningInfo in bridge.go) — there is no top-level ipv4_addr field
+// as in the desktop easytier-cli output.
 
 // NewFFIManager creates a new FFIManager (does not start EasyTier).
 func NewFFIManager() *FFIManager {
@@ -250,26 +245,21 @@ func (m *FFIManager) FindPeerByHostnamePrefix(hostnamePrefix string) (string, ui
 }
 
 // AddPortForward adds a TCP or UDP port forward.
+//
+// NOT SUPPORTED in FFI mode: easytier-ffi v2.6.4 has no RPC export, so port
+// forwards cannot be added at runtime. Configure them statically in the TOML
+// config (StartOptions.PortForwards) instead. On Android with VpnService the
+// TUN device makes forwarding unnecessary anyway (virtual IPs are directly
+// reachable), so callers should use the direct virtual-IP path.
 func (m *FFIManager) AddPortForward(proto string, localAddr string, remoteAddr string) error {
-	protoVal := protoToInt(proto)
-	var lastErr error
-	for attempt := 0; attempt < 3; attempt++ {
-		err := AddPortForwardRPC(protoVal, localAddr, remoteAddr)
-		if err == nil {
-			return nil
-		}
-		lastErr = err
-		if attempt < 2 {
-			time.Sleep(time.Duration(attempt+1) * time.Second)
-		}
-	}
-	return fmt.Errorf("添加端口转发失败 (%s %s -> %s): %w", proto, localAddr, remoteAddr, lastErr)
+	return fmt.Errorf("FFI 模式不支持动态端口转发 (%s %s -> %s)；请在 TOML 配置中静态声明", proto, localAddr, remoteAddr)
 }
 
 // RemovePortForward removes a port forward.
+//
+// NOT SUPPORTED in FFI mode — see AddPortForward.
 func (m *FFIManager) RemovePortForward(proto string, localAddr string, remoteAddr string) error {
-	protoVal := protoToInt(proto)
-	return RemovePortForwardRPC(protoVal, localAddr, remoteAddr)
+	return fmt.Errorf("FFI 模式不支持动态端口转发移除 (%s %s -> %s)", proto, localAddr, remoteAddr)
 }
 
 // --- Internal helpers ---
@@ -329,12 +319,14 @@ func (m *FFIManager) pollVirtualIP(instName string, timeout time.Duration) (stri
 				if info.Name != instName {
 					continue
 				}
-				var ri RunningInfo
+				var ri ffiRunningInfo
 				if err := json.Unmarshal([]byte(info.Info), &ri); err != nil {
 					continue
 				}
-				if ri.VirtualIP != "" && ri.ErrorMsg == "" {
-					return stripCIDR(ri.VirtualIP), nil
+				if ri.ErrorMsg == "" && ri.MyNodeInfo != nil {
+					if ip := ipv4InetString(ri.MyNodeInfo.VirtualIP4); ip != "" {
+						return stripCIDR(ip), nil
+					}
 				}
 			}
 		}
@@ -375,14 +367,18 @@ func (m *FFIManager) fetchSelfVirtualIP() (string, error) {
 		if info.Name != instName {
 			continue
 		}
-		var ri RunningInfo
+		var ri ffiRunningInfo
 		if err := json.Unmarshal([]byte(info.Info), &ri); err != nil {
 			continue
 		}
 		if ri.ErrorMsg != "" {
 			return "", fmt.Errorf("实例运行错误: %s", ri.ErrorMsg)
 		}
-		return stripCIDR(ri.VirtualIP), nil
+		if ri.MyNodeInfo != nil {
+			if ip := ipv4InetString(ri.MyNodeInfo.VirtualIP4); ip != "" {
+				return stripCIDR(ip), nil
+			}
+		}
 	}
 
 	return "", fmt.Errorf("实例 %s 尚未就绪", instName)
