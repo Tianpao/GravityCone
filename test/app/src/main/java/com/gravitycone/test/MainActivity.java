@@ -1,12 +1,15 @@
 package com.gravitycone.test;
 
+import android.content.Context;
 import android.content.Intent;
 import android.net.VpnService;
+import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.text.TextUtils;
+import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ScrollView;
@@ -41,6 +44,7 @@ import java.util.Locale;
  */
 public class MainActivity extends AppCompatActivity {
 
+    // ===== [调试标记] 2026-07-31：此注释用于验证源码变更是否被编入 APK =====
     private static final String TAG = "GravityConeTest";
 
     /** 状态轮询间隔（ms），与 SDK 建议一致。 */
@@ -130,7 +134,33 @@ public class MainActivity extends AppCompatActivity {
         // EasyTier 的 TUN 请求发生在引擎初始化之后，此时实例已就绪。
         startService(new Intent(this, GravityConeVpnService.class));
 
+        acquireMulticastLock();
+
         startPollers();
+    }
+
+    /**
+     * 持有 MulticastLock：基岩版的房间发现（NetherNet 7551 广播）和
+     * RakNet fake server 的 ping 响应都依赖收 UDP 广播/多播，
+     * Android 上不持锁收不到。
+     */
+    private void acquireMulticastLock() {
+        try {
+            WifiManager wifi = (WifiManager) getSystemService(Context.WIFI_SERVICE);
+            if (wifi != null) {
+                WifiManager.MulticastLock lock = wifi.createMulticastLock("gravitycone-lan");
+                lock.setReferenceCounted(false);
+                lock.acquire();
+                Log.i(TAG, "MulticastLock acquired (LAN broadcast receive enabled)");
+                appendOpLog("MulticastLock 已获取（局域网广播可用）");
+            } else {
+                Log.e(TAG, "WifiManager is null — cannot acquire MulticastLock");
+                appendOpLog("获取 MulticastLock 失败：WifiManager 为空");
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "MulticastLock acquire failed", t);
+            appendOpLog("获取 MulticastLock 失败：" + t);
+        }
     }
 
     @Override

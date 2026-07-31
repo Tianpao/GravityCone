@@ -1129,6 +1129,7 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 		}
 
 		slog.Info("NetherNet listening for local client", "network_id", disc.NetworkID())
+		go s.pcBroadcastSelfTest()
 		s.pcGuestConnectionReady(manager, protocol)
 
 		for {
@@ -1327,4 +1328,71 @@ func (s *PaperConnectService) resolvePeers() []string {
 
 func (s *PaperConnectService) AddPeers(addrs []string) {
 	s.peerConfig.Add(addrs)
+}
+
+// pcBroadcastSelfTest periodically sends NetherNet discovery request packets
+// to the local broadcast address, loopback and the local WiFi IP. The
+// discovery socket's "discovery packet received" log then shows which of
+// these actually reach it — isolating Android broadcast-reception problems
+// (MulticastLock, VPN routing, socket/network binding) from protocol issues.
+//
+// Two sockets are used so the logs can tell broadcast loopback apart from
+// unicast local delivery: requests echoing from the broadcast socket's port
+// arrived via 255.255.255.255 (AP loopback), while requests echoing from the
+// unicast socket's port arrived via direct local delivery (127.0.0.1 / local
+// IP unicast). On Android with the VPN active, the unicast socket also
+// reveals whether the packet took the TUN path (source = EasyTier virtual IP).
+func (s *PaperConnectService) pcBroadcastSelfTest() {
+	// Broadcast socket: sends only to 255.255.255.255.
+	bcConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	if err != nil {
+		slog.Warn("broadcast self-test: listen failed", "err", err)
+		return
+	}
+	defer bcConn.Close()
+	if rawConn, err := bcConn.SyscallConn(); err == nil {
+		_ = rawConn.Control(func(fd uintptr) {
+			_ = utils.SetBroadcast(fd)
+		})
+	}
+
+	// Unicast socket: sends to loopback and all local unicast addresses.
+	uniConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	if err != nil {
+		slog.Warn("broadcast self-test: unicast listen failed", "err", err)
+		return
+	}
+	defer uniConn.Close()
+
+	payload := discovery.Marshal(&discovery.RequestPacket{}, randomID())
+
+	bcAddr, err := net.ResolveUDPAddr("udp4", "255.255.255.255:7551")
+	if err != nil {
+		return
+	}
+	uniAddrs := []*net.UDPAddr{{
+		IP:   net.IPv4(127, 0, 0, 1),
+		Port: 7551,
+	}}
+	uniAddrs = append(uniAddrs, getLocalAddrs(7551)...)
+
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := bcConn.WriteToUDP(payload, bcAddr); err != nil {
+			slog.Warn("broadcast self-test: send failed", "to", bcAddr.String(), "err", err)
+		} else {
+			slog.Info("broadcast self-test sent", "kind", "broadcast", "to", bcAddr.String())
+		}
+		for _, a := range uniAddrs {
+			if _, err := uniConn.WriteToUDP(payload, a); err != nil {
+				slog.Warn("broadcast self-test: send failed", "to", a.String(), "err", err)
+			} else {
+				slog.Info("broadcast self-test sent", "kind", "unicast", "to", a.String())
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+	slog.Info("broadcast self-test finished",
+		"bcPort", bcConn.LocalAddr().(*net.UDPAddr).Port,
+		"uniPort", uniConn.LocalAddr().(*net.UDPAddr).Port)
 }

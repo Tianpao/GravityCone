@@ -283,9 +283,11 @@ func (m *FFIManager) injectTunFd(instName string, opts StartOptions, provider fu
 		// so the IP should be available within a few seconds.
 		ip, err := m.pollVirtualIP(instName, 5*time.Second)
 		if err != nil {
-			// Fall back to a default route. The VpnService will still provide
-			// routing capabilities, and the actual IP will be resolved later.
-			virtualIP = "10.144.144.0"
+			// Fall back to a valid unicast address in the virtual subnet.
+			// 10.144.144.0 is the network address (not a valid interface IP —
+			// addAddress() would fail or produce a broken TUN route).
+			// The actual DHCP-assigned IP is resolved later by waitForVirtualIP.
+			virtualIP = "10.144.144.2"
 			cidr = "10.144.144.0/24"
 		} else {
 			virtualIP = ip

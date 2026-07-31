@@ -225,6 +225,7 @@ func (l *Listener) listen() {
 			_ = l.Close()
 			return
 		}
+		l.conf.Log.Info("discovery packet received", "from", addr.String(), "len", n)
 		if err := l.handlePacket(b[:n], addr); err != nil {
 			l.conf.Log.Error("error handling packet", slog.Any("error", err), "from", addr)
 		}
@@ -284,6 +285,7 @@ func (l *Listener) handlePacket(data []byte, addr net.Addr) error {
 // It responds with both v4 (legacy) and v5 (1.21+) ResponsePackets for
 // compatibility with all Bedrock versions.
 func (l *Listener) handleRequest(addr net.Addr) error {
+	l.conf.Log.Info("discovery request received", "from", addr.String())
 	var sent bool
 	if data := l.pongData.Load(); data != nil {
 		if err := l.write(&ResponsePacket{ApplicationData: *data}, addr); err != nil {
@@ -300,6 +302,7 @@ func (l *Listener) handleRequest(addr net.Addr) error {
 	if !sent {
 		return errors.New("application data not set yet")
 	}
+	l.conf.Log.Info("discovery response sent", "to", addr.String())
 	return nil
 }
 

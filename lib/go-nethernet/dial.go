@@ -195,6 +195,9 @@ func (d Dialer) DialContext(ctx context.Context, networkID string, signaling Sig
 			case SignalTypeAnswer:
 				s := &sdp.SessionDescription{}
 				if err := s.UnmarshalString(signal.Data); err != nil {
+					d.Log.Error("failed to decode answer SDP",
+						slog.Int("len", len(signal.Data)),
+						slog.String("data", truncateLog(signal.Data, 300)))
 					d.signalError(signaling, networkID, ErrorCodeFailedToSetRemoteDescription)
 					return nil, fmt.Errorf("decode answer: %w", err)
 				}
@@ -416,4 +419,12 @@ func (d *dialerNotifier) NotifySignal(signal *Signal) bool {
 		d.Log.Warn("dropping signal because channel buffer is full", slog.Any("signal", signal))
 		return false
 	}
+}
+
+// truncateLog truncates s to at most max bytes for logging purposes.
+func truncateLog(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "...(truncated)"
 }

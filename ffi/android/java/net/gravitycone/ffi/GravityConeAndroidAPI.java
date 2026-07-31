@@ -517,7 +517,14 @@ public final class GravityConeAndroidAPI {
             public ParcelFileDescriptor startVpnService(VpnService.Builder builder) {
                 builder.addAddress(address, networkLength)
                        .addDnsServer("223.5.5.5")
-                       .addDnsServer("114.114.114.114");
+                       .addDnsServer("114.114.114.114")
+                       // 关键：不调用 allowBypass() 时 Android 会让 VPN 成为默认网络，
+                       // 本机所有应用（包括 Minecraft）的流量（广播/连接）全进 TUN 被
+                       // EasyTier 丢弃，导致本机 fake server 收不到发现请求。
+                       // allowBypass() 后只有 addRoute 的虚拟网段（10.144.144.0/24）
+                       // 走 VPN，Minecraft 的局域网广播/连接走物理网络（WiFi），
+                       // EasyTier 的公网 peer 连接也不会被自己的 TUN 吞掉。
+                       .allowBypass();
 
                 if (cidr != null && !cidr.isEmpty()) {
                     for (String part : cidr.split("\0")) {
