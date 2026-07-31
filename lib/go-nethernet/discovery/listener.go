@@ -46,8 +46,13 @@ func (conf ListenConfig) Listen(addr string) (*Listener, error) {
 	if addr == "" {
 		addr = ":0"
 	}
-	// We hardcode network protocol for "udp" as it always expects UDP packets to be received.
-	conn, err := net.ListenPacket("udp", addr)
+	// Servers and the local Minecraft client both use UDP 7551. Set reuse
+	// before binding so Android/Linux can deliver the discovery traffic to both
+	// sockets when the client also permits shared binding.
+	lc := net.ListenConfig{
+		Control: reuseAddrControl,
+	}
+	conn, err := lc.ListenPacket(context.Background(), "udp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -286,6 +291,22 @@ func (l *Listener) handlePacket(data []byte, addr net.Addr) error {
 // compatibility with all Bedrock versions.
 func (l *Listener) handleRequest(addr net.Addr) error {
 	l.conf.Log.Info("discovery request received", "from", addr.String())
+	return l.sendResponses(addr)
+}
+
+// Advertise sends unsolicited v4 + v5 ResponsePackets to addr. This is used
+// by servers on platforms where 255.255.255.255 broadcasts do not loop back
+// to the local host (e.g. Android): the local Minecraft client's discovery
+// Request never reaches the listener, so the response is advertised directly
+// to the client's own address instead (mirroring Java Edition's multicast
+// MOTD announcements). The packet is sent from the listener's socket, so the
+// source port matches the discovery port and the client can reply to it.
+func (l *Listener) Advertise(addr net.Addr) error {
+	return l.sendResponses(addr)
+}
+
+// sendResponses writes both v4 (legacy) and v5 (1.21+) ResponsePackets to addr.
+func (l *Listener) sendResponses(addr net.Addr) error {
 	var sent bool
 	if data := l.pongData.Load(); data != nil {
 		if err := l.write(&ResponsePacket{ApplicationData: *data}, addr); err != nil {
@@ -331,6 +352,9 @@ func (l *Listener) handleMessage(pk *MessagePacket, senderID uint64) error {
 		return fmt.Errorf("decode signal: %w", err)
 	}
 	signal.NetworkID = strconv.FormatUint(senderID, 10)
+	if l.conf.Log != nil {
+		l.conf.Log.Debug("discovery signal received", "type", signal.Type, "sender_id", senderID, "recipient_id", pk.RecipientID, "data_len", len(pk.Data))
+	}
 
 	l.notifiersMu.RLock()
 	notifiers := make([]nethernet.Notifier, 0, len(l.notifiers))

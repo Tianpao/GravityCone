@@ -87,9 +87,10 @@ public class MainActivity extends AppCompatActivity {
     private boolean vpnAuthorized = false;
 
     /**
-     * 保存已建立的 VPN fd 引用，防止 ParcelFileDescriptor 被 GC 回收时
-     * 意外关闭 TUN 文件描述符（fd 已交给 native 侧 EasyTier 使用）。
+     * 保存当前已建立的 VPN fd。EasyTier 的 mobile runtime 不负责关闭注入的 fd，
+     * 因此应用在连接结束或替换 VPN 时必须显式关闭该描述符。
      */
+    private static final Object sVpnFdLock = new Object();
     private static ParcelFileDescriptor sVpnFd;
 
     // =====================================================================
@@ -169,6 +170,25 @@ public class MainActivity extends AppCompatActivity {
         mainHandler.removeCallbacks(statePoller);
         mainHandler.removeCallbacks(logPoller);
         stopService(new Intent(this, GravityConeVpnService.class));
+        closeVpnFd();
+    }
+
+    private void closeVpnFd() {
+        ParcelFileDescriptor fd;
+        synchronized (sVpnFdLock) {
+            fd = sVpnFd;
+            sVpnFd = null;
+        }
+        if (fd == null) {
+            return;
+        }
+        int number = fd.getFd();
+        try {
+            fd.close();
+            appendOpLog("VPN 已关闭，TUN fd=" + number);
+        } catch (IOException e) {
+            appendOpLog("关闭 VPN fd 失败：" + e);
+        }
     }
 
     // =====================================================================
@@ -222,6 +242,7 @@ public class MainActivity extends AppCompatActivity {
                     + "，EasyTier " + meta.getEasyTierVersion());
         } catch (Throwable t) {
             appendOpLog("引擎初始化失败：" + t);
+
             toast("初始化失败：" + t.getMessage());
         }
         updateButtons();
@@ -229,10 +250,15 @@ public class MainActivity extends AppCompatActivity {
 
     /** 关闭引擎：停止所有房间/连接，释放资源。 */
     private void doShutdown() {
+        boolean stopped = false;
         try {
             GravityConeAndroidAPI.shutdown();
+            stopped = true;
         } catch (Throwable t) {
             appendOpLog("关闭引擎异常：" + t);
+        }
+        if (stopped) {
+            closeVpnFd();
         }
         initialized = false;
         lastStateIndex = -1;
@@ -303,6 +329,7 @@ public class MainActivity extends AppCompatActivity {
     private void doWaiting() {
         try {
             GravityConeAndroidAPI.setWaiting();
+            closeVpnFd();
             appendOpLog("已断开连接，回到空闲状态");
         } catch (Throwable t) {
             appendOpLog("断开异常：" + t);
@@ -327,7 +354,20 @@ public class MainActivity extends AppCompatActivity {
                         // Builder 是 VpnService 的非静态内部类，必须通过实例创建
                         GravityConeVpnService svc = GravityConeVpnService.awaitInstance(2000);
                         ParcelFileDescriptor fd = svc.establishVpn(request);
-                        sVpnFd = fd; // 持有引用，防止 GC 关闭 TUN fd
+                        ParcelFileDescriptor oldFd;
+                        synchronized (sVpnFdLock) {
+                            oldFd = sVpnFd;
+                            sVpnFd = fd;
+                        }
+                        if (oldFd != null) {
+                            int oldNumber = oldFd.getFd();
+                            try {
+                                oldFd.close();
+                                appendOpLog("已替换旧 VPN，TUN fd=" + oldNumber);
+                            } catch (IOException e) {
+                                appendOpLog("关闭旧 VPN fd 失败：" + e);
+                            }
+                        }
                         appendOpLog("VPN 已建立（自动接受），TUN fd=" + fd.getFd());
                     } catch (Throwable t) {
                         appendOpLog("VPN 建立失败：" + t);

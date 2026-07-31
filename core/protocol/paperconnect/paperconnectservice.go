@@ -660,51 +660,48 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		return nil, fmt.Errorf("加入已取消")
 	}
 
-	// Allocate local ports for port forwarding.
-	tcpLocalLn, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		manager.Stop()
-		return nil, fmt.Errorf("分配本地TCP端口失败: %w", err)
-	}
-	tcpLocalPort := uint16(tcpLocalLn.Addr().(*net.TCPAddr).Port)
-	tcpLocalLn.Close()
-
-	// Allocate UDP port for game data forwarding.
-	// Bind to 0.0.0.0 so the MC client can connect via the physical NIC IP.
-	rakLocalConn, err := net.ListenPacket("udp", "0.0.0.0:0")
-	if err != nil {
-		manager.Stop()
-		return nil, fmt.Errorf("分配本地UDP端口失败: %w", err)
-	}
-	rakLocalPort := uint16(rakLocalConn.LocalAddr().(*net.UDPAddr).Port)
-	rakLocalConn.Close()
-
-	// Phase 2: restart EasyTier with port forwards (TCP for control only, UDP added at runtime).
-	manager.Stop()
-	manager, err = easytier.NewEasyTierManager()
-	if err != nil {
-		return nil, err
-	}
-
-	// Proxy 模式（桌面）：TCP 控制通道经本地转发端口进入虚拟网络。
-	// TUN 模式（Android VpnService）：虚拟 IP 直达 host，无需端口转发。
-	var portForwards []string
+	// TUN 模式（Android VpnService）可直接访问虚拟 IP，发现主机后无需
+	// 为端口转发重启 EasyTier。重启会再次请求 VpnService 并创建无用的 TUN。
+	var tcpLocalPort uint16
+	var rakLocalPort uint16
 	if !manager.HasTUN() {
-		portForwards = []string{
-			fmt.Sprintf("tcp://127.0.0.1:%d/%s:%d", tcpLocalPort, hostIP, serverPort),
+		// Proxy 模式（桌面）需要在启动时静态注入 TCP 端口转发。
+		tcpLocalLn, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			manager.Stop()
+			return nil, fmt.Errorf("分配本地TCP端口失败: %w", err)
+		}
+		tcpLocalPort = uint16(tcpLocalLn.Addr().(*net.TCPAddr).Port)
+		tcpLocalLn.Close()
+
+		manager.Stop()
+		manager, err = easytier.NewEasyTierManager()
+		if err != nil {
+			return nil, err
+		}
+		_, err = manager.Start(easytier.StartOptions{
+			NetworkName:        rc.EasyTierNetworkName(),
+			NetworkSecret:      rc.EasyTierNetworkSecret(),
+			IsHost:             false,
+			PortForwards:       []string{fmt.Sprintf("tcp://127.0.0.1:%d/%s:%d", tcpLocalPort, hostIP, serverPort)},
+			Peers:              s.resolvePeers(),
+			UpstreamCompatible: true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("启动虚拟网络(端口转发)失败: %w", err)
 		}
 	}
 
-	_, err = manager.Start(easytier.StartOptions{
-		NetworkName:        rc.EasyTierNetworkName(),
-		NetworkSecret:      rc.EasyTierNetworkSecret(),
-		IsHost:             false,
-		PortForwards:       portForwards,
-		Peers:              s.resolvePeers(),
-		UpstreamCompatible: true,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("启动虚拟网络(端口转发)失败: %w", err)
+	// Desktop NetherNet uses this for its runtime UDP forwarding; RakNet also
+	// advertises it as the local fake-server port in TUN mode.
+	if !manager.HasTUN() || protocol == ProtocolRakNet {
+		rakLocalConn, err := net.ListenPacket("udp", "0.0.0.0:0")
+		if err != nil {
+			manager.Stop()
+			return nil, fmt.Errorf("分配本地UDP端口失败: %w", err)
+		}
+		rakLocalPort = uint16(rakLocalConn.LocalAddr().(*net.UDPAddr).Port)
+		rakLocalConn.Close()
 	}
 
 	// Wait for TCP ping to succeed.
@@ -776,6 +773,11 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	s.guestProtocol = protocol
 	s.guestGamePort = gamePort
 	s.guestMotd = motd
+	if s.guestMotd == "" {
+		// ServerName 为空时 Minecraft 的局域网卡片可能无法正常显示，
+		// 兜底用玩家名（桌面/CLI/FFI 调用方可能不传 motd）。
+		s.guestMotd = playerName
+	}
 	s.pcResetGuestPortBusyLocked()
 	s.guestMu.Unlock()
 
@@ -1102,10 +1104,13 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 		s.pcClearGuestPortBusy(manager)
 
 		disc.ServerData(&discovery.ServerData{
-			ServerName:            s.guestMotd,
-			LevelName:             "Join",
-			GameType:              discovery.GameTypeSurvival,
-			PlayerCount:           0,
+			ServerName: s.guestMotd,
+			LevelName:  "Join",
+			GameType:   discovery.GameTypeSurvival,
+			// PlayerCount 必须 >= 1：Minecraft 客户端对玩家数 <= 0 的世界
+			// 直接不显示（见 discovery.ServerData 字段注释），fake server
+			// 暂无玩家接入时也报 1，否则房间永远不会出现在局域网列表。
+			PlayerCount:           1,
 			MaxPlayerCount:        20,
 			AcceptsOnlineAuth:     true,
 			AcceptsSelfSignedAuth: true,
@@ -1130,6 +1135,8 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 
 		slog.Info("NetherNet listening for local client", "network_id", disc.NetworkID())
 		go s.pcBroadcastSelfTest()
+		go s.pcAdvertiseLoop(disc)
+		// Discovery diagnostics are emitted by the active listener; do not bind a competing UDP socket here.
 		s.pcGuestConnectionReady(manager, protocol)
 
 		for {
@@ -1328,6 +1335,44 @@ func (s *PaperConnectService) resolvePeers() []string {
 
 func (s *PaperConnectService) AddPeers(addrs []string) {
 	s.peerConfig.Add(addrs)
+}
+
+// pcAdvertiseLoop periodically unicasts unsolicited NetherNet discovery
+// responses to all local addresses (loopback, WiFi/cellular IPs). On Android
+// (and Windows, where broadcasts don't loop back), the local Minecraft
+// client's 255.255.255.255 discovery Request never reaches the fake server,
+// so the room never appears in the LAN list. Advertising the response
+// directly — the same technique as Java Edition's multicast MOTD
+// announcements (Terracotta) — makes the room show up regardless. The
+// response is sent from the listener's socket (source port 7551), so the
+// client can reply to it and connect.
+func (s *PaperConnectService) pcAdvertiseLoop(disc *discovery.Listener) {
+	stopCh := s.guestStopCh
+	ticker := time.NewTicker(1500 * time.Millisecond)
+	defer ticker.Stop()
+
+	addrs := []*net.UDPAddr{{
+		IP:   net.IPv4(127, 0, 0, 1),
+		Port: 7551,
+	}}
+	addrs = append(addrs, getLocalAddrs(7551)...)
+
+	for {
+		select {
+		case <-stopCh:
+			return
+		case <-disc.Context().Done():
+			return
+		case <-ticker.C:
+			for _, a := range addrs {
+				if err := disc.Advertise(a); err != nil {
+					slog.Warn("discovery advertisement failed", "to", a.String(), "err", err)
+				} else {
+					slog.Info("discovery advertisement sent", "to", a.String())
+				}
+			}
+		}
+	}
 }
 
 // pcBroadcastSelfTest periodically sends NetherNet discovery request packets

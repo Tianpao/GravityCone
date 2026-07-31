@@ -99,7 +99,9 @@ func (m *FFIManager) Start(opts ffi_toml.StartOptions) (string, error) {
 			return "", fmt.Errorf("TUN fd注入失败: %w", err)
 		}
 		log.Printf("[easytier] TUN fd 注入成功 fd=%d", fd)
-		_ = fd // fd is now owned by EasyTier's tun_mobile runtime
+		// The Java ParcelFileDescriptor retains ownership and must close this fd
+		// after the corresponding EasyTier instance has stopped.
+		_ = fd
 	} else {
 		log.Printf("[easytier] 无 TUN fd provider，跳过注入")
 	}

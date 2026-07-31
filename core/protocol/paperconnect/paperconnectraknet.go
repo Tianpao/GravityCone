@@ -3,6 +3,7 @@ package paperconnect
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -15,6 +16,7 @@ import (
 
 	mcstatus "github.com/andre-carbajal/go-mcstatus"
 	"github.com/df-mc/go-nethernet/discovery"
+	"github.com/wlynxg/anet"
 
 	"gravitycone/core/utils"
 )
@@ -129,7 +131,7 @@ func scanRakNetLAN(ctx context.Context, timeout time.Duration) (*RakNetServerInf
 // getBroadcastAddrs computes subnet broadcast addresses for all active interfaces
 // plus the global broadcast address 255.255.255.255.
 func getBroadcastAddrs(port int) ([]*net.UDPAddr, error) {
-	interfaces, err := net.Interfaces()
+	interfaces, err := anet.Interfaces()
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +141,7 @@ func getBroadcastAddrs(port int) ([]*net.UDPAddr, error) {
 		if !isPhysicalNIC(iface) {
 			continue
 		}
-		ifaceAddrs, err := iface.Addrs()
+		ifaceAddrs, err := anet.InterfaceAddrsByInterface(&iface)
 		if err != nil {
 			continue
 		}
@@ -173,7 +175,7 @@ func getBroadcastAddrs(port int) ([]*net.UDPAddr, error) {
 // On Windows, broadcasts to 255.255.255.255 don't loopback, so local unicast pings
 // are needed to discover servers on the same machine.
 func getLocalAddrs(port int) []*net.UDPAddr {
-	interfaces, err := net.Interfaces()
+	interfaces, err := anet.Interfaces()
 	if err != nil {
 		return nil
 	}
@@ -182,7 +184,7 @@ func getLocalAddrs(port int) []*net.UDPAddr {
 		if !isPhysicalNIC(iface) {
 			continue
 		}
-		ifaceAddrs, err := iface.Addrs()
+		ifaceAddrs, err := anet.InterfaceAddrsByInterface(&iface)
 		if err != nil {
 			continue
 		}
@@ -515,7 +517,11 @@ func detectNetherNetWithID(ctx context.Context) (uint64, error) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		for id := range l.Responses() {
+		for id, data := range l.Responses() {
+			// 诊断：打印 MC 响应的原始字节，确认其 ServerData 版本/格式
+			//（v4/v5 为 df-mc 逆向的 1.21 时代格式，新版 MC 可能已变更）。
+			slog.Info("detectNetherNet: MC response captured",
+				"network_id", id, "len", len(data), "hex", hex.EncodeToString(data))
 			return id, nil
 		}
 		select {

@@ -91,6 +91,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"runtime"
 	"strconv"
@@ -143,9 +144,13 @@ func Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeInit(
 		if logFile := os.NewFile(uintptr(loggingFd), "application.log"); logFile != nil {
 			log.SetOutput(logFile)
 			log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+			slog.SetDefault(slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{
+				Level: slog.LevelDebug,
+			})))
 		}
 	}
 	log.Printf("[ffi] nativeInit baseDir=%s", dir)
+	slog.Info("ffi structured logging initialized", "dir", dir)
 
 	cDir := C.CString(dir)
 	defer C.free(unsafe.Pointer(cDir))
