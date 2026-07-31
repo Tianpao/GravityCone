@@ -83,73 +83,24 @@ tasks:
   # =========================================================================
 
   build:android:ffi:download:
-    summary: Downloads EasyTier FFI .so for both arm64 and amd64
+    summary: Builds Android libeasytier_ffi.so from EasyTier source (cargo-ndk; Windows uses the .bat)
     cmds:
-      - go run ffi/android/scripts/ensure_easytier_ffi.go arm64 ffi/android/jniLibs/arm64-v8a
-      - go run ffi/android/scripts/ensure_easytier_ffi.go amd64 ffi/android/jniLibs/x86_64
+      - cmd: bash ffi/android/scripts/build_easytier_ffi_android.sh arm64 ffi/android/jniLibs/arm64-v8a
+        platforms: [linux, darwin]
+      - cmd: bash ffi/android/scripts/build_easytier_ffi_android.sh amd64 ffi/android/jniLibs/x86_64
+        platforms: [linux, darwin]
+      - cmd: cmd /c ffi\android\scripts\build_easytier_ffi_android.bat
+        platforms: [windows]
 
   build:android:ffi:compile:
     summary: Cross-compiles libgravitycone.so for Android (arm64 + amd64)
     deps:
       - build:android:ffi:download
-    vars:
-      # NDK toolchain: needs Android NDK installed. Override with ANDROID_NDK_HOME.
-      NDK_ROOT:
-        sh: 'echo "${ANDROID_NDK_HOME:-$([ -d "$HOME/Library/Android/sdk/ndk" ] && ls -d "$HOME/Library/Android/sdk/ndk/"* 2>/dev/null | sort -V | tail -1 || ls -d "$HOME/Android/Sdk/ndk/"* 2>/dev/null | sort -V | tail -1)}"'
     cmds:
-      - task: build:android:ffi:compile:arch
-        vars: {ARCH: arm64, ABI: arm64-v8a, NDK_ROOT: '{{.NDK_ROOT}}'}
-      - task: build:android:ffi:compile:arch
-        vars: {ARCH: amd64, ABI: x86_64, NDK_ROOT: '{{.NDK_ROOT}}'}
-
-  build:android:ffi:compile:arch:
-    internal: true
-    summary: Compiles libgravitycone.so for one Android architecture
-    vars:
-      ARCH: '{{.ARCH | default "arm64"}}'
-      ABI: '{{.ABI | default "arm64-v8a"}}'
-      MIN_SDK: '21'
-    cmds:
-      - |
-        # Determine toolchain from NDK
-        NDK_ROOT="{{.NDK_ROOT}}"
-        if [ -z "$NDK_ROOT" ] || [ ! -d "$NDK_ROOT" ]; then
-          echo "Android NDK not found. Set ANDROID_NDK_HOME or install NDK."
-          echo "Install: sdkmanager 'ndk;26.3.11579264'"
-          exit 1
-        fi
-
-        case "$(uname -s)" in
-          Darwin) HOST_TAG="darwin-x86_64" ;;
-          Linux)  HOST_TAG="linux-x86_64" ;;
-          *)      echo "Cross-compilation from Windows not supported."; exit 1 ;;
-        esac
-
-        TOOLCHAIN="$NDK_ROOT/toolchains/llvm/prebuilt/$HOST_TAG"
-
-        case "{{.ARCH}}" in
-          arm64)
-            export CC="$TOOLCHAIN/bin/aarch64-linux-android{{.MIN_SDK}}-clang"
-            export CXX="$TOOLCHAIN/bin/aarch64-linux-android{{.MIN_SDK}}-clang++"
-            export GOARCH=arm64
-            ;;
-          amd64)
-            export CC="$TOOLCHAIN/bin/x86_64-linux-android{{.MIN_SDK}}-clang"
-            export CXX="$TOOLCHAIN/bin/x86_64-linux-android{{.MIN_SDK}}-clang++"
-            export GOARCH=amd64
-            ;;
-        esac
-
-        export CGO_ENABLED=1
-        export GOOS=android
-
-        mkdir -p ffi/android/jniLibs/{{.ABI}}
-
-        go build -tags et_ffi -buildmode=c-shared \
-          -trimpath \
-          -ldflags="-w -s" \
-          -o ffi/android/jniLibs/{{.ABI}}/libgravitycone.so \
-          ./ffi/common/
+      - cmd: bash ffi/android/scripts/build_gravitycone_android.sh
+        platforms: [linux, darwin]
+      - cmd: cmd /c ffi\android\scripts\build_gravitycone_android.bat
+        platforms: [windows]
 
   build:android:ffi:sdk:
     summary: |
@@ -158,13 +109,16 @@ tasks:
     deps:
       - build:android:ffi:compile
     cmds:
-      - mkdir -p ffi/android/dist
-      - |
-        cd ffi/android
-        zip -r dist/gravitycone-android-sdk.zip \
-          jniLibs/arm64-v8a/libeasytier_ffi.so \
-          jniLibs/arm64-v8a/libgravitycone.so \
-          jniLibs/x86_64/libeasytier_ffi.so \
-          jniLibs/x86_64/libgravitycone.so \
-          java/net/gravitycone/ffi/GravityConeAndroidAPI.java
-        echo "SDK package created: ffi/android/dist/gravitycone-android-sdk.zip"
+      - cmd: |
+          mkdir -p ffi/android/dist
+          cd ffi/android
+          zip -r dist/gravitycone-android-sdk.zip \
+            jniLibs/arm64-v8a/libeasytier_ffi.so \
+            jniLibs/arm64-v8a/libgravitycone.so \
+            jniLibs/x86_64/libeasytier_ffi.so \
+            jniLibs/x86_64/libgravitycone.so \
+            java/net/gravitycone/ffi/GravityConeAndroidAPI.java
+          echo "SDK package created: ffi/android/dist/gravitycone-android-sdk.zip"
+        platforms: [linux, darwin]
+      - cmd: cmd /c ffi\android\scripts\build_android_sdk.bat
+        platforms: [windows]

@@ -120,10 +120,13 @@ type GuestOkState struct {
 }
 
 // ExceptionState represents an error state.
+// Error carries the human-readable failure message (Chinese), so callers can
+// surface why a room create/join failed instead of only seeing type=0.
 type ExceptionState struct {
 	State string `json:"state"`
 	Index uint32 `json:"index"`
 	Type  int    `json:"type"`
+	Error string `json:"error,omitempty"`
 }
 
 // Metadata holds version information (mirrors Terracotta's Metadata).

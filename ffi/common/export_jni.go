@@ -76,6 +76,8 @@ import "C"
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -120,7 +122,17 @@ func Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeInit(
 	env *C.JNIEnv, clazz C.jclass, baseDir C.jstring, loggingFd C.jint,
 ) C.jint {
 	dir := jniToGoString(env, baseDir)
-	_ = loggingFd // TODO: wire up logging fd to Go log output
+
+	// Wire the logging fd (dup'ed by Java) to Go's log output so engine logs
+	// land in application.log, readable via GravityConeAndroidAPI.collectLogs().
+	if loggingFd >= 0 {
+		if logFile := os.NewFile(uintptr(loggingFd), "application.log"); logFile != nil {
+			log.SetOutput(logFile)
+			log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+		}
+	}
+	log.Printf("[ffi] nativeInit baseDir=%s", dir)
+
 	cDir := C.CString(dir)
 	defer C.free(unsafe.Pointer(cDir))
 	ret := gc_init(cDir)

@@ -51,14 +51,31 @@ jobs:
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
 
       # ------------------------------------------------------------------
-      # 1. Download libeasytier_ffi.so (from qteasytier/easytier-ffi-bin)
+      # 1. Build libeasytier_ffi.so from EasyTier source (cargo-ndk).
+      #    Android needs a bionic-linked lib. The qteasytier/easytier-ffi-bin
+      #    releases only ship glibc desktop builds, which fail to dlopen on
+      #    Android ("parse_config: dlopen libeasytier_ffi.so faied").
       # ------------------------------------------------------------------
-      - name: Download EasyTier FFI .so
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android
+
+      - name: Install protoc (prost-build dependency)
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ffi/android/.cache/easytier -> ffi/android/.cache/easytier/target
+
+      - name: Build EasyTier FFI .so
         run: task build:android:ffi:download
 
       # ------------------------------------------------------------------
       # 2. Cross-compile libgravitycone.so for arm64 + amd64
-      #    (calls download again internally → no-op since files exist)
+      #    (deps on build:android:ffi:download → step 1 already ran)
       # ------------------------------------------------------------------
       - name: Compile libgravitycone.so
         run: task build:android:ffi:compile

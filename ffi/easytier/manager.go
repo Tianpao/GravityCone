@@ -5,6 +5,7 @@ package easytier
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,16 +66,19 @@ func (m *FFIManager) Start(opts ffi_toml.StartOptions) (string, error) {
 	m.mu.Unlock()
 
 	tomlCfg := ffi_toml.BuildTOMLConfig(opts)
+	log.Printf("[easytier] Start network=%s host=%s isHost=%v", opts.NetworkName, opts.Hostname, opts.IsHost)
 
 	// Validate config first
 	if err := ParseConfig(tomlCfg); err != nil {
 		return "", fmt.Errorf("配置验证失败: %w", err)
 	}
+	log.Printf("[easytier] parse_config 通过")
 
 	// Start the instance
 	if err := RunNetworkInstance(tomlCfg); err != nil {
 		return "", fmt.Errorf("启动虚拟网络失败: %w", err)
 	}
+	log.Printf("[easytier] run_network_instance 成功")
 
 	// Extract instance name from config
 	instName := opts.Hostname
@@ -92,13 +96,17 @@ func (m *FFIManager) Start(opts ffi_toml.StartOptions) (string, error) {
 		provider = DefaultTunFdProvider
 	}
 	if provider != nil {
+		log.Printf("[easytier] 请求 TUN fd（VpnService 回调）...")
 		fd, err := m.injectTunFd(instName, opts, provider)
 		if err != nil {
 			// Clean up the instance if TUN fd injection fails.
 			DeleteNetworkInstance([]string{instName})
 			return "", fmt.Errorf("TUN fd注入失败: %w", err)
 		}
+		log.Printf("[easytier] TUN fd 注入成功 fd=%d", fd)
 		_ = fd // fd is now owned by EasyTier's tun_mobile runtime
+	} else {
+		log.Printf("[easytier] 无 TUN fd provider，跳过注入")
 	}
 	// --- End TUN fd injection ---
 
@@ -114,6 +122,7 @@ func (m *FFIManager) Start(opts ffi_toml.StartOptions) (string, error) {
 		m.Stop()
 		return "", err
 	}
+	log.Printf("[easytier] 虚拟IP就绪: %s", virtualIP)
 
 	m.mu.Lock()
 	m.virtualIP = virtualIP

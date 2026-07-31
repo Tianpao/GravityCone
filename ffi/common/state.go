@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -100,7 +101,7 @@ func buildStateJSON(state AppState, index uint32, extra interface{}, lastError s
 		return mustJSON(gr)
 
 	case StateError:
-		es := ExceptionState{State: StateNameException, Index: index}
+		es := ExceptionState{State: StateNameException, Index: index, Error: lastError}
 		return mustJSON(es)
 
 	default:
@@ -148,6 +149,7 @@ func transitionTo(newState AppState, extra interface{}) stateCapture {
 
 // transitionToError transitions to the error state.
 func transitionToError(errMsg string) {
+	log.Printf("[状态错误] %s", errMsg)
 	globalState.mu.Lock()
 	globalState.index++
 	globalState.state = StateError

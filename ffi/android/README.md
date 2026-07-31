@@ -8,7 +8,7 @@ SDK 包含两个 .so 库和一个 Java API 类：
 
 | 文件 | 说明 |
 |------|------|
-| `libeasytier_ffi.so` | EasyTier P2P 引擎（C ABI，来自 [qteasytier/easytier-ffi-bin](https://github.com/qteasytier/easytier-ffi-bin)） |
+| `libeasytier_ffi.so` | EasyTier P2P 引擎（C ABI，从 [EasyTier 官方源码](https://github.com/EasyTier/EasyTier/tree/main/easytier-contrib/easytier-ffi) 交叉编译，Android bionic 链接） |
 | `libgravitycone.so` | GravityCone FFI 层（Go 编译，包含状态机、协议逻辑、JNI 导出） |
 | `GravityConeAndroidAPI.java` | Java API 封装（JNI native 方法 + VpnService 回调） |
 
@@ -18,30 +18,46 @@ SDK 包含两个 .so 库和一个 Java API 类：
 
 - Go 1.22+
 - Android NDK（推荐 r26+），设置 `ANDROID_NDK_HOME` 环境变量
-- **宿主机要求**：macOS 或 Linux（Windows 不支持交叉编译，需使用 WSL）
+- Rust（rustup）+ [cargo-ndk](https://github.com/bbqsrc/cargo-ndk)（`cargo install cargo-ndk`）—— 用于交叉编译 `libeasytier_ffi.so`
+- **宿主机要求**：
+  - `libeasytier_ffi.so`：**Windows 也可以**（`build_easytier_ffi_android.bat`，cargo-ndk 支持 Windows 宿主交叉编译；NDK 缺失时自动下载 r26d）
+  - `libgravitycone.so`（Go 交叉编译）：仅 macOS 或 Linux（Windows 需 WSL 或 CI）
+- 能访问 GitHub（源码 clone + crates.io 依赖；国内可配置 `http_proxy`/`https_proxy`）
 
 ### 构建命令
 
 ```bash
-# 一键构建完整 SDK（下载 .so + 编译 + 打包）
+# 一键构建完整 SDK（构建 easytier .so + 编译 + 打包）
 task build:android:ffi:sdk
 ```
 
 此命令会依次执行：
 
-1. **下载** `libeasytier_ffi.so`（arm64 + amd64）→ `ffi/android/jniLibs/`
+1. **源码构建** `libeasytier_ffi.so`（arm64 + amd64）→ `ffi/android/jniLibs/`
 2. **交叉编译** `libgravitycone.so`（arm64 + amd64）→ `ffi/android/jniLibs/`
 3. **打包** → `ffi/android/dist/gravitycone-android-sdk.zip`
 
 也可以分步执行：
 
 ```bash
-# 仅下载 EasyTier FFI .so
+# 仅构建 EasyTier FFI .so（源码交叉编译，首次约 10-20 分钟）
 task build:android:ffi:download
 
-# 仅编译（依赖已下载的 .so）
+# 仅编译 libgravitycone.so（依赖已构建的 .so）
 task build:android:ffi:compile
 ```
+
+### libeasytier_ffi.so 来源说明
+
+`libeasytier_ffi.so` 是 EasyTier 仓库中 `easytier-contrib/easytier-ffi`（cdylib crate）的构建产物。
+**必须从源码用 cargo-ndk 交叉编译**（`ffi/android/scripts/build_easytier_ffi_android.sh`，
+与官方 [easytier-android-jni/build.sh](https://github.com/EasyTier/EasyTier/tree/main/easytier-contrib/easytier-android-jni)
+同款方式）——qteasytier/easytier-ffi-bin 发布的 `linux-*` 资产是桌面 glibc 库
+（依赖 `libc.so.6`），Android bionic 无法加载，会报
+`parse_config: dlopen libeasytier_ffi.so faied`。
+
+源码缓存位于 `ffi/android/.cache/easytier`（可用 `EASYTIER_SRC_DIR` 覆盖），
+增量构建复用 rustc 缓存。构建完成后脚本会自检产物不依赖 glibc。
 
 ### 产物结构
 
@@ -244,7 +260,8 @@ Reader logs = GravityConeAndroidAPI.collectLogs();
 
 ### Q: 集成方需要手动下载 EasyTier .so 吗？
 
-**不需要**。`libeasytier_ffi.so` 已包含在 SDK zip 中。构建 SDK 时由 `ensure_easytier_ffi.go` 自动从 GitHub releases 下载。
+**不需要**。`libeasytier_ffi.so` 已包含在 SDK zip 中。构建 SDK 时由
+`ffi/android/scripts/build_easytier_ffi_android.sh` 自动从 EasyTier 源码交叉编译。
 
 ### Q: 需要配置 CMake 或 ndk-build 吗？
 

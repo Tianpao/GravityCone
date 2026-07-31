@@ -55,6 +55,21 @@ func BuildTOMLConfig(opts StartOptions) string {
 	}
 	b.WriteString(fmt.Sprintf("instance_name = \"%s\"\n", instName))
 
+	// Root-level fields — ipv4 / hostname / dhcp are TOP-LEVEL keys in
+	// EasyTier's TOML schema (see easytier/src/common/config.rs), NOT
+	// [flags] members. Writing them inside [flags] gets them silently
+	// ignored, leaving the node without a virtual IP (host loses its
+	// fixed IP, guest never enables DHCP), so waitForVirtualIP times
+	// out and room create/join fails.
+	if opts.IsHost {
+		b.WriteString(fmt.Sprintf("ipv4 = \"%s\"\n", HostVirtualIP))
+		if opts.Hostname != "" {
+			b.WriteString(fmt.Sprintf("hostname = \"%s\"\n", opts.Hostname))
+		}
+	} else {
+		b.WriteString("dhcp = true\n")
+	}
+
 	// Network identity
 	b.WriteString("\n[network_identity]\n")
 	b.WriteString(fmt.Sprintf("network_name = \"%s\"\n", opts.NetworkName))
@@ -80,12 +95,8 @@ func BuildTOMLConfig(opts StartOptions) string {
 	}
 	b.WriteString("multi_thread = true\n")
 
-	// Host-specific
+	// Whitelist (flags 段成员)
 	if opts.IsHost {
-		b.WriteString(fmt.Sprintf("\nipv4 = \"%s\"\n", HostVirtualIP))
-		if opts.Hostname != "" {
-			b.WriteString(fmt.Sprintf("hostname = \"%s\"\n", opts.Hostname))
-		}
 		if !opts.UpstreamCompatible {
 			// Whitelist only the ports we use
 			b.WriteString(fmt.Sprintf("tcp_whitelist = [\"%d\"", opts.TCPPort))
@@ -100,8 +111,7 @@ func BuildTOMLConfig(opts StartOptions) string {
 			b.WriteString("]\n")
 		}
 	} else {
-		// Guest: DHCP for IP assignment
-		b.WriteString("\ndhcp = true\n")
+		// Guest: DHCP for IP assignment (dhcp = true 已在根级输出)
 		if !opts.UpstreamCompatible {
 			b.WriteString("tcp_whitelist = [\"0\"]\n")
 			b.WriteString("udp_whitelist = [\"0\"]\n")
