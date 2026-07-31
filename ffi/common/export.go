@@ -22,10 +22,11 @@ import (
 
 // --- Init / Shutdown ---
 
-//export gc_init
 // gc_init initializes the GravityCone engine.
 // baseDir: writable directory for logs, machine-id, and EasyTier binaries.
 // Returns 0 on success.
+//
+//export gc_init
 func gc_init(baseDir *C.char) C.int {
 	dir := ""
 	if baseDir != nil {
@@ -35,18 +36,20 @@ func gc_init(baseDir *C.char) C.int {
 	return 0
 }
 
-//export gc_shutdown
 // gc_shutdown stops all active rooms and connections and resets to idle.
+//
+//export gc_shutdown
 func gc_shutdown() {
 	goBackToIdle()
 }
 
 // --- State Polling ---
 
-//export gc_get_state
 // gc_get_state returns the current state as a JSON string.
 // The caller MUST free the returned string with gc_free_string().
 // Returns NULL if the engine has not been initialized.
+//
+//export gc_get_state
 func gc_get_state() *C.char {
 	jsonStr := getStateJSON()
 	return C.CString(jsonStr)
@@ -54,18 +57,21 @@ func gc_get_state() *C.char {
 
 // --- State Transitions ---
 
-//export gc_set_waiting
 // gc_set_waiting transitions to the idle/waiting state, stopping any active room.
+//
+//export gc_set_waiting
 func gc_set_waiting() {
 	setWaiting()
 }
 
-//export gc_set_scanning
 // gc_set_scanning starts scanning for a local Minecraft server and creates a room.
 // room: optional room code (pass NULL or empty string to auto-generate).
 // player: player name (pass NULL for default "Player").
 // protocol: "scaffolding" for Java Edition, "paperconnect" for Bedrock Edition
-//           (pass NULL or empty string for default "scaffolding").
+//
+//	(pass NULL or empty string for default "scaffolding").
+//
+//export gc_set_scanning
 func gc_set_scanning(room, player, protocol *C.char) {
 	r := ""
 	if room != nil {
@@ -82,12 +88,13 @@ func gc_set_scanning(room, player, protocol *C.char) {
 	setScanning(r, p, proto)
 }
 
-//export gc_set_guesting
 // gc_set_guesting starts connecting to a remote room.
 // room: room code (required).
 // player: player name (pass NULL for default "Player").
 // Returns 1 if the room code is valid and the connection process started,
 // 0 if the room code is invalid or the engine is not idle.
+//
+//export gc_set_guesting
 func gc_set_guesting(room, player *C.char) C.int {
 	if room == nil {
 		return 0
@@ -105,7 +112,6 @@ func gc_set_guesting(room, player *C.char) C.int {
 
 // --- STUN (NAT Probing) ---
 
-//export gc_stun_probe
 // gc_stun_probe runs a STUN NAT type probe via easytier-cli.
 // Returns a JSON string with NAT type info.
 // The caller MUST free the returned string with gc_free_string().
@@ -138,6 +144,8 @@ func gc_set_guesting(room, player *C.char) C.int {
 // Returns JSON with an "error" field on failure:
 //
 //	{"error": "stun failed: ..."}
+//
+//export gc_stun_probe
 func gc_stun_probe() *C.char {
 	result := stunProbe()
 	return C.CString(result)
@@ -145,10 +153,11 @@ func gc_stun_probe() *C.char {
 
 // --- TUN fd (Android VpnService) ---
 
-//export gc_set_tun_fd
 // gc_set_tun_fd attaches a TUN file descriptor to a named EasyTier instance.
 // Used on Android to pass the VpnService TUN fd to EasyTier.
 // On non-Android platforms, this is a no-op.
+//
+//export gc_set_tun_fd
 func gc_set_tun_fd(instName *C.char, fd C.int) C.int {
 	name := C.GoString(instName)
 	if err := setTunFdBridge(name, int(fd)); err != nil {
@@ -159,21 +168,24 @@ func gc_set_tun_fd(instName *C.char, fd C.int) C.int {
 
 // --- Utilities ---
 
-//export gc_verify_room_code
 // gc_verify_room_code checks the room code type without connecting.
 // Returns:
-//   -1: invalid
-//    3: Scaffolding (Java Edition, compatible with Terracotta)
-//    4: PaperConnect (Bedrock Edition)
+//
+//	-1: invalid
+//	 3: Scaffolding (Java Edition, compatible with Terracotta)
+//	 4: PaperConnect (Bedrock Edition)
+//
+//export gc_verify_room_code
 func gc_verify_room_code(code *C.char) C.int {
 	c := C.GoString(code)
 	return C.int(verifyRoomCode(c))
 }
 
-//export gc_get_metadata
 // gc_get_metadata returns version metadata as a JSON string.
 // Format: {"version":"0.1.3","compile_time":1720246800000,"easytier_version":"v2.6.4"}
 // The caller MUST free the returned string with gc_free_string().
+//
+//export gc_get_metadata
 func gc_get_metadata() *C.char {
 	meta := Metadata{
 		Version:         "0.1.3-alpha",
@@ -184,17 +196,19 @@ func gc_get_metadata() *C.char {
 	return C.CString(string(data))
 }
 
-//export gc_free_string
 // gc_free_string frees a string returned by gc_get_state() or gc_get_metadata().
+//
+//export gc_free_string
 func gc_free_string(s *C.char) {
 	C.free(unsafe.Pointer(s))
 }
 
 // --- Version ---
 
-//export gc_version
 // gc_version returns the FFI ABI version as a simple integer.
 // Increment this when the API changes incompatibly.
+//
+//export gc_version
 func gc_version() C.int {
 	return 1
 }

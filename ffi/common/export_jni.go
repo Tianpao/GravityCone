@@ -106,9 +106,9 @@ func jniFromGoString(env *C.JNIEnv, s string) C.jstring {
 // =========================================================================
 
 var (
-	cachedJVM       *C.JavaVM
-	cachedClassRef  C.jclass // global reference to GravityConeAndroidAPI class
-	jvmInitialized  bool
+	cachedJVM      *C.JavaVM
+	cachedClassRef C.jclass // global reference to GravityConeAndroidAPI class
+	jvmInitialized bool
 )
 
 // =========================================================================

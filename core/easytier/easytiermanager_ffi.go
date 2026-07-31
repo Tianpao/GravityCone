@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sync"
 
+	"gravitycone/core/utils"
 	ffi_et "gravitycone/ffi/easytier"
 )
 
@@ -18,8 +19,31 @@ import (
 // (which is excluded when et_ffi is set).
 const EasyTierVersion = "v2.6.4"
 
+// Event constants and data types — mirrored from easytierdownload.go
+// (which is excluded when et_ffi is set). These are referenced by main.go
+// for Wails event registration and must exist at compile time even though
+// they are never emitted in FFI mode (EnsureEasyTier is a no-op).
+const (
+	EventDownloadProgress = "download.progress"
+	EventDownloadError    = "download.error"
+)
+
+type DownloadProgressData struct {
+	Step      string `json:"step"`
+	Percent   int    `json:"percent"`
+	TotalSize int64  `json:"total_size"`
+	Speed     int64  `json:"speed"`
+}
+
+type DownloadErrorData struct {
+	Error string `json:"error"`
+}
+
+// SetEnsureEasyTierEmitter is a no-op on Android — no download events are emitted.
+func SetEnsureEasyTierEmitter(emitter utils.EventEmitter) {}
+
 // No-op stubs for desktop-only configuration functions.
-func SetCustomEasyTierDir(dir string)  {}
+func SetCustomEasyTierDir(dir string)   {}
 func SetSkipEasyTierDownload(skip bool) {}
 func SetEasyTierLogOutput(path string)  {}
 
@@ -95,10 +119,10 @@ func (m *EasyTierManager) Stop() error {
 	return m.ffi.Stop()
 }
 
-func (m *EasyTierManager) IsRunning() bool                { return m.ffi.IsRunning() }
-func (m *EasyTierManager) SelfVirtualIP() string           { return m.virtualIP }
-func (m *EasyTierManager) RPCPortal() string               { return "" }
-func (m *EasyTierManager) GetPeerID() (string, error)      { return m.ffi.GetPeerID() }
+func (m *EasyTierManager) IsRunning() bool            { return m.ffi.IsRunning() }
+func (m *EasyTierManager) SelfVirtualIP() string      { return m.virtualIP }
+func (m *EasyTierManager) RPCPortal() string          { return "" }
+func (m *EasyTierManager) GetPeerID() (string, error) { return m.ffi.GetPeerID() }
 func (m *EasyTierManager) DiscoverPeer(h string) (string, error) {
 	return m.ffi.DiscoverPeer(h)
 }

@@ -17,19 +17,19 @@ package main
 
 // State names (matching Terracotta's state identifiers).
 const (
-	StateNameWaiting          = "waiting"
-	StateNameHostScanning     = "host-scanning"
-	StateNameHostStarting     = "host-starting"
-	StateNameHostOk           = "host-ok"
-	StateNameGuestConnecting  = "guest-connecting"
-	StateNameGuestStarting    = "guest-starting"
-	StateNameGuestOk          = "guest-ok"
-	StateNameException        = "exception"
+	StateNameWaiting         = "waiting"
+	StateNameHostScanning    = "host-scanning"
+	StateNameHostStarting    = "host-starting"
+	StateNameHostOk          = "host-ok"
+	StateNameGuestConnecting = "guest-connecting"
+	StateNameGuestStarting   = "guest-starting"
+	StateNameGuestOk         = "guest-ok"
+	StateNameException       = "exception"
 )
 
 // Protocol constants for room.create protocol parameter.
 const (
-	ProtocolScaffolding = "scaffolding"
+	ProtocolScaffolding  = "scaffolding"
 	ProtocolPaperConnect = "paperconnect"
 )
 
@@ -41,8 +41,8 @@ const (
 
 // Room code verification results (mirrors Terracotta's JNI return values).
 const (
-	RoomCodeInvalid    = -1
-	RoomCodeScaffolding = 3 // Terracotta-compatible value for Scaffolding
+	RoomCodeInvalid      = -1
+	RoomCodeScaffolding  = 3 // Terracotta-compatible value for Scaffolding
 	RoomCodePaperConnect = 4 // GravityCone extension for Bedrock
 )
 
@@ -85,13 +85,13 @@ type HostStartingState struct {
 
 // HostOkState represents a successfully created room.
 type HostOkState struct {
-	State        string      `json:"state"`
-	Index        uint32      `json:"index"`
-	Protocol     string      `json:"protocol"`
-	Room         string      `json:"room"`
-	MCPort       uint16      `json:"mc_port,omitempty"`    // Java Edition
-	GamePort     int         `json:"game_port,omitempty"`  // Bedrock Edition
-	SubProtocol  string      `json:"sub_protocol,omitempty"` // "nethernet" or "raknet" (Bedrock)
+	State       string `json:"state"`
+	Index       uint32 `json:"index"`
+	Protocol    string `json:"protocol"`
+	Room        string `json:"room"`
+	MCPort      uint16 `json:"mc_port,omitempty"`      // Java Edition
+	GamePort    int    `json:"game_port,omitempty"`    // Bedrock Edition
+	SubProtocol string `json:"sub_protocol,omitempty"` // "nethernet" or "raknet" (Bedrock)
 }
 
 // GuestConnectingState represents connecting to a remote room.
@@ -121,14 +121,14 @@ type GuestOkState struct {
 
 // ExceptionState represents an error state.
 type ExceptionState struct {
-	State    string `json:"state"`
-	Index    uint32 `json:"index"`
-	Type     int    `json:"type"`
+	State string `json:"state"`
+	Index uint32 `json:"index"`
+	Type  int    `json:"type"`
 }
 
 // Metadata holds version information (mirrors Terracotta's Metadata).
 type Metadata struct {
-	Version      string `json:"version"`
-	CompileTime  int64  `json:"compile_time"`
+	Version         string `json:"version"`
+	CompileTime     int64  `json:"compile_time"`
 	EasyTierVersion string `json:"easytier_version"`
 }

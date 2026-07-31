@@ -37,24 +37,24 @@ const (
 )
 
 // State machine functions
-func FFIResetState()                       { resetState() }
-func FFIIsInState(s AppState) bool         { return isInState(s) }
-func FFICanTransition() bool               { return canTransition() }
+func FFIResetState()                                         { resetState() }
+func FFIIsInState(s AppState) bool                           { return isInState(s) }
+func FFICanTransition() bool                                 { return canTransition() }
 func FFITransitionTo(s AppState, e interface{}) stateCapture { return transitionTo(s, e) }
-func FFITransitionToError(msg string)      { transitionToError(msg) }
-func FFIGoBackToIdle()                     { goBackToIdle() }
-func FFIUpdateExtra(e interface{})         { updateExtra(e) }
-func FFISetBaseDir(dir string)             { setBaseDir(dir) }
-func FFIGetBaseDir() string                { return getBaseDir() }
-func FFIGetStateJSON() string              { return getStateJSON() }
+func FFITransitionToError(msg string)                        { transitionToError(msg) }
+func FFIGoBackToIdle()                                       { goBackToIdle() }
+func FFIUpdateExtra(e interface{})                           { updateExtra(e) }
+func FFISetBaseDir(dir string)                               { setBaseDir(dir) }
+func FFIGetBaseDir() string                                  { return getBaseDir() }
+func FFIGetStateJSON() string                                { return getStateJSON() }
 func FFIBuildStateJSON(s AppState, idx uint32, e interface{}, err string) string {
 	return buildStateJSON(s, idx, e, err)
 }
 
 // Bridge functions
-func FFIIsPaperConnectCode(code string) bool  { return isPaperConnectCode(code) }
-func FFIVerifyRoomCode(code string) int        { return verifyRoomCode(code) }
-func FFISetWaiting()                           { setWaiting() }
+func FFIIsPaperConnectCode(code string) bool       { return isPaperConnectCode(code) }
+func FFIVerifyRoomCode(code string) int            { return verifyRoomCode(code) }
+func FFISetWaiting()                               { setWaiting() }
 func FFISetScanning(room, player, protocol string) { setScanning(room, player, protocol) }
 func FFISetGuesting(roomCode, player string) bool  { return setGuesting(roomCode, player) }
 

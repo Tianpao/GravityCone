@@ -147,7 +147,7 @@ tasks:
 
         go build -tags et_ffi -buildmode=c-shared \
           -trimpath \
-          -ldflags="-w -s -L ffi/android/jniLibs/{{.ABI}} -leasytier_ffi" \
+          -ldflags="-w -s" \
           -o ffi/android/jniLibs/{{.ABI}}/libgravitycone.so \
           ./ffi/common/
 

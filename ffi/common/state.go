@@ -23,11 +23,11 @@ const (
 // stateHolder is the global state container protected by a mutex.
 type stateHolder struct {
 	mu        sync.Mutex
-	index     uint32       // incremented on each state change
+	index     uint32 // incremented on each state change
 	state     AppState
-	extra     interface{}  // protocol-specific state data
+	extra     interface{} // protocol-specific state data
 	lastError string
-	baseDir   string       // writable directory for logs, machine-id, etc.
+	baseDir   string // writable directory for logs, machine-id, etc.
 }
 
 var globalState = &stateHolder{
