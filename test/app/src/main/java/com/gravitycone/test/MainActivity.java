@@ -25,7 +25,8 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
-import java.io.Reader;
+import java.io.RandomAccessFile;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
@@ -80,6 +81,8 @@ public class MainActivity extends AppCompatActivity {
     private boolean initialized = false;
     private int lastStateIndex = -1;
     private String lastEngineLog = "";
+    /** 引擎日志已读字节偏移（增量读取用）。 */
+    private long engineLogOffset = 0;
 
     /** VPN 授权请求码（VpnService.prepare）。 */
     private static final int REQ_VPN_AUTH = 1001;
@@ -430,37 +433,36 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    /** 读取并展示引擎日志（collectLogs 每次从头读全量）。 */
+    /** 读取并展示引擎日志（增量读取：只读上次偏移之后的字节）。 */
     private void pollEngineLog() {
-        Reader reader = null;
-        try {
-            reader = GravityConeAndroidAPI.collectLogs();
+        try (RandomAccessFile file =
+                     new RandomAccessFile(GravityConeAndroidAPI.getLogFile(), "r")) {
+            long len = file.length();
+            if (engineLogOffset > len) {
+                // 日志文件被清空/截断时从头重读
+                engineLogOffset = 0;
+            }
+            file.seek(engineLogOffset);
             StringBuilder sb = new StringBuilder();
-            char[] buf = new char[4096];
+            byte[] buf = new byte[4096];
             int n;
-            while ((n = reader.read(buf)) > 0) {
-                sb.append(buf, 0, n);
+            while ((n = file.read(buf)) > 0) {
+                sb.append(new String(buf, 0, n, StandardCharsets.UTF_8));
             }
-            String text = sb.toString();
-            if (!text.equals(lastEngineLog)) {
-                lastEngineLog = text;
-                if (text.length() > MAX_ENGINE_LOG_CHARS) {
-                    text = text.substring(text.length() - MAX_ENGINE_LOG_CHARS);
-                }
-                tvEngineLog.setText(text);
-                scrollEngineLog.post(() ->
-                        scrollEngineLog.fullScroll(ScrollView.FOCUS_DOWN));
+            engineLogOffset = file.getFilePointer();
+            if (sb.length() == 0) {
+                return; // 无新内容
             }
+            String text = lastEngineLog + sb;
+            if (text.length() > MAX_ENGINE_LOG_CHARS) {
+                text = text.substring(text.length() - MAX_ENGINE_LOG_CHARS);
+            }
+            lastEngineLog = text;
+            tvEngineLog.setText(text);
+            scrollEngineLog.post(() ->
+                    scrollEngineLog.fullScroll(ScrollView.FOCUS_DOWN));
         } catch (IOException | RuntimeException e) {
             // 日志读取失败不影响主流程
-        } finally {
-            if (reader != null) {
-                try {
-                    reader.close();
-                } catch (IOException ignore) {
-                    // 忽略
-                }
-            }
         }
     }
 
@@ -482,13 +484,17 @@ public class MainActivity extends AppCompatActivity {
         return name.isEmpty() ? "Player" : name;
     }
 
+    /** 操作日志时间戳格式化器（仅主线程使用，可安全复用）。 */
+    private static final SimpleDateFormat OP_LOG_TIME =
+            new SimpleDateFormat("HH:mm:ss", Locale.US);
+
     /** 追加操作日志（可跨线程调用，自动切换到主线程）。 */
     private void appendOpLog(String line) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             mainHandler.post(() -> appendOpLog(line));
             return;
         }
-        String ts = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
+        String ts = OP_LOG_TIME.format(new Date());
         opLogLines.add("[" + ts + "] " + line);
         while (opLogLines.size() > MAX_OP_LOG_LINES) {
             opLogLines.remove(0);

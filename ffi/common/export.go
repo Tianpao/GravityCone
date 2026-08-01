@@ -16,7 +16,6 @@ package main
 */
 import "C"
 import (
-	"encoding/json"
 	"unsafe"
 )
 
@@ -28,11 +27,6 @@ import (
 //
 //export gc_init
 func gc_init(baseDir *C.char) C.int {
-	dir := ""
-	if baseDir != nil {
-		dir = C.GoString(baseDir)
-	}
-	setBaseDir(dir)
 	return 0
 }
 
@@ -157,21 +151,6 @@ func gc_stun_probe() *C.char {
 	return C.CString(result)
 }
 
-// --- TUN fd (Android VpnService) ---
-
-// gc_set_tun_fd attaches a TUN file descriptor to a named EasyTier instance.
-// Used on Android to pass the VpnService TUN fd to EasyTier.
-// On non-Android platforms, this is a no-op.
-//
-//export gc_set_tun_fd
-func gc_set_tun_fd(instName *C.char, fd C.int) C.int {
-	name := C.GoString(instName)
-	if err := setTunFdBridge(name, int(fd)); err != nil {
-		return -1
-	}
-	return 0
-}
-
 // --- Utilities ---
 
 // gc_verify_room_code checks the room code type without connecting.
@@ -193,13 +172,7 @@ func gc_verify_room_code(code *C.char) C.int {
 //
 //export gc_get_metadata
 func gc_get_metadata() *C.char {
-	meta := Metadata{
-		Version:         "0.1.3-alpha",
-		CompileTime:     CompileTime.Load(),
-		EasyTierVersion: "v2.6.4",
-	}
-	data, _ := json.Marshal(meta)
-	return C.CString(string(data))
+	return C.CString(currentMetadataJSON())
 }
 
 // gc_free_string frees a string returned by gc_get_state() or gc_get_metadata().

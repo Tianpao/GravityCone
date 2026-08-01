@@ -15,6 +15,8 @@
 // Build: go build -buildmode=c-shared -tags cgo -o libgravitycone.so .
 package main
 
+import "encoding/json"
+
 // State names (matching Terracotta's state identifiers).
 const (
 	StateNameWaiting         = "waiting"
@@ -22,7 +24,6 @@ const (
 	StateNameHostStarting    = "host-starting"
 	StateNameHostOk          = "host-ok"
 	StateNameGuestConnecting = "guest-connecting"
-	StateNameGuestStarting   = "guest-starting"
 	StateNameGuestOk         = "guest-ok"
 	StateNameException       = "exception"
 )
@@ -33,34 +34,12 @@ const (
 	ProtocolPaperConnect = "paperconnect"
 )
 
-// Room code prefixes.
-const (
-	PrefixScaffolding  = "U/"
-	PrefixPaperConnect = "P/"
-)
-
 // Room code verification results (mirrors Terracotta's JNI return values).
 const (
 	RoomCodeInvalid      = -1
 	RoomCodeScaffolding  = 3 // Terracotta-compatible value for Scaffolding
 	RoomCodePaperConnect = 4 // GravityCone extension for Bedrock
 )
-
-// Player info for ScaffoldingMC (Java Edition).
-type ScaffoldingPlayerInfo struct {
-	Name       string `json:"name"`
-	MachineID  string `json:"machine_id"`
-	EasyTierID string `json:"easytier_id,omitempty"`
-	Vendor     string `json:"vendor"`
-	Kind       string `json:"kind"` // "HOST" or "GUEST"
-}
-
-// Player info for PaperConnect (Bedrock Edition).
-type PCPlayerEntry struct {
-	Player     string `json:"player"`
-	ClientID   string `json:"clientId"`
-	IsRoomHost bool   `json:"isRoomHost"`
-}
 
 // --- State JSON structures ---
 
@@ -99,15 +78,6 @@ type GuestConnectingState struct {
 	State string `json:"state"`
 	Index uint32 `json:"index"`
 	Room  string `json:"room"`
-	Step  string `json:"step,omitempty"` // "connecting", "waiting_peer", "handshaking", "ready"
-}
-
-// GuestStartingState represents EasyTier is starting for guest.
-type GuestStartingState struct {
-	State      string `json:"state"`
-	Index      uint32 `json:"index"`
-	Room       string `json:"room"`
-	Difficulty string `json:"difficulty,omitempty"` // "EASIEST", "SIMPLE", "MEDIUM", "TOUGH"
 }
 
 // GuestOkState represents a successful connection.
@@ -137,4 +107,15 @@ type Metadata struct {
 	Version         string `json:"version"`
 	CompileTime     int64  `json:"compile_time"`
 	EasyTierVersion string `json:"easytier_version"`
+}
+
+// currentMetadataJSON renders the version metadata as JSON.
+// Shared by the C ABI (gc_get_metadata) and JNI (nativeGetMetadata) exports.
+func currentMetadataJSON() string {
+	data, _ := json.Marshal(Metadata{
+		Version:         "0.1.3-alpha",
+		CompileTime:     CompileTime.Load(),
+		EasyTierVersion: "v2.6.4",
+	})
+	return string(data)
 }

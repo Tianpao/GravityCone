@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"sync/atomic"
 	"testing"
 )
@@ -13,8 +14,52 @@ func resetState() {
 	globalState.extra = nil
 	globalState.lastError = ""
 	globalState.index = 0
-	globalState.baseDir = ""
 	globalState.mu.Unlock()
+}
+
+// --- Test-only state transition helpers ---
+//
+// Production code transitions exclusively through beginTransition /
+// transitionToIfOwner / transitionToErrorIfOwner (ownership-checked).
+// These unguarded variants exist so tests can drive the state machine
+// directly; they live here rather than in state.go to keep them out of
+// the production binary.
+
+// transitionTo atomically transitions to a new state without ownership
+// checking.
+func transitionTo(newState AppState, extra interface{}) {
+	globalState.mu.Lock()
+	globalState.index++
+	globalState.state = newState
+	globalState.extra = extra
+	globalState.lastError = ""
+	globalState.mu.Unlock()
+}
+
+// transitionToError transitions to the error state without ownership
+// checking.
+func transitionToError(errMsg string) {
+	log.Printf("[状态错误] %s", errMsg)
+	globalState.mu.Lock()
+	globalState.index++
+	globalState.state = StateError
+	globalState.lastError = errMsg
+	globalState.mu.Unlock()
+}
+
+// canTransition returns true if the current state allows a transition.
+// Only transitions from Idle are allowed (single room at a time).
+func canTransition() bool {
+	globalState.mu.Lock()
+	defer globalState.mu.Unlock()
+	return globalState.state == StateIdle
+}
+
+// isInState checks if we are currently in the given state.
+func isInState(s AppState) bool {
+	globalState.mu.Lock()
+	defer globalState.mu.Unlock()
+	return globalState.state == s
 }
 
 // --- Initial state ---
@@ -426,17 +471,6 @@ func TestUpdateExtra(t *testing.T) {
 	}
 	if globalState.extra != ctx {
 		t.Error("updateExtra should replace extra")
-	}
-}
-
-// --- setBaseDir / getBaseDir ---
-
-func TestBaseDir(t *testing.T) {
-	resetState()
-
-	setBaseDir("/test/dir")
-	if got := getBaseDir(); got != "/test/dir" {
-		t.Errorf("getBaseDir() = %q, want %q", got, "/test/dir")
 	}
 }
 

@@ -28,26 +28,11 @@ type stateHolder struct {
 	state     AppState
 	extra     interface{} // protocol-specific state data
 	lastError string
-	baseDir   string // writable directory for logs, machine-id, etc.
 }
 
 var globalState = &stateHolder{
 	index: 0,
 	state: StateIdle,
-}
-
-// setBaseDir stores the base directory for the engine.
-func setBaseDir(dir string) {
-	globalState.mu.Lock()
-	defer globalState.mu.Unlock()
-	globalState.baseDir = dir
-}
-
-// getBaseDir returns the stored base directory.
-func getBaseDir() string {
-	globalState.mu.Lock()
-	defer globalState.mu.Unlock()
-	return globalState.baseDir
 }
 
 // getStateJSON returns the current state serialized as a JSON string.
@@ -136,18 +121,6 @@ type guestContext struct {
 
 // --- State transition helpers ---
 
-// transitionTo atomically transitions to a new state without ownership
-// checking. Used by tests and low-level callers; async room operations
-// should use beginTransition / transitionToIfOwner instead.
-func transitionTo(newState AppState, extra interface{}) {
-	globalState.mu.Lock()
-	globalState.index++
-	globalState.state = newState
-	globalState.extra = extra
-	globalState.lastError = ""
-	globalState.mu.Unlock()
-}
-
 // beginTransition atomically checks that the engine is Idle and transitions
 // to newState in one step, eliminating the TOCTOU between a separate
 // "can transition" check and the transition itself. Two concurrent
@@ -183,18 +156,6 @@ func transitionToIfOwner(ctx interface{}, newState AppState, extra interface{}) 
 	return true
 }
 
-// transitionToError transitions to the error state without ownership
-// checking. Used by tests; async operations should use
-// transitionToErrorIfOwner.
-func transitionToError(errMsg string) {
-	log.Printf("[状态错误] %s", errMsg)
-	globalState.mu.Lock()
-	globalState.index++
-	globalState.state = StateError
-	globalState.lastError = errMsg
-	globalState.mu.Unlock()
-}
-
 // transitionToErrorIfOwner transitions to the error state only if the
 // caller still owns it; stale failures from cancelled operations are
 // dropped.
@@ -209,21 +170,6 @@ func transitionToErrorIfOwner(ctx interface{}, errMsg string) bool {
 	globalState.state = StateError
 	globalState.lastError = errMsg
 	return true
-}
-
-// canTransition returns true if the current state allows a transition.
-// Only transitions from Idle are allowed (single room at a time).
-func canTransition() bool {
-	globalState.mu.Lock()
-	defer globalState.mu.Unlock()
-	return globalState.state == StateIdle
-}
-
-// isInState checks if we are currently in the given state.
-func isInState(s AppState) bool {
-	globalState.mu.Lock()
-	defer globalState.mu.Unlock()
-	return globalState.state == s
 }
 
 // goBackToIdle returns to idle, stopping any active EasyTier instances.

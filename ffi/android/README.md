@@ -21,7 +21,7 @@ SDK 包含两个 .so 库和一个 Java API 类：
 - Rust（rustup）+ [cargo-ndk](https://github.com/bbqsrc/cargo-ndk)（`cargo install cargo-ndk`）—— 用于交叉编译 `libeasytier_ffi.so`
 - **宿主机要求**：
   - `libeasytier_ffi.so`：**Windows 也可以**（`build_easytier_ffi_android.bat`，cargo-ndk 支持 Windows 宿主交叉编译；NDK 缺失时自动下载 r26d）
-  - `libgravitycone.so`（Go 交叉编译）：仅 macOS 或 Linux（Windows 需 WSL 或 CI）
+  - `libgravitycone.so`（Go 交叉编译）：macOS / Linux 用 `build_gravitycone_android.sh`，**Windows 用 `build_gravitycone_android.bat`**（NDK 自动探测/下载）
 - 能访问 GitHub（源码 clone + crates.io 依赖；国内可配置 `http_proxy`/`https_proxy`）
 
 ### 构建命令

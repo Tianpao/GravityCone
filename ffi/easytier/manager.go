@@ -90,18 +90,18 @@ func (m *FFIManager) Start(opts ffi_toml.StartOptions) (string, error) {
 	if provider == nil {
 		provider = DefaultTunFdProvider
 	}
+	var virtualIP string
 	if provider != nil {
 		log.Printf("[easytier] 请求 TUN fd（VpnService 回调）...")
-		fd, err := m.injectTunFd(instName, opts, provider)
+		vip, err := m.injectTunFd(instName, opts, provider)
 		if err != nil {
 			// Clean up the instance if TUN fd injection fails.
 			DeleteNetworkInstance([]string{instName})
 			return "", fmt.Errorf("TUN fd注入失败: %w", err)
 		}
-		log.Printf("[easytier] TUN fd 注入成功 fd=%d", fd)
-		// The Java ParcelFileDescriptor retains ownership and must close this fd
-		// after the corresponding EasyTier instance has stopped.
-		_ = fd
+		// The Java ParcelFileDescriptor retains ownership of the fd and must
+		// close it after the corresponding EasyTier instance has stopped.
+		virtualIP = vip
 	} else {
 		log.Printf("[easytier] 无 TUN fd provider，跳过注入")
 	}
@@ -113,11 +113,17 @@ func (m *FFIManager) Start(opts ffi_toml.StartOptions) (string, error) {
 	m.isRunning = true
 	m.mu.Unlock()
 
-	// Wait for virtual IP to become available (poll collect_network_infos)
-	virtualIP, err := m.waitForVirtualIP(30 * time.Second)
-	if err != nil {
-		m.Stop()
-		return "", err
+	// Wait for the virtual IP to become available (poll collect_network_infos).
+	// Guests already confirmed the IP while injecting the TUN fd (DHCP assigns
+	// it before the VpnService callback); hosts must poll because the fixed
+	// IP only appears once the instance is fully up.
+	if opts.IsHost || virtualIP == "" {
+		vip, err := m.waitForVirtualIP(30 * time.Second)
+		if err != nil {
+			m.Stop()
+			return "", err
+		}
+		virtualIP = vip
 	}
 	log.Printf("[easytier] 虚拟IP就绪: %s", virtualIP)
 
@@ -268,10 +274,11 @@ func (m *FFIManager) RemovePortForward(proto string, localAddr string, remoteAdd
 
 // injectTunFd determines the virtual IP, calls the provider to get a TUN fd
 // from VpnService, and injects it into EasyTier via SetTunFd.
+// Returns the virtual IP the TUN is bound to.
 //
 // For HOST: the virtual IP is known upfront (10.144.144.1 from config).
 // For GUEST: the IP is assigned by DHCP; we poll collect_network_infos briefly.
-func (m *FFIManager) injectTunFd(instName string, opts StartOptions, provider func(string, string, string) (int, error)) (int, error) {
+func (m *FFIManager) injectTunFd(instName string, opts StartOptions, provider func(string, string, string) (int, error)) (string, error) {
 	var virtualIP string
 	var cidr string
 
@@ -286,7 +293,7 @@ func (m *FFIManager) injectTunFd(instName string, opts StartOptions, provider fu
 		// healthy while game traffic is black-holed.
 		ip, err := m.pollVirtualIP(instName, 30*time.Second)
 		if err != nil {
-			return -1, fmt.Errorf("等待 guest 虚拟IP失败: %w", err)
+			return "", fmt.Errorf("等待 guest 虚拟IP失败: %w", err)
 		}
 		virtualIP = ip
 		cidr = "10.144.144.0/24"
@@ -296,67 +303,20 @@ func (m *FFIManager) injectTunFd(instName string, opts StartOptions, provider fu
 	// This BLOCKS until the Android app establishes or rejects the VPN.
 	fd, err := provider(instName, virtualIP, cidr)
 	if err != nil {
-		return -1, fmt.Errorf("TUN fd provider回调失败: %w", err)
+		return "", fmt.Errorf("TUN fd provider回调失败: %w", err)
 	}
 
 	// Inject the fd into EasyTier.
 	if err := SetTunFd(instName, fd); err != nil {
-		return -1, fmt.Errorf("set_tun_fd失败: %w", err)
+		return "", fmt.Errorf("set_tun_fd失败: %w", err)
 	}
 
-	return fd, nil
+	return virtualIP, nil
 }
 
-// pollVirtualIP polls collect_network_infos for the virtual IP assigned to this instance.
-// Used by GUEST mode (DHCP) to get the IP before calling the VpnService callback.
-func (m *FFIManager) pollVirtualIP(instName string, timeout time.Duration) (string, error) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		infos, err := CollectNetworkInfos(32)
-		if err == nil {
-			for _, info := range infos {
-				if info.Name != instName {
-					continue
-				}
-				var ri ffiRunningInfo
-				if err := json.Unmarshal([]byte(info.Info), &ri); err != nil {
-					continue
-				}
-				if ri.ErrorMsg == "" && ri.MyNodeInfo != nil {
-					if ip := ipv4InetString(ri.MyNodeInfo.VirtualIP4); ip != "" {
-						return stripCIDR(ip), nil
-					}
-				}
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return "", fmt.Errorf("轮询虚拟IP超时 (%v)", timeout)
-}
-
-func (m *FFIManager) waitForVirtualIP(timeout time.Duration) (string, error) {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if !m.IsRunning() {
-			return "", fmt.Errorf("EasyTier 实例已退出")
-		}
-
-		ip, err := m.fetchSelfVirtualIP()
-		if err == nil && ip != "" {
-			return ip, nil
-		}
-
-		time.Sleep(500 * time.Millisecond)
-	}
-	return "", fmt.Errorf("等待获取虚拟IP超时")
-}
-
-// fetchSelfVirtualIP gets the local node's virtual IP from collect_network_infos.
-func (m *FFIManager) fetchSelfVirtualIP() (string, error) {
-	m.mu.Lock()
-	instName := m.instName
-	m.mu.Unlock()
-
+// selfVirtualIP queries collect_network_infos for this instance's virtual IP.
+// Returns an error if the instance is gone or not ready yet.
+func (m *FFIManager) selfVirtualIP(instName string) (string, error) {
 	infos, err := CollectNetworkInfos(32)
 	if err != nil {
 		return "", err
@@ -383,10 +343,32 @@ func (m *FFIManager) fetchSelfVirtualIP() (string, error) {
 	return "", fmt.Errorf("实例 %s 尚未就绪", instName)
 }
 
-// protoToInt converts protocol string to EasyTier proto enum.
-// Delegates to the pure-Go tomlconfig package.
-func protoToInt(proto string) int {
-	return ffi_toml.ProtoToInt(proto)
+// pollVirtualIP polls collect_network_infos for the virtual IP assigned to this instance.
+// Used by GUEST mode (DHCP) to get the IP before calling the VpnService callback.
+func (m *FFIManager) pollVirtualIP(instName string, timeout time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if ip, err := m.selfVirtualIP(instName); err == nil && ip != "" {
+			return ip, nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return "", fmt.Errorf("轮询虚拟IP超时 (%v)", timeout)
+}
+
+func (m *FFIManager) waitForVirtualIP(timeout time.Duration) (string, error) {
+	m.mu.Lock()
+	instName := m.instName
+	m.mu.Unlock()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if ip, err := m.selfVirtualIP(instName); err == nil && ip != "" {
+			return ip, nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return "", fmt.Errorf("等待获取虚拟IP超时")
 }
 
 // stripCIDR removes CIDR suffix from IP (e.g. "10.144.0.1/24" → "10.144.0.1").

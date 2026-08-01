@@ -96,25 +96,19 @@ func BuildTOMLConfig(opts StartOptions) string {
 	b.WriteString("multi_thread = true\n")
 
 	// Whitelist (flags 段成员)
-	if opts.IsHost {
-		if !opts.UpstreamCompatible {
+	if !opts.UpstreamCompatible {
+		if opts.IsHost {
 			// Whitelist only the ports we use
-			b.WriteString(fmt.Sprintf("tcp_whitelist = [\"%d\"", opts.TCPPort))
+			ports := []uint16{opts.TCPPort}
 			if opts.MCPort != 0 && opts.MCPort != opts.TCPPort {
-				b.WriteString(fmt.Sprintf(", \"%d\"", opts.MCPort))
+				ports = append(ports, opts.MCPort)
 			}
-			b.WriteString("]\n")
-			b.WriteString(fmt.Sprintf("udp_whitelist = [\"%d\"", opts.TCPPort))
-			if opts.MCPort != 0 && opts.MCPort != opts.TCPPort {
-				b.WriteString(fmt.Sprintf(", \"%d\"", opts.MCPort))
-			}
-			b.WriteString("]\n")
-		}
-	} else {
-		// Guest: DHCP for IP assignment (dhcp = true 已在根级输出)
-		if !opts.UpstreamCompatible {
-			b.WriteString("tcp_whitelist = [\"0\"]\n")
-			b.WriteString("udp_whitelist = [\"0\"]\n")
+			b.WriteString(whitelistLine("tcp_whitelist", ports))
+			b.WriteString(whitelistLine("udp_whitelist", ports))
+		} else {
+			// Guest: DHCP for IP assignment (dhcp = true 已在根级输出)
+			b.WriteString(whitelistLine("tcp_whitelist", []uint16{0}))
+			b.WriteString(whitelistLine("udp_whitelist", []uint16{0}))
 		}
 	}
 
@@ -149,6 +143,15 @@ func BuildTOMLConfig(opts StartOptions) string {
 	}
 
 	return b.String()
+}
+
+// whitelistLine renders a whitelist flag like tcp_whitelist = ["12345", "25565"].
+func whitelistLine(key string, ports []uint16) string {
+	parts := make([]string, len(ports))
+	for i, p := range ports {
+		parts[i] = fmt.Sprintf("\"%d\"", p)
+	}
+	return fmt.Sprintf("%s = [%s]\n", key, strings.Join(parts, ", "))
 }
 
 // ParsePortForward parses a port forward string like "tcp://0.0.0.0:12345/10.144.144.1:12345"

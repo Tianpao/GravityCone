@@ -88,7 +88,6 @@ static void jni_ExceptionClear(JNIEnv *env) {
 */
 import "C"
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"log/slog"
@@ -97,8 +96,6 @@ import (
 	"strconv"
 	"strings"
 	"unsafe"
-
-	ffi_et "gravitycone/ffi/easytier"
 )
 
 // JNI string helpers: convert between Go string and C string via JNI.
@@ -234,13 +231,7 @@ func Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeStunProbe(
 func Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeGetMetadata(
 	env *C.JNIEnv, clazz C.jclass,
 ) C.jstring {
-	meta := Metadata{
-		Version:         "0.1.3-alpha",
-		CompileTime:     CompileTime.Load(),
-		EasyTierVersion: "v2.6.4",
-	}
-	data, _ := json.Marshal(meta)
-	return jniFromGoString(env, string(data))
+	return jniFromGoString(env, currentMetadataJSON())
 }
 
 //export Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeShutdown
@@ -248,20 +239,6 @@ func Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeShutdown(
 	env *C.JNIEnv, clazz C.jclass,
 ) {
 	goBackToIdle()
-}
-
-//export Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeSetTunFd
-func Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeSetTunFd(
-	env *C.JNIEnv, clazz C.jclass,
-	instName C.jstring, fd C.jint,
-) C.jint {
-	// Called by Java after VpnService establishes the TUN interface.
-	// Inject the fd into EasyTier via the FFI bridge.
-	name := jniToGoString(env, instName)
-	if err := ffi_et.SetTunFd(name, int(fd)); err != nil {
-		return -1
-	}
-	return 0
 }
 
 // =========================================================================
@@ -369,6 +346,3 @@ func callJavaVpnServiceCallback(instName string, virtualIP string, cidr string) 
 
 	return fd, nil
 }
-
-// Ensure unused imports are fine.
-var _ = fmt.Sprintf

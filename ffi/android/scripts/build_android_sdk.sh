@@ -23,9 +23,14 @@ esac
 
 echo "============================================================"
 echo "  第 1/3 步: libeasytier_ffi.so（EasyTier 源码，cargo-ndk）"
+echo "  两个架构并行编译（各 10-20 分钟，并行后总耗时约减半）"
 echo "============================================================"
-bash "$SCRIPT_DIR/build_easytier_ffi_android.sh" arm64 "$REPO_ROOT/ffi/android/jniLibs/arm64-v8a"
-bash "$SCRIPT_DIR/build_easytier_ffi_android.sh" amd64 "$REPO_ROOT/ffi/android/jniLibs/x86_64"
+bash "$SCRIPT_DIR/build_easytier_ffi_android.sh" arm64 "$REPO_ROOT/ffi/android/jniLibs/arm64-v8a" &
+p1=$!
+bash "$SCRIPT_DIR/build_easytier_ffi_android.sh" amd64 "$REPO_ROOT/ffi/android/jniLibs/x86_64" &
+p2=$!
+wait "$p1"
+wait "$p2"
 
 echo
 echo "============================================================"

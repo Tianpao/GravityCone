@@ -17,14 +17,4 @@ func BuildTOMLConfig(opts StartOptions) string {
 	return ffi_toml.BuildTOMLConfig(opts)
 }
 
-// parsePortForward parses a port forward string.
-// Delegates to the pure-Go tomlconfig package.
-func parsePortForward(pf string) (proto, local, remote string) {
-	return ffi_toml.ParsePortForward(pf)
-}
-
-func cleanAddr(addr string) string {
-	return ffi_toml.CleanAddr(addr)
-}
-
 const hostVirtualIP = ffi_toml.HostVirtualIP

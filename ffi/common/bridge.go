@@ -292,28 +292,3 @@ func stunProbe() string {
 	data, _ := json.Marshal(result)
 	return string(data)
 }
-
-// --- Peer management ---
-
-// ffAddPeers adds peer addresses to both protocol services.
-func ffAddPeers(scaffoldingSvc *scaffolding.ScaffoldingService, paperConnectSvc *paperconnect.PaperConnectService, addrs []string) {
-	if scaffoldingSvc != nil {
-		scaffoldingSvc.AddPeers(addrs)
-	}
-	if paperConnectSvc != nil {
-		paperConnectSvc.AddPeers(addrs)
-	}
-}
-
-// --- Cleanup ---
-
-// ffCleanup stops all active rooms and connections.
-func ffCleanup(scaffoldingSvc *scaffolding.ScaffoldingService, paperConnectSvc *paperconnect.PaperConnectService) {
-	if scaffoldingSvc != nil {
-		scaffoldingSvc.Cleanup()
-	}
-	if paperConnectSvc != nil {
-		paperConnectSvc.Cleanup()
-	}
-	goBackToIdle()
-}

@@ -19,8 +19,13 @@ import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
  * <p>Android API for GravityCone — Minecraft LAN tunneling over P2P.</p>
@@ -315,16 +320,23 @@ public final class GravityConeAndroidAPI {
         runtimeContext = new RuntimeContext(cb, logging, logFile);
 
         // Parse metadata JSON from native.
+        // Format: {"version":"...","compile_time":...,"easytier_version":"..."}
         String metaStr = nativeGetMetadata();
         if (metaStr == null) {
             throw new AssertionError("nativeGetMetadata returned null.");
         }
 
-        // Simple JSON parsing without a full JSON library dependency.
-        // Format: {"version":"...","compile_time":...,"easytier_version":"..."}
-        String version = extractJsonString(metaStr, "version");
-        long compileTime = extractJsonLong(metaStr, "compile_time");
-        String etVersion = extractJsonString(metaStr, "easytier_version");
+        final String version;
+        final long compileTime;
+        final String etVersion;
+        try {
+            JSONObject meta = new JSONObject(metaStr);
+            version = meta.optString("version", null);
+            compileTime = meta.optLong("compile_time", 0);
+            etVersion = meta.optString("easytier_version", null);
+        } catch (JSONException e) {
+            throw new AssertionError("Invalid metadata JSON from native: " + metaStr, e);
+        }
 
         return new Metadata(
             version != null ? version : "unknown",
@@ -608,6 +620,7 @@ public final class GravityConeAndroidAPI {
         }
 
         AtomicLong fd = new AtomicLong(FD_PENDING);
+        CountDownLatch fulfilled = new CountDownLatch(1);
         InetAddress address = InetAddress.getByAddress(
             new byte[]{ip1, ip2, ip3, ip4});
 
@@ -666,38 +679,41 @@ public final class GravityConeAndroidAPI {
                 Log.i(TAG, "VPN established: address=" + address.getHostAddress()
                         + "/" + networkLength + ", cidr=" + cidr
                         + ", fd=" + connection.getFd());
+                fulfilled.countDown();
                 return connection;
             }
 
             @Override
             public void reject() {
                 fd.set(FD_REJECT);
+                fulfilled.countDown();
             }
         };
 
         runtimeContext.vpnServiceCallback.onStartVpnService();
 
-        long timestamp = System.currentTimeMillis();
-        while (true) {
-            long value = fd.get();
-            if (value == FD_PENDING) {
-                if (System.currentTimeMillis() - timestamp >= 30000) {
-                    Log.wtf(TAG, "VpnService request not fulfilled within 30s.");
-                    pendingRequest = null;
-                    throw new IllegalStateException("VpnService request timeout");
-                }
-                Thread.yield();
-            } else if (value == FD_REJECT) {
+        try {
+            if (!fulfilled.await(30, TimeUnit.SECONDS)) {
+                Log.wtf(TAG, "VpnService request not fulfilled within 30s.");
                 pendingRequest = null;
-                throw new IllegalStateException("VpnService request rejected");
-            } else {
-                pendingRequest = null;
-                if ((int) value != value) {
-                    throw new AssertionError("File descriptor too large.");
-                }
-                return (int) value;
+                throw new IllegalStateException("VpnService request timeout");
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            pendingRequest = null;
+            throw new IllegalStateException("Interrupted while waiting for VpnService", e);
         }
+
+        long value = fd.get();
+        if (value == FD_REJECT) {
+            pendingRequest = null;
+            throw new IllegalStateException("VpnService request rejected");
+        }
+        pendingRequest = null;
+        if ((int) value != value) {
+            throw new AssertionError("File descriptor too large.");
+        }
+        return (int) value;
     }
 
     // =====================================================================
@@ -708,35 +724,6 @@ public final class GravityConeAndroidAPI {
         if (runtimeContext == null) {
             throw new IllegalStateException(
                 "GravityCone hasn't been initialized. Call initialize() first.");
-        }
-    }
-
-    // Minimal JSON value extraction (avoids dependency on a full JSON library).
-    private static String extractJsonString(String json, String key) {
-        String search = "\"" + key + "\":\"";
-        int start = json.indexOf(search);
-        if (start < 0) return null;
-        start += search.length();
-        int end = json.indexOf('"', start);
-        if (end < 0) return null;
-        return json.substring(start, end);
-    }
-
-    private static long extractJsonLong(String json, String key) {
-        String search = "\"" + key + "\":";
-        int start = json.indexOf(search);
-        if (start < 0) return 0;
-        start += search.length();
-        int end = start;
-        while (end < json.length() &&
-               (Character.isDigit(json.charAt(end)) || json.charAt(end) == '-')) {
-            end++;
-        }
-        if (end == start) return 0;
-        try {
-            return Long.parseLong(json.substring(start, end));
-        } catch (NumberFormatException e) {
-            return 0;
         }
     }
 
@@ -756,7 +743,6 @@ public final class GravityConeAndroidAPI {
 
     // Note: there is deliberately no nativeSetTunFd here. The TUN fd is
     // delivered to the Go engine through the return value of the
-    // onVpnServiceStateChanged callback (see startVpnService below), not by a
-    // separate injection call. The Go-side export (Java_..._nativeSetTunFd)
-    // is dead code kept only for C ABI symmetry.
+    // onVpnServiceStateChanged callback (see startVpnService above), not by a
+    // separate injection call.
 }

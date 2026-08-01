@@ -33,6 +33,8 @@ fi
 EASYTIER_VERSION="v2.6.4"
 EASYTIER_REPO="https://github.com/EasyTier/EasyTier.git"
 CACHE_DIR="${EASYTIER_SRC_DIR:-$(pwd)/ffi/android/.cache/easytier}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/build_common.sh"
 
 case "$ARCH" in
     arm64) ABI="arm64-v8a";  RUST_TARGET="aarch64-linux-android" ;;
@@ -59,19 +61,17 @@ if ! cargo ndk --version >/dev/null 2>&1; then
     echo "错误: 未找到 cargo-ndk，请先执行: cargo install cargo-ndk" >&2
     exit 1
 fi
-NDK_HOME_VAR="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-${NDK_HOME:-}}}"
-if [ -z "$NDK_HOME_VAR" ] || [ ! -d "$NDK_HOME_VAR" ]; then
-    echo "错误: 未设置有效的 NDK 路径（ANDROID_NDK_HOME / ANDROID_NDK_ROOT / NDK_HOME）" >&2
-    echo "  安装: sdkmanager 'ndk;26.3.11579264'  或  下载 https://developer.android.com/ndk/downloads" >&2
-    exit 1
-fi
-echo "使用 NDK: $NDK_HOME_VAR"
+locate_ndk
 
 # ---------- 拉取 EasyTier 源码（带缓存） ----------
 if [ ! -d "$CACHE_DIR/.git" ]; then
     mkdir -p "$(dirname "$CACHE_DIR")"
     echo "克隆 EasyTier $EASYTIER_VERSION ..."
-    git clone --depth 1 --branch "$EASYTIER_VERSION" "$EASYTIER_REPO" "$CACHE_DIR"
+    # 容忍并发克隆竞态：SDK 编排脚本并行构建两个架构时，两个实例可能
+    # 同时尝试克隆同一目录，失败方在对方克隆成功后可继续。
+    git clone --depth 1 --branch "$EASYTIER_VERSION" "$EASYTIER_REPO" "$CACHE_DIR" 2>/dev/null \
+        || [ -d "$CACHE_DIR/.git" ] \
+        || { echo "错误: 克隆 EasyTier 失败" >&2; exit 1; }
 else
     echo "使用缓存源码: $CACHE_DIR（如需更新请删除后重跑）"
 fi
