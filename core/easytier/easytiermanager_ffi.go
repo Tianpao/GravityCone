@@ -149,7 +149,13 @@ func (m *EasyTierManager) RemovePortForward(proto, local, remote string) error {
 	return m.ffi.RemovePortForward(proto, local, remote)
 }
 
-// --- StunService (Android stub — calls RPC, not easytier-cli) ---
+// --- StunService (Android — reads NAT type from the running instance) ---
+//
+// easytier-ffi has no stun export and Android has no easytier-cli binary.
+// Instead, the running EasyTier instance collects STUN info internally
+// (stun.rs's StunInfoCollector) and publishes it via collect_network_infos
+// as my_node_info.stun_info. Values are proto NatType integers — the same
+// numbering easytier-cli stun prints on desktop.
 
 type StunResult struct {
 	UdpNatType     int      `json:"udp_nat_type"`
@@ -163,7 +169,16 @@ type StunResult struct {
 type StunService struct{}
 
 func (s *StunService) TestStun() (*StunResult, error) {
-	// STUN is handled internally by EasyTier FFI.
-	// The caller should query show_node_info or collect_network_infos instead.
-	return &StunResult{}, fmt.Errorf("STUN probe not available in FFI mode: use show_node_info RPC")
+	info, err := ffi_et.GetStunInfo()
+	if err != nil {
+		return nil, err
+	}
+	return &StunResult{
+		UdpNatType:     info.UdpNatType,
+		TcpNatType:     info.TcpNatType,
+		LastUpdateTime: info.LastUpdateTime,
+		PublicIP:       info.PublicIP,
+		MinPort:        info.MinPort,
+		MaxPort:        info.MaxPort,
+	}, nil
 }

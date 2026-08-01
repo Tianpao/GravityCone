@@ -196,10 +196,18 @@ GravityConeAndroidAPI.shutdown();
 ### STUN NAT 探测
 
 ```java
-// ⚠️ FFI 模式下不可用，始终返回错误 JSON
+// 从运行中的 EasyTier 实例读取内部 STUN 探测结果（无独立 STUN 命令，实例
+// 会自行探测 NAT 类型并随网络信息上报）。需先建房/入房让实例运行：
+GravityConeAndroidAPI.setScanning(null, "Steve", "paperconnect");
+Thread.sleep(5000); // 等待实例启动并完成 STUN 探测
 String result = GravityConeAndroidAPI.stunProbe();
-// {"error":"stun probe failed: STUN probe not available in FFI mode: use show_node_info RPC"}
+// {"udp_nat_type":3,"tcp_nat_type":3,"last_update_time":...,"public_ip":["..."],"min_port":...,"max_port":...}
+// 实例未运行或探测未完成时：{"error":"stun probe failed: ..."}
 ```
+
+NAT 类型数值为 EasyTier proto `NatType`：`0=Unknown`、`1=OpenInternet`、
+`2=NoPAT`、`3=FullCone`、`4=Restricted`、`5=PortRestricted`、`6=Symmetric`、
+`7=SymUdpFirewall`、`8=SymmetricEasyInc`、`9=SymmetricEasyDec`。
 
 ### 获取元数据
 
@@ -217,10 +225,15 @@ String metaJson = GravityConeAndroidAPI.getMetadata();
 | 主机启动中 | `{"state":"host-starting","index":2,"room":"U/..."}` |
 | 主机就绪 (Java) | `{"state":"host-ok","index":3,"protocol":"scaffolding","room":"U/...","mc_port":25565}` |
 | 主机就绪 (Bedrock) | `{"state":"host-ok","index":3,"protocol":"paperconnect","sub_protocol":"nethernet","room":"P/...","game_port":45678}` |
-| 客机连接中 | `{"state":"guest-connecting","index":4,"room":"U/..."}` |
+| 客机连接中 | `{"state":"guest-connecting","index":4,"room":"P/..."}` |
 | 客机就绪 (Java) | `{"state":"guest-ok","index":5,"protocol":"scaffolding","url":"127.0.0.1:25565"}` |
-| 客机就绪 (Bedrock) | `{"state":"guest-ok","index":5,"protocol":"paperconnect","sub_protocol":"nethernet","url":"127.0.0.1:45678"}` |
-| 错误 | `{"state":"exception","index":6,"type":0}` |
+| 客机就绪 (Bedrock) | `{"state":"guest-ok","index":5,"protocol":"paperconnect","sub_protocol":"nethernet","url":"127.0.0.1:45678","connection_state":"ready"}` |
+| 错误 | `{"state":"exception","index":6,"type":0,"error":"加入房间失败: ..."}` |
+
+> **客机就绪（Bedrock）的转发桥状态**：`connection_state` 为 `ready` / `error` /
+> `disconnected`，`connection_error`（建立失败原因）和 `disconnect_reason`
+> （房主断开等退出原因）按需出现。桥的建立发生在 `guest-ok` 状态上报之后，
+> 需要持续轮询 `getState()` 才能看到这些字段变化。
 
 ## 房间代码格式
 

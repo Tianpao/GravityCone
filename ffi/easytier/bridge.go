@@ -371,6 +371,7 @@ type ffiMyNodeInfo struct {
 	VirtualIP4 *ffiIPv4Inet `json:"virtual_ipv4"`
 	Hostname   string       `json:"hostname"`
 	PeerID     uint32       `json:"peer_id"`
+	StunInfo   *ffiStunInfo `json:"stun_info"`
 }
 
 type ffiRoute struct {
@@ -449,6 +450,64 @@ type PeerRouteEntry struct {
 // ListRouteResponse is the parsed route table.
 type ListRouteResponse struct {
 	Routes []PeerRouteEntry `json:"routes"`
+}
+
+// ffiStunInfo mirrors proto common.StunInfo (published by the running
+// instance as my_node_info.stun_info).
+//
+// nat_type values follow proto NatType: 0=Unknown, 1=OpenInternet, 2=NoPAT,
+// 3=FullCone, 4=Restricted, 5=PortRestricted, 6=Symmetric, 7=SymUdpFirewall,
+// 8=SymmetricEasyInc, 9=SymmetricEasyDec.
+type ffiStunInfo struct {
+	UdpNatType     int      `json:"udp_nat_type"`
+	TcpNatType     int      `json:"tcp_nat_type"`
+	LastUpdateTime int64    `json:"last_update_time"`
+	PublicIP       []string `json:"public_ip"`
+	MinPort        uint32   `json:"min_port"`
+	MaxPort        uint32   `json:"max_port"`
+}
+
+// StunInfoResult is the NAT probing result in the same JSON shape as the
+// desktop easytier-cli stun output (core/easytier.StunResult).
+type StunInfoResult struct {
+	UdpNatType     int      `json:"udp_nat_type"`
+	TcpNatType     int      `json:"tcp_nat_type"`
+	LastUpdateTime int64    `json:"last_update_time"`
+	PublicIP       []string `json:"public_ip"`
+	MinPort        int      `json:"min_port"`
+	MaxPort        int      `json:"max_port"`
+}
+
+// GetStunInfo returns the NAT probing result of the running EasyTier
+// instance. easytier-ffi has no stun export; instead the instance collects
+// STUN info internally (proto common.StunInfo via stun.rs's
+// StunInfoCollector) and publishes it through collect_network_infos. The
+// values are proto NatType integers, identical to what easytier-cli stun
+// prints on desktop.
+//
+// Returns an error when no instance is running, or when the STUN probe has
+// not completed yet (both NAT types still Unknown — the collector detects
+// asynchronously after the instance starts).
+func GetStunInfo() (*StunInfoResult, error) {
+	ri, err := firstRunningInfo()
+	if err != nil {
+		return nil, err
+	}
+	if ri.MyNodeInfo == nil || ri.MyNodeInfo.StunInfo == nil {
+		return nil, fmt.Errorf("STUN 探测尚未完成（实例未上报 stun_info）")
+	}
+	s := ri.MyNodeInfo.StunInfo
+	if s.UdpNatType == 0 && s.TcpNatType == 0 {
+		return nil, fmt.Errorf("STUN 探测尚未完成（NAT 类型仍为 Unknown）")
+	}
+	return &StunInfoResult{
+		UdpNatType:     s.UdpNatType,
+		TcpNatType:     s.TcpNatType,
+		LastUpdateTime: s.LastUpdateTime,
+		PublicIP:       s.PublicIP,
+		MinPort:        int(s.MinPort),
+		MaxPort:        int(s.MaxPort),
+	}, nil
 }
 
 // GetNodeInfo returns the local node's virtual IP, peer ID and hostname.

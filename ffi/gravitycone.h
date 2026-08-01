@@ -147,21 +147,27 @@ int gc_set_guesting(const char *room, const char *player);
  *
  * This is a blocking call that takes 3-10 seconds.
  *
- * NOTE: In FFI mode (Android), STUN probing is not available and this
- * function always returns an error JSON: {"error":"stun probe failed: ..."}
+ * Desktop: probes via easytier-cli stun.
+ * FFI mode (Android): reads the NAT type the running EasyTier instance
+ * collects internally; the instance must be running (create/join a room
+ * first) and the probe may not have finished yet, in which case an error
+ * JSON is returned.
  *
- * On success (desktop only), returns JSON:
+ * On success, returns JSON:
  *   {"udp_nat_type":1,"tcp_nat_type":2,"last_update_time":1720246800,
  *    "public_ip":["203.0.113.1"],"min_port":30000,"max_port":40000}
  *
- * NAT type values:
- *   1 = NoPAT (Open Internet)
- *   2 = SymmetricFirewall
+ * NAT type values (EasyTier proto NatType, identical on desktop & Android):
+ *   0 = Unknown
+ *   1 = OpenInternet (Open Internet)
+ *   2 = NoPAT
  *   3 = FullCone
- *   4 = RestrictedCone
+ *   4 = Restricted
  *   5 = PortRestricted (Port Restricted Cone)
- *   6 = SymmetricIncrement
- *   7 = Symmetric
+ *   6 = Symmetric
+ *   7 = SymUdpFirewall
+ *   8 = SymmetricEasyInc
+ *   9 = SymmetricEasyDec
  *
  * On failure, returns JSON: {"error":"stun probe failed: ..."}
  *

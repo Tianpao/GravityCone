@@ -24,7 +24,15 @@ func TestParseFFIRunningInfoJSON(t *testing.T) {
 		"my_node_info": {
 			"virtual_ipv4": {"address": {"addr": 176258049}, "network_length": 24},
 			"hostname": "scaffolding-mc-server-25565",
-			"peer_id": 42
+			"peer_id": 42,
+			"stun_info": {
+				"udp_nat_type": 3,
+				"tcp_nat_type": 4,
+				"last_update_time": 1720246800,
+				"public_ip": ["203.0.113.1"],
+				"min_port": 30000,
+				"max_port": 40000
+			}
 		},
 		"routes": [
 			{"peer_id": 42, "ipv4_addr": {"address": {"addr": 176258049}, "network_length": 24}, "hostname": "scaffolding-mc-server-25565", "proxy_cidrs": []},
@@ -51,6 +59,24 @@ func TestParseFFIRunningInfoJSON(t *testing.T) {
 	}
 	if ri.MyNodeInfo.PeerID != 42 {
 		t.Fatalf("peer_id = %d", ri.MyNodeInfo.PeerID)
+	}
+	// my_node_info.stun_info — proto NatType ints, same numbering as
+	// easytier-cli stun output on desktop.
+	s := ri.MyNodeInfo.StunInfo
+	if s == nil {
+		t.Fatal("stun_info is nil")
+	}
+	if s.UdpNatType != 3 || s.TcpNatType != 4 {
+		t.Fatalf("nat types = %d/%d, want 3/4 (FullCone/Restricted)", s.UdpNatType, s.TcpNatType)
+	}
+	if s.LastUpdateTime != 1720246800 {
+		t.Fatalf("last_update_time = %d", s.LastUpdateTime)
+	}
+	if len(s.PublicIP) != 1 || s.PublicIP[0] != "203.0.113.1" {
+		t.Fatalf("public_ip = %v", s.PublicIP)
+	}
+	if s.MinPort != 30000 || s.MaxPort != 40000 {
+		t.Fatalf("ports = %d-%d", s.MinPort, s.MaxPort)
 	}
 	if len(ri.Routes) != 2 {
 		t.Fatalf("routes = %d, want 2", len(ri.Routes))

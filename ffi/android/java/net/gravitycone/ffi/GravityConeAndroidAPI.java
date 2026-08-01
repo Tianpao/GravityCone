@@ -35,8 +35,8 @@ import java.util.concurrent.atomic.AtomicLong;
  *   idle ──→ host-scanning ──→ host-starting ──→ host-ready   (create room)
  *    │
  *    └──→ guest-connecting ──→ guest-ready                    (join room)
- *                    ↓
- *                 error
+ *
+ *   any state ──→ exception ──→ idle (via setWaiting())
  * </pre>
  *
  * <h1>State JSON Formats</h1>
@@ -63,7 +63,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * }</pre>
  *
  * <h2>guest-connecting</h2>
- * <pre>{@code {"state":"guest-connecting","index":N,"room":"U/...","step":"connecting"}}</pre>
+ * <pre>{@code {"state":"guest-connecting","index":N,"room":"P/..."}}</pre>
  *
  * <h2>guest-ready (Java Edition)</h2>
  * <pre>{@code
@@ -74,18 +74,48 @@ import java.util.concurrent.atomic.AtomicLong;
  * <h2>guest-ready (Bedrock Edition)</h2>
  * <pre>{@code
  * {"state":"guest-ok","index":N,"protocol":"paperconnect",
- *  "sub_protocol":"nethernet","url":"127.0.0.1:45678"}
+ *  "sub_protocol":"nethernet","url":"127.0.0.1:45678",
+ *  "connection_state":"ready"}
  * }</pre>
  *
- * <h2>error</h2>
- * <pre>{@code {"state":"exception","index":N,"type":0}}</pre>
+ * <p>The Bedrock {@code guest-ok} state additionally reports the forwarding
+ * bridge status, which is established asynchronously after the state machine
+ * first reports {@code guest-ok}. Since the same state index is updated
+ * in-place, poll {@link #getState()} and read these fields whenever the
+ * index changes:</p>
+ * <ul>
+ *   <li>{@code connection_state} — bridge status:
+ *       {@code ready} / {@code error} / {@code disconnected}</li>
+ *   <li>{@code connection_error} — failure message when
+ *       {@code connection_state} is {@code error}</li>
+ *   <li>{@code disconnect_reason} — exit reason (e.g. host left) when
+ *       {@code connection_state} is {@code disconnected}</li>
+ * </ul>
  *
- * <h1>VpnService</h1>
- * <p>GravityCone currently operates in no-tun mode (port-forward only),
- * so the {@link VpnServiceCallback} may never be triggered. It exists for
- * future TUN-mode support. When TUN mode is needed, register a callback
- * via {@link #initialize} and handle requests with
- * {@link #getPendingVpnServiceRequest()}.</p>
+ * <h2>error</h2>
+ * <pre>{@code
+ * {"state":"exception","index":N,"type":0,"error":"加入房间失败: ..."}
+ * }</pre>
+ * <p>{@code error} carries a human-readable failure reason (in Chinese);
+ * older builds only reported {@code "type":0} without any detail.</p>
+ *
+ * <h1>VpnService (required)</h1>
+ * <p>EasyTier runs in-process on Android (libeasytier_ffi) and requests a
+ * TUN device whenever it starts. This is <b>mandatory</b>: register a
+ * {@link VpnServiceCallback} via {@link #initialize} and fulfill the request
+ * (within 30 seconds) via {@link #getPendingVpnServiceRequest()} — otherwise
+ * room creation and joining fail because EasyTier has no TUN fd.</p>
+ *
+ * <p>The host app should call {@code VpnService.prepare()} before
+ * {@link #initialize} to grant VPN permission; on Android 11+
+ * {@code VpnService.Builder.establish()} throws SecurityException when the
+ * permission was never granted. See {@link #getPendingVpnServiceRequest()}
+ * for the request/response handshake.</p>
+ *
+ * <p>The established VPN is configured with the virtual subnet route and
+ * {@code Builder.allowBypass()}, so Minecraft's LAN broadcast/connection
+ * traffic keeps flowing on the physical network (WiFi) instead of being
+ * swallowed by the TUN interface.</p>
  *
  * <h1>Thread Safety</h1>
  * <p>All public methods are thread-safe and may be called from any thread.
@@ -96,7 +126,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *   initialize(context, callback)
  *     → setScanning / setGuesting / stunProbe
  *       → getState() (poll)
- *         → setWaiting()
+ *         → setWaiting()        (or after any "exception" state)
  *           → shutdown()
  * </pre>
  */
@@ -125,10 +155,17 @@ public final class GravityConeAndroidAPI {
         /**
          * Create the VPN connection and fulfill the request.
          *
+         * <p>The returned descriptor's lifetime is managed by this API:
+         * a previous descriptor is automatically closed here when EasyTier
+         * restarts between PaperConnect's discovery and static-forward
+         * phases, and the descriptor held by the engine is released via
+         * {@link #closeVpnFd()} / {@link #setWaiting()} / {@link #shutdown()}.</p>
+         *
          * @param builder A pre-configured VpnService.Builder. The host may
          *                further customize the builder before passing it in.
-         * @return The established TUN file descriptor. The host must close
-         *         this descriptor when EasyTier is stopped.
+         * @return The established TUN file descriptor. The host must keep a
+         *         reference to it (GC would close the fd), but must not
+         *         close it manually — see above.
          * @throws RuntimeException if {@link VpnService.Builder#establish()}
          *         returns null.
          */
@@ -225,8 +262,11 @@ public final class GravityConeAndroidAPI {
      * the Go runtime, and starts EasyTier in-process via libeasytier_ffi.</p>
      *
      * @param context  An Android context (used for files dir).
-     * @param callback Optional VpnService callback for TUN mode. Pass null
-     *                 for the default no-tun (port-forward) mode.
+     * @param callback VpnService callback that receives EasyTier's TUN
+     *                 requests. Required on Android: EasyTier always asks
+     *                 for a TUN device when it starts, and without a
+     *                 fulfilled request the engine cannot create or join
+     *                 rooms. Do not pass null.
      * @return Metadata with version information.
      * @throws RuntimeException if initialization fails.
      */
@@ -387,10 +427,19 @@ public final class GravityConeAndroidAPI {
     /**
      * Run a STUN NAT type probe.
      *
-     * <p>This is a blocking call that takes 3-10 seconds.</p>
+     * <p>Blocking call, typically 3-10 seconds (may take longer while the
+     * instance's internal STUN detector is still working).</p>
+     *
+     * <p>On Android the result comes from the running EasyTier instance,
+     * which collects STUN info internally and publishes it as part of its
+     * network info. The instance must therefore be running first — call
+     * {@link #setScanning} or {@link #setGuesting} before probing. If no
+     * instance is running or the probe has not completed yet (NAT type
+     * still Unknown), an error JSON is returned instead.</p>
      *
      * @return JSON string with NAT type info, or an error object.
-     *         Format on success: {@code {"udp_nat_type":3,"tcp_nat_type":4,...}}
+     *         Format on success:
+     *         {@code {"udp_nat_type":3,"tcp_nat_type":3,"last_update_time":1720246800,"public_ip":["203.0.113.1"],"min_port":30000,"max_port":40000}}
      *         Format on error: {@code {"error":"stun probe failed: ..."}}
      */
     public static String stunProbe() {
@@ -702,5 +751,10 @@ public final class GravityConeAndroidAPI {
     private static native String nativeStunProbe();
     private static native String nativeGetMetadata();
     private static native void nativeShutdown();
-    private static native int nativeSetTunFd(String instanceName, int fd);
+
+    // Note: there is deliberately no nativeSetTunFd here. The TUN fd is
+    // delivered to the Go engine through the return value of the
+    // onVpnServiceStateChanged callback (see startVpnService below), not by a
+    // separate injection call. The Go-side export (Java_..._nativeSetTunFd)
+    // is dead code kept only for C ABI symmetry.
 }

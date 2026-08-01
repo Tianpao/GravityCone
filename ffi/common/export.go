@@ -112,15 +112,18 @@ func gc_set_guesting(room, player *C.char) C.int {
 
 // --- STUN (NAT Probing) ---
 
-// gc_stun_probe runs a STUN NAT type probe via easytier-cli.
+// gc_stun_probe runs a STUN NAT type probe.
 // Returns a JSON string with NAT type info.
 // The caller MUST free the returned string with gc_free_string().
 // This is a blocking call that takes 3-10 seconds.
 //
-// NOTE: In FFI mode (Android), STUN probing is not available and this
-// function always returns an error JSON: {"error":"stun probe failed: ..."}
+// Desktop: probes via easytier-cli stun.
+// FFI mode (Android): reads the NAT type the running EasyTier instance
+// collects internally (collect_network_infos → my_node_info.stun_info);
+// the instance must be running (create/join a room first) and the probe
+// may not have finished yet, in which case an error JSON is returned.
 //
-// Response format (desktop only):
+// Response format:
 //
 //	{
 //	  "udp_nat_type": 1,
@@ -131,15 +134,18 @@ func gc_set_guesting(room, player *C.char) C.int {
 //	  "max_port": 40000
 //	}
 //
-// NAT type values:
+// NAT type values (EasyTier proto NatType, identical on desktop & Android):
 //
-//	1 = NoPAT (开放型互联网)
-//	2 = SymmetricFirewall (对称型防火墙)
+//	0 = Unknown
+//	1 = OpenInternet (开放型互联网)
+//	2 = NoPAT (公网IP，端口不变)
 //	3 = FullCone (完全圆锥型NAT)
-//	4 = RestrictedCone (受限圆锥型NAT)
+//	4 = Restricted (受限圆锥型NAT)
 //	5 = PortRestricted (端口受限圆锥型NAT)
-//	6 = SymmetricIncrement (对称型递增NAT)
-//	7 = Symmetric (对称型NAT)
+//	6 = Symmetric (对称型NAT)
+//	7 = SymUdpFirewall (对称型UDP防火墙)
+//	8 = SymmetricEasyInc (对称型递增NAT)
+//	9 = SymmetricEasyDec (对称型递减NAT)
 //
 // Returns JSON with an "error" field on failure:
 //
