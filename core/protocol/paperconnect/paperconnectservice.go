@@ -1179,12 +1179,15 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 
 	// direct 模式(TUN)没有端口转发：本地起一个 RakNet 监听，接受本机
 	// MC 客户端连接后经隧道中继到 host 虚拟 IP 的游戏端口。
+	// 必须绑 0.0.0.0 而不是 127.0.0.1：RakNet Pong 不携带 IP，客户端把
+	// Pong 的来源 IP 当作房间 IP，而 127.0.0.1 无法作为广播来源，广播/单播
+	// pong 的来源是本机局域网 IP，只绑回环会导致客户端连局域网 IP 被拒。
 	motdQueryAddr := fmt.Sprintf("127.0.0.1:%d", rakLocalPort)
 	if manager.DialMode() == easytier.DialModeDirect {
 		relayLn, err := (raknet.ListenConfig{
 			MaxMTU:   rakNetMTU,
 			ErrorLog: slog.Default(),
-		}).Listen("127.0.0.1:0")
+		}).Listen("0.0.0.0:0")
 		if err != nil {
 			slog.Error("RakNet relay listen failed", "err", err)
 			s.pcGuestSetupError(manager, protocol)

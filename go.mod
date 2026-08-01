@@ -10,6 +10,7 @@ require (
 	github.com/kirklin/go-blind-watermark v0.0.1
 	github.com/sandertv/go-raknet v1.15.1
 	github.com/wailsapp/wails/v3 v3.0.0-alpha2.117
+	github.com/wlynxg/anet v0.0.5
 	golang.org/x/crypto v0.53.0
 	golang.org/x/net v0.56.0
 	golang.org/x/text v0.38.0
@@ -46,7 +47,6 @@ require (
 	github.com/pion/transport/v4 v4.0.2 // indirect
 	github.com/pion/turn/v5 v5.0.10 // indirect
 	github.com/pion/webrtc/v4 v4.2.16-0.20260627075746-7a223a6f4d4f // indirect
-	github.com/wlynxg/anet v0.0.5 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	gonum.org/v1/gonum v0.16.0 // indirect
