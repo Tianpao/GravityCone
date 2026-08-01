@@ -199,6 +199,29 @@ func TestBuildTOMLConfigPortForwards(t *testing.T) {
 	}
 }
 
+func TestBuildTOMLConfigPaperConnectGuestDualForwards(t *testing.T) {
+	opts := StartOptions{
+		NetworkName:        "pc-net",
+		NetworkSecret:      "pc-secret",
+		IsHost:             false,
+		UpstreamCompatible: true,
+		PortForwards: []string{
+			"tcp://127.0.0.1:41001/10.144.144.1:41002",
+			"udp://127.0.0.1:41003/10.144.144.1:41004",
+		},
+	}
+
+	got := BuildTOMLConfig(opts)
+	for _, want := range []string{
+		`proto = "tcp", bind_addr = "127.0.0.1:41001", dst_addr = "10.144.144.1:41002"`,
+		`proto = "udp", bind_addr = "127.0.0.1:41003", dst_addr = "10.144.144.1:41004"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing port forward %q in:\n%s", want, got)
+		}
+	}
+}
+
 func TestBuildTOMLConfigNoPortForwards(t *testing.T) {
 	opts := StartOptions{
 		NetworkName:   "test-net",

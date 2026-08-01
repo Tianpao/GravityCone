@@ -97,6 +97,9 @@ func buildStateJSON(state AppState, index uint32, extra interface{}, lastError s
 			gr.Protocol = s.protocol
 			gr.SubProtocol = s.subProtocol
 			gr.URL = s.mcURL
+			gr.ConnectionState = s.connectionState
+			gr.ConnectionError = s.connectionError
+			gr.DisconnectReason = s.disconnectReason
 		}
 		return mustJSON(gr)
 
@@ -121,11 +124,14 @@ type hostContext struct {
 
 // guestContext holds protocol-agnostic guest state.
 type guestContext struct {
-	protocol    string
-	subProtocol string // "nethernet" or "raknet" (PaperConnect only)
-	roomCode    string
-	mcURL       string // "127.0.0.1:port" or "127.0.0.1"
-	leaveFn     func()
+	protocol         string
+	subProtocol      string // "nethernet" or "raknet" (PaperConnect only)
+	roomCode         string
+	mcURL            string // "127.0.0.1:port" or "127.0.0.1"
+	connectionState  string
+	connectionError  string
+	disconnectReason string
+	leaveFn          func()
 }
 
 // --- State transition helpers ---

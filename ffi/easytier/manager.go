@@ -280,21 +280,16 @@ func (m *FFIManager) injectTunFd(instName string, opts StartOptions, provider fu
 		virtualIP = hostVirtualIP // "10.144.144.1"
 		cidr = "10.144.144.0/24"
 	} else {
-		// Guest: DHCP-assigned IP. Poll briefly to get the IP before calling VpnService.
-		// In no_tun=true mode, EasyTier assigns IPs via DHCP without needing a TUN fd first,
-		// so the IP should be available within a few seconds.
-		ip, err := m.pollVirtualIP(instName, 5*time.Second)
+		// Guest: DHCP assigns the virtual IP before the Android VPN can be
+		// established. The VPN address must match that assignment: routing a
+		// guessed address into the TUN makes phase-two port forwarding appear
+		// healthy while game traffic is black-holed.
+		ip, err := m.pollVirtualIP(instName, 30*time.Second)
 		if err != nil {
-			// Fall back to a valid unicast address in the virtual subnet.
-			// 10.144.144.0 is the network address (not a valid interface IP —
-			// addAddress() would fail or produce a broken TUN route).
-			// The actual DHCP-assigned IP is resolved later by waitForVirtualIP.
-			virtualIP = "10.144.144.2"
-			cidr = "10.144.144.0/24"
-		} else {
-			virtualIP = ip
-			cidr = "10.144.144.0/24"
+			return -1, fmt.Errorf("等待 guest 虚拟IP失败: %w", err)
 		}
+		virtualIP = ip
+		cidr = "10.144.144.0/24"
 	}
 
 	// Call the provider (JNI → Java onVpnServiceStateChanged → VpnService).

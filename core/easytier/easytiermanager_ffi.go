@@ -119,12 +119,15 @@ func (m *EasyTierManager) Stop() error {
 	return m.ffi.Stop()
 }
 
-// HasTUN reports true: on Android the VpnService TUN is established during
-// Start() (via the TUN fd provider callback), after which virtual IPs are
-// directly reachable without port forwarding. Protocol services use this to
-// skip dynamic AddPortForward calls (unsupported in FFI mode) and dial the
-// virtual IP directly.
+// HasTUN reports whether an Android VpnService TUN is available. It is used by
+// Scaffolding; PaperConnect selects its own transport through DialMode.
 func (m *EasyTierManager) HasTUN() bool { return true }
+
+// DialMode reports the transport used by PaperConnect. Android's VpnService
+// exposes the EasyTier virtual network directly, so PaperConnect dials the
+// host virtual IP for both the control and game channels. Desktop-only static
+// port forwarding remains selected by the non-FFI manager.
+func (m *EasyTierManager) DialMode() DialMode { return DialModeDirect }
 
 func (m *EasyTierManager) IsRunning() bool            { return m.ffi.IsRunning() }
 func (m *EasyTierManager) SelfVirtualIP() string      { return m.virtualIP }

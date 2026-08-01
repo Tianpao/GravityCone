@@ -424,6 +424,12 @@ func (m *EasyTierManager) HasTUN() bool {
 	return false
 }
 
+// DialMode reports the transport used by PaperConnect. Desktop PaperConnect
+// uses EasyTier port forwards instead of dialing virtual IPs directly.
+func (m *EasyTierManager) DialMode() DialMode {
+	return DialModeProxy
+}
+
 func (m *EasyTierManager) runPortForwardCmd(action, proto, localAddr, remoteAddr, errMsg string) error {
 	rpcPortal := m.RPCPortal()
 	if rpcPortal == "" {

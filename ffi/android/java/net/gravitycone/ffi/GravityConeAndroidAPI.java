@@ -196,15 +196,19 @@ public final class GravityConeAndroidAPI {
     // =====================================================================
 
     private static volatile VpnServiceRequest pendingRequest = null;
+    private static final Object vpnFdLock = new Object();
+    private static ParcelFileDescriptor vpnFd = null;
     private static volatile RuntimeContext runtimeContext = null;
 
     private static final class RuntimeContext {
         final VpnServiceCallback vpnServiceCallback;
         final RandomAccessFile logging;
+        final File logFile;
 
-        RuntimeContext(VpnServiceCallback vpnServiceCallback, RandomAccessFile logging) {
+        RuntimeContext(VpnServiceCallback vpnServiceCallback, RandomAccessFile logging, File logFile) {
             this.vpnServiceCallback = vpnServiceCallback;
             this.logging = logging;
+            this.logFile = logFile;
         }
     }
 
@@ -215,9 +219,10 @@ public final class GravityConeAndroidAPI {
     /**
      * Initialize the GravityCone engine.
      *
-     * <p>Must be called once before any other method. Creates the working
-     * directory under {@code context.getFilesDir()}, initializes the Go
-     * runtime, and starts EasyTier in-process via libeasytier_ffi.</p>
+     * <p>Must be called once before any other method. Creates the engine
+     * working directory under {@code context.getFilesDir()}, writes logs to
+     * the app-specific external files directory when available, initializes
+     * the Go runtime, and starts EasyTier in-process via libeasytier_ffi.</p>
      *
      * @param context  An Android context (used for files dir).
      * @param callback Optional VpnService callback for TUN mode. Pass null
@@ -239,14 +244,24 @@ public final class GravityConeAndroidAPI {
             throw new RuntimeException("Cannot create net.gravitycone.ffi/rs directory.");
         }
 
+        File externalFiles = context.getExternalFilesDir(null);
+        File logDir = externalFiles != null
+            ? new File(externalFiles, "gravitycone")
+            : root;
+        if (!logDir.mkdirs() && !logDir.isDirectory()) {
+            throw new RuntimeException("Cannot create GravityCone log directory: " + logDir);
+        }
+        File logFile = new File(logDir, "application.log");
+
         RandomAccessFile logging;
         int fd;
         try {
-            logging = new RandomAccessFile(new File(root, "application.log"), "rw");
+            logging = new RandomAccessFile(logFile, "rw");
             fd = ParcelFileDescriptor.dup(logging.getFD()).detachFd();
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+        Log.i(TAG, "GravityCone log file: " + logFile.getAbsolutePath());
 
         VpnServiceCallback cb = callback != null ? callback : () -> {
             Log.w(TAG, "VpnService requested but no callback registered.");
@@ -257,7 +272,7 @@ public final class GravityConeAndroidAPI {
             throw new RuntimeException("Cannot start GravityCone: error code " + code);
         }
 
-        runtimeContext = new RuntimeContext(cb, logging);
+        runtimeContext = new RuntimeContext(cb, logging, logFile);
 
         // Parse metadata JSON from native.
         String metaStr = nativeGetMetadata();
@@ -286,6 +301,7 @@ public final class GravityConeAndroidAPI {
     public static synchronized void shutdown() {
         if (runtimeContext == null) return;
         nativeShutdown();
+        closeVpnFd();
         runtimeContext = null;
     }
 
@@ -319,6 +335,7 @@ public final class GravityConeAndroidAPI {
     public static void setWaiting() {
         assertStarted();
         nativeSetWaiting();
+        closeVpnFd();
     }
 
     /**
@@ -409,9 +426,28 @@ public final class GravityConeAndroidAPI {
         return nativeGetMetadata();
     }
 
-    // =====================================================================
-    // VpnService
-    // =====================================================================
+    /**
+     * Release the VPN descriptor after the native engine has stopped its
+     * EasyTier instance. This is idempotent and must not be called between
+     * PaperConnect's discovery and static-forward phases.
+     */
+    public static void closeVpnFd() {
+        ParcelFileDescriptor connection;
+        synchronized (vpnFdLock) {
+            connection = vpnFd;
+            vpnFd = null;
+        }
+        if (connection == null) {
+            return;
+        }
+        int fd = connection.getFd();
+        try {
+            connection.close();
+            Log.i(TAG, "VPN descriptor closed: fd=" + fd);
+        } catch (IOException e) {
+            Log.w(TAG, "Failed to close VPN descriptor: fd=" + fd, e);
+        }
+    }
 
     /**
      * Get the current pending VpnService request.
@@ -434,6 +470,18 @@ public final class GravityConeAndroidAPI {
     // =====================================================================
     // Logging
     // =====================================================================
+
+    /**
+     * Return the engine log file. On normal Android devices this is:
+     * {@code /storage/emulated/0/Android/data/<package>/files/gravitycone/application.log}.
+     *
+     * <p>The path falls back to the app's internal files directory when
+     * external app storage is unavailable.</p>
+     */
+    public static File getLogFile() {
+        assertStarted();
+        return runtimeContext.logFile;
+    }
 
     /**
      * Collect logs of the GravityCone engine.
@@ -515,6 +563,24 @@ public final class GravityConeAndroidAPI {
         pendingRequest = new VpnServiceRequest() {
             @Override
             public ParcelFileDescriptor startVpnService(VpnService.Builder builder) {
+                ParcelFileDescriptor previousConnection;
+                synchronized (vpnFdLock) {
+                    previousConnection = vpnFd;
+                    vpnFd = null;
+                }
+                if (previousConnection != null) {
+                    // PaperConnect restarts EasyTier after discovery so it can
+                    // install static forwards. The descriptor belongs to the
+                    // stopped phase-one instance and cannot be injected into
+                    // phase two again.
+                    try {
+                        previousConnection.close();
+                        Log.i(TAG, "Closed previous EasyTier VPN descriptor before restart");
+                    } catch (IOException e) {
+                        Log.w(TAG, "Failed to close previous EasyTier VPN descriptor", e);
+                    }
+                }
+
                 builder.addAddress(address, networkLength)
                        .addDnsServer("223.5.5.5")
                        .addDnsServer("114.114.114.114")
@@ -542,7 +608,13 @@ public final class GravityConeAndroidAPI {
                     throw new RuntimeException("Cannot establish VPN connection.");
                 }
 
+                synchronized (vpnFdLock) {
+                    vpnFd = connection;
+                }
                 fd.set((long) connection.getFd());
+                Log.i(TAG, "VPN established: address=" + address.getHostAddress()
+                        + "/" + networkLength + ", cidr=" + cidr
+                        + ", fd=" + connection.getFd());
                 return connection;
             }
 

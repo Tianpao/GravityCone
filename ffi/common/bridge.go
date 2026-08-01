@@ -9,15 +9,43 @@ import (
 	"gravitycone/core/protocol/scaffolding"
 )
 
-// ffiEventEmitter bridges events from core services to the FFI layer.
-// In the current state-machine design (mirroring Terracotta), events are
-// reflected in the state JSON returned by getState(), so we use a minimal
-// emitter that just logs for debugging.
-type ffiEventEmitter struct{}
+// ffiEventEmitter bridges asynchronous core-service events into the state
+// JSON that Android polls. PaperConnect establishes its game bridge after
+// JoinRoom returns, so dropping these events made an Android join look
+// successful even when the forwarding path had already failed.
+type ffiEventEmitter struct {
+	guest *guestContext
+}
 
-func (ffiEventEmitter) Emit(event string, data interface{}) {
-	// Events are reflected through state polling (getState).
-	// The caller polls getState() periodically to detect changes.
+func (e ffiEventEmitter) Emit(event string, data interface{}) {
+	if e.guest == nil {
+		return
+	}
+
+	globalState.mu.Lock()
+	defer globalState.mu.Unlock()
+	if globalState.extra != e.guest {
+		return
+	}
+
+	switch event {
+	case "paperconnect.connection.ready":
+		e.guest.connectionState = "ready"
+		e.guest.connectionError = ""
+	case "paperconnect.connection.error":
+		e.guest.connectionState = "error"
+		if values, ok := data.(map[string]string); ok {
+			e.guest.connectionError = values["message"]
+		}
+	case "paperconnect.room.disconnected":
+		e.guest.connectionState = "disconnected"
+		if values, ok := data.(map[string]string); ok {
+			e.guest.disconnectReason = values["reason"]
+		}
+	default:
+		return
+	}
+	globalState.index++
 }
 
 // --- Public API called from export.go ---
@@ -193,7 +221,7 @@ func joinPaperConnectRoom(roomCode, playerName string) {
 	}
 	transitionTo(StateGuestConnecting, ctx)
 
-	svc := paperconnect.NewPaperConnectService(ffiEventEmitter{})
+	svc := paperconnect.NewPaperConnectService(ffiEventEmitter{guest: ctx})
 
 	result, err := svc.JoinRoom(roomCode, playerName, "", "")
 	if err != nil {

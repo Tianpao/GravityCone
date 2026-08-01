@@ -112,11 +112,14 @@ type GuestStartingState struct {
 
 // GuestOkState represents a successful connection.
 type GuestOkState struct {
-	State       string `json:"state"`
-	Index       uint32 `json:"index"`
-	Protocol    string `json:"protocol"`
-	SubProtocol string `json:"sub_protocol,omitempty"` // "nethernet" or "raknet" (Bedrock)
-	URL         string `json:"url"`                    // "127.0.0.1:port" or "127.0.0.1"
+	State            string `json:"state"`
+	Index            uint32 `json:"index"`
+	Protocol         string `json:"protocol"`
+	SubProtocol      string `json:"sub_protocol,omitempty"` // "nethernet" or "raknet" (Bedrock)
+	URL              string `json:"url"`                    // "127.0.0.1:port" or "127.0.0.1"
+	ConnectionState  string `json:"connection_state,omitempty"`
+	ConnectionError  string `json:"connection_error,omitempty"`
+	DisconnectReason string `json:"disconnect_reason,omitempty"`
 }
 
 // ExceptionState represents an error state.

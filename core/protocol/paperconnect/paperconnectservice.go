@@ -660,21 +660,36 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		return nil, fmt.Errorf("加入已取消")
 	}
 
-	// TUN 模式（Android VpnService）可直接访问虚拟 IP，发现主机后无需
-	// 为端口转发重启 EasyTier。重启会再次请求 VpnService 并创建无用的 TUN。
-	var tcpLocalPort uint16
-	var rakLocalPort uint16
-	if !manager.HasTUN() {
-		// Proxy 模式（桌面）需要在启动时静态注入 TCP 端口转发。
-		tcpLocalLn, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			manager.Stop()
-			return nil, fmt.Errorf("分配本地TCP端口失败: %w", err)
-		}
-		tcpLocalPort = uint16(tcpLocalLn.Addr().(*net.TCPAddr).Port)
-		tcpLocalLn.Close()
-
+	// Phase 2 starts a static local proxy after discovery. The FFI library has
+	// no runtime port-forward RPC, and the advertised target ports are only
+	// available from the discovered hostname.
+	dialMode := manager.DialMode()
+	tcpLocalLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
 		manager.Stop()
+		return nil, fmt.Errorf("分配本地TCP端口失败: %w", err)
+	}
+	tcpLocalPort := uint16(tcpLocalLn.Addr().(*net.TCPAddr).Port)
+	_ = tcpLocalLn.Close()
+
+	udpBindHost := "0.0.0.0"
+	if protocol == ProtocolNetherNet {
+		udpBindHost = "127.0.0.1"
+	}
+	rakLocalConn, err := net.ListenPacket("udp", udpBindHost+":0")
+	if err != nil {
+		manager.Stop()
+		return nil, fmt.Errorf("分配本地UDP端口失败: %w", err)
+	}
+	rakLocalPort := uint16(rakLocalConn.LocalAddr().(*net.UDPAddr).Port)
+	_ = rakLocalConn.Close()
+
+	if dialMode == easytier.DialModeProxy {
+		if err := manager.Stop(); err != nil {
+			return nil, fmt.Errorf("停止虚拟网络(发现阶段)失败: %w", err)
+		}
+		slog.Info("PaperConnect discovery phase stopped; starting static forwarding phase",
+			"protocol", protocol, "host", hostIP, "control_port", serverPort, "game_port", gamePort)
 		manager, err = easytier.NewEasyTierManager()
 		if err != nil {
 			return nil, err
@@ -683,25 +698,15 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 			NetworkName:        rc.EasyTierNetworkName(),
 			NetworkSecret:      rc.EasyTierNetworkSecret(),
 			IsHost:             false,
-			PortForwards:       []string{fmt.Sprintf("tcp://127.0.0.1:%d/%s:%d", tcpLocalPort, hostIP, serverPort)},
+			PortForwards:       pcGuestPortForwards(dialMode, protocol, hostIP, serverPort, gamePort, tcpLocalPort, rakLocalPort),
 			Peers:              s.resolvePeers(),
 			UpstreamCompatible: true,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("启动虚拟网络(端口转发)失败: %w", err)
 		}
-	}
-
-	// Desktop NetherNet uses this for its runtime UDP forwarding; RakNet also
-	// advertises it as the local fake-server port in TUN mode.
-	if !manager.HasTUN() || protocol == ProtocolRakNet {
-		rakLocalConn, err := net.ListenPacket("udp", "0.0.0.0:0")
-		if err != nil {
-			manager.Stop()
-			return nil, fmt.Errorf("分配本地UDP端口失败: %w", err)
-		}
-		rakLocalPort = uint16(rakLocalConn.LocalAddr().(*net.UDPAddr).Port)
-		rakLocalConn.Close()
+		slog.Info("PaperConnect static forwarding phase started",
+			"tcp_local_port", tcpLocalPort, "udp_local_port", rakLocalPort)
 	}
 
 	// Wait for TCP ping to succeed.
@@ -712,10 +717,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 			return nil, fmt.Errorf("加入已取消")
 		}
 
-		pingAddr := fmt.Sprintf("127.0.0.1:%d", tcpLocalPort)
-		if manager.HasTUN() {
-			pingAddr = fmt.Sprintf("%s:%d", hostIP, serverPort)
-		}
+		pingAddr := pcControlDialAddr(dialMode, hostIP, serverPort, tcpLocalPort)
 		conn, err := net.DialTimeout("tcp", pingAddr, 2*time.Second)
 		if err != nil {
 			time.Sleep(1 * time.Second)
@@ -755,11 +757,18 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 
 	clientId := scaffolding.MakeVendor(vendorPrefix)
 
-	if manager.HasTUN() {
-		s.pcGuestRegister(hostIP, serverPort, clientId, playerName)
-	} else {
-		s.pcGuestRegister("127.0.0.1", tcpLocalPort, clientId, playerName)
+	controlAddr := pcControlDialAddr(dialMode, hostIP, serverPort, tcpLocalPort)
+	controlHost, controlPort, err := net.SplitHostPort(controlAddr)
+	if err != nil {
+		manager.Stop()
+		return nil, fmt.Errorf("解析本地控制地址失败: %w", err)
 	}
+	controlPortNumber, err := strconv.ParseUint(controlPort, 10, 16)
+	if err != nil {
+		manager.Stop()
+		return nil, fmt.Errorf("解析本地控制端口失败: %w", err)
+	}
+	s.pcGuestRegister(controlHost, uint16(controlPortNumber), clientId, playerName)
 
 	s.guestMu.Lock()
 	s.guestManager = manager
@@ -781,11 +790,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	s.pcResetGuestPortBusyLocked()
 	s.guestMu.Unlock()
 
-	if manager.HasTUN() {
-		go s.pcGuestHeartbeatLoop(clientId, playerName, hostIP, serverPort)
-	} else {
-		go s.pcGuestHeartbeatLoop(clientId, playerName, "127.0.0.1", tcpLocalPort)
-	}
+	go s.pcGuestHeartbeatLoop(clientId, playerName, controlHost, uint16(controlPortNumber))
 	go s.pcGuestSetupConnection(manager, playerName, protocol, rakLocalPort)
 
 	status := s.pcBuildConnectionStatus()
@@ -1039,23 +1044,8 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 	gamePort := s.guestGamePort
 	s.guestMu.Unlock()
 
-	// RakNet 隧道目标：TUN 模式（Android）直连 host 虚拟 IP 的游戏端口；
-	// Proxy 模式（桌面）经本地 UDP 转发端口进入虚拟网络。
-	rakDialAddr := fmt.Sprintf("%s:%d", hostIP, gamePort)
-	if !manager.HasTUN() {
-		localHost := "0.0.0.0"
-		if protocol == ProtocolNetherNet {
-			localHost = "127.0.0.1"
-		}
-		localAddr := fmt.Sprintf("%s:%d", localHost, rakLocalPort)
-		remoteAddr := fmt.Sprintf("%s:%d", hostIP, gamePort)
-		if err := manager.AddPortForward("udp", localAddr, remoteAddr); err != nil {
-			slog.Error("add UDP port forward failed", "err", err, "local", localAddr, "remote", remoteAddr)
-			s.pcGuestSetupError(manager, protocol)
-			return
-		}
-		rakDialAddr = fmt.Sprintf("127.0.0.1:%d", rakLocalPort)
-	}
+	// Phase-two proxy forwards are installed before this function starts.
+	rakDialAddr := pcRakDialAddr(manager.DialMode(), hostIP, gamePort, rakLocalPort)
 
 	if protocol == ProtocolNetherNet {
 		// Only the local discovery/broadcast phase is gated on Minecraft
@@ -1368,7 +1358,7 @@ func (s *PaperConnectService) pcAdvertiseLoop(disc *discovery.Listener) {
 				if err := disc.Advertise(a); err != nil {
 					slog.Warn("discovery advertisement failed", "to", a.String(), "err", err)
 				} else {
-					slog.Info("discovery advertisement sent", "to", a.String())
+					slog.Debug("discovery advertisement sent", "to", a.String())
 				}
 			}
 		}
@@ -1426,18 +1416,18 @@ func (s *PaperConnectService) pcBroadcastSelfTest() {
 		if _, err := bcConn.WriteToUDP(payload, bcAddr); err != nil {
 			slog.Warn("broadcast self-test: send failed", "to", bcAddr.String(), "err", err)
 		} else {
-			slog.Info("broadcast self-test sent", "kind", "broadcast", "to", bcAddr.String())
+			slog.Debug("broadcast self-test sent", "kind", "broadcast", "to", bcAddr.String())
 		}
 		for _, a := range uniAddrs {
 			if _, err := uniConn.WriteToUDP(payload, a); err != nil {
 				slog.Warn("broadcast self-test: send failed", "to", a.String(), "err", err)
 			} else {
-				slog.Info("broadcast self-test sent", "kind", "unicast", "to", a.String())
+				slog.Debug("broadcast self-test sent", "kind", "unicast", "to", a.String())
 			}
 		}
 		time.Sleep(2 * time.Second)
 	}
-	slog.Info("broadcast self-test finished",
+	slog.Debug("broadcast self-test finished",
 		"bcPort", bcConn.LocalAddr().(*net.UDPAddr).Port,
 		"uniPort", uniConn.LocalAddr().(*net.UDPAddr).Port)
 }

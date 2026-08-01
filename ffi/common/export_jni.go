@@ -145,7 +145,7 @@ func Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeInit(
 			log.SetOutput(logFile)
 			log.SetFlags(log.LstdFlags | log.Lmicroseconds)
 			slog.SetDefault(slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{
-				Level: slog.LevelDebug,
+				Level: slog.LevelInfo,
 			})))
 		}
 	}

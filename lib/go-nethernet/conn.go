@@ -523,7 +523,10 @@ func parseDescription(d *sdp.SessionDescription) (*description, error) {
 
 	attr, ok = m.Attribute("setup")
 	if !ok {
-		return nil, errors.New("missing setup attribute")
+		// Bedrock 1.26 Android omits setup and max-message-size in its
+		// CONNECTREQUEST SDP. RFC 8842 defaults an absent setup attribute in an
+		// offer to actpass, which is the role this listener already expects.
+		attr = sdp.ConnectionRoleActpass.String()
 	}
 	var role webrtc.DTLSRole
 	switch attr {
@@ -539,7 +542,9 @@ func parseDescription(d *sdp.SessionDescription) (*description, error) {
 
 	attr, ok = m.Attribute("max-message-size")
 	if !ok {
-		return nil, errors.New("missing max-message-size attribute")
+		// Bedrock's Android client omits this optional SCTP capability. Use the
+		// WebRTC default rather than rejecting an otherwise valid offer.
+		attr = strconv.FormatUint(maxMessageSize+1, 10)
 	}
 	maxMessageSize, err := strconv.ParseUint(attr, 10, 32)
 	if err != nil {
