@@ -6,5 +6,5 @@ package easytier
 
 import "unsafe"
 
-func dlopenLib() unsafe.Pointer                    { return nil }
+func dlopenLib() unsafe.Pointer                           { return nil }
 func dlsymLib(handle unsafe.Pointer, name string) uintptr { return 0 }
