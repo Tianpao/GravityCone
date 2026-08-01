@@ -781,6 +781,9 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	s.guestProtocol = protocol
 	s.guestGamePort = gamePort
 	s.guestMotd = motd
+	if s.guestMotd == "" {
+		s.guestMotd = "GravityCone 联机房间"
+	}
 	s.pcResetGuestPortBusyLocked()
 	s.guestMu.Unlock()
 
