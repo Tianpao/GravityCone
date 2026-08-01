@@ -15,6 +15,7 @@ import (
 
 	mcstatus "github.com/andre-carbajal/go-mcstatus"
 	"github.com/df-mc/go-nethernet/discovery"
+	"github.com/wlynxg/anet"
 
 	"gravitycone/core/utils"
 )
@@ -129,7 +130,7 @@ func scanRakNetLAN(ctx context.Context, timeout time.Duration) (*RakNetServerInf
 // getBroadcastAddrs computes subnet broadcast addresses for all active interfaces
 // plus the global broadcast address 255.255.255.255.
 func getBroadcastAddrs(port int) ([]*net.UDPAddr, error) {
-	interfaces, err := net.Interfaces()
+	interfaces, err := anet.Interfaces()
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +140,7 @@ func getBroadcastAddrs(port int) ([]*net.UDPAddr, error) {
 		if !isPhysicalNIC(iface) {
 			continue
 		}
-		ifaceAddrs, err := iface.Addrs()
+		ifaceAddrs, err := anet.InterfaceAddrsByInterface(&iface)
 		if err != nil {
 			continue
 		}
@@ -167,46 +168,6 @@ func getBroadcastAddrs(port int) ([]*net.UDPAddr, error) {
 		}
 	}
 	return addrs, nil
-}
-
-// getLocalAddrs returns all local IPv4 unicast addresses including 127.0.0.1.
-// On Windows, broadcasts to 255.255.255.255 don't loopback, so local unicast pings
-// are needed to discover servers on the same machine.
-func getLocalAddrs(port int) []*net.UDPAddr {
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return nil
-	}
-	var addrs []*net.UDPAddr
-	for _, iface := range interfaces {
-		if !isPhysicalNIC(iface) {
-			continue
-		}
-		ifaceAddrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, a := range ifaceAddrs {
-			ipNet, ok := a.(*net.IPNet)
-			if !ok {
-				continue
-			}
-			ip4 := ipNet.IP.To4()
-			if ip4 == nil || isEasyTierIP(ip4) {
-				continue
-			}
-			udpAddr, _ := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", ip4.String(), port))
-			if udpAddr != nil {
-				addrs = append(addrs, udpAddr)
-			}
-		}
-	}
-	// Always include 127.0.0.1 for reliable local loopback — Windows may not
-	// loopback unicast packets sent to the physical NIC IP.
-	if udpAddr, _ := net.ResolveUDPAddr("udp4", fmt.Sprintf("127.0.0.1:%d", port)); udpAddr != nil {
-		addrs = append(addrs, udpAddr)
-	}
-	return addrs
 }
 
 func buildUnconnectedPing() []byte {
@@ -316,7 +277,11 @@ func isPhysicalNIC(iface net.Interface) bool {
 // broadcastRakNetFakeServer advertises the forwarded Bedrock server on the guest LAN.
 // It answers discovery pings when port 19132 is available and always sends periodic
 // unsolicited pongs from a separate broadcast socket.
-func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fallbackName string, proxyPort uint16, readyCh chan<- error) {
+//
+// motdQueryAddr is where the real Bedrock server is queried for the actual MOTD:
+// proxy 模式经本地转发(127.0.0.1:proxyPort)访问 host;direct 模式(TUN)直连
+// host 虚拟 IP 的游戏端口。
+func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fallbackName string, proxyPort uint16, motdQueryAddr string, readyCh chan<- error) {
 	serverGUID := rand.Int63()
 	slog.Info("RakNet fake server starting", "guid", serverGUID, "proxyPort", proxyPort)
 
@@ -351,7 +316,7 @@ func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fall
 	readyCh <- nil
 
 	go func() {
-		queriedMOTD, ok := queryBedrockMOTD(fmt.Sprintf("127.0.0.1:%d", proxyPort), fallbackName, serverGUID, proxyPort)
+		queriedMOTD, ok := queryBedrockMOTD(motdQueryAddr, fallbackName, serverGUID, proxyPort)
 		if !ok {
 			return
 		}

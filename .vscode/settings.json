@@ -1,0 +1,6 @@
+{
+    "go.buildTags": "et_ffi",
+    "go.toolsEnvVars": {
+        "CGO_ENABLED": "1"
+    }
+}

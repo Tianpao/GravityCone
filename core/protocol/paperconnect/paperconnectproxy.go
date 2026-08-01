@@ -203,8 +203,9 @@ func dialLocalNetherNet(ctx context.Context) (*nethernet.Conn, error) {
 	}
 
 	dialer := nethernet.Dialer{
-		DisableTrickleICE:       true,
-		AllowIdentitylessServer: true,
+		DisableTrickleICE:                         true,
+		AllowIdentitylessServer:                   true,
+		DisableCertificateFingerprintVerification: true,
 	}
 	dialCtx, dialCancel := context.WithTimeout(ctx, 30*time.Second)
 	defer dialCancel()

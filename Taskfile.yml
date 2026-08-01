@@ -77,3 +77,48 @@ tasks:
     summary: Builds and runs the Docker image
     cmds:
       - task: common:run:docker
+
+  # =========================================================================
+  # Android FFI SDK
+  # =========================================================================
+
+  build:android:ffi:download:
+    summary: Builds Android libeasytier_ffi.so from EasyTier source (cargo-ndk; Windows uses the .bat)
+    cmds:
+      - cmd: bash ffi/android/scripts/build_easytier_ffi_android.sh arm64 ffi/android/jniLibs/arm64-v8a
+        platforms: [linux, darwin]
+      - cmd: bash ffi/android/scripts/build_easytier_ffi_android.sh amd64 ffi/android/jniLibs/x86_64
+        platforms: [linux, darwin]
+      - cmd: cmd /c ffi\android\scripts\build_easytier_ffi_android.bat
+        platforms: [windows]
+
+  build:android:ffi:compile:
+    summary: Cross-compiles libgravitycone.so for Android (arm64 + amd64)
+    deps:
+      - build:android:ffi:download
+    cmds:
+      - cmd: bash ffi/android/scripts/build_gravitycone_android.sh
+        platforms: [linux, darwin]
+      - cmd: cmd /c ffi\android\scripts\build_gravitycone_android.bat
+        platforms: [windows]
+
+  build:android:ffi:sdk:
+    summary: |
+      Builds the complete Android FFI SDK package.
+      Output: ffi/android/dist/gravitycone-android-sdk.zip
+    deps:
+      - build:android:ffi:compile
+    cmds:
+      - cmd: |
+          mkdir -p ffi/android/dist
+          cd ffi/android
+          zip -r dist/gravitycone-android-sdk.zip \
+            jniLibs/arm64-v8a/libeasytier_ffi.so \
+            jniLibs/arm64-v8a/libgravitycone.so \
+            jniLibs/x86_64/libeasytier_ffi.so \
+            jniLibs/x86_64/libgravitycone.so \
+            java/net/gravitycone/ffi/GravityConeAndroidAPI.java
+          echo "SDK package created: ffi/android/dist/gravitycone-android-sdk.zip"
+        platforms: [linux, darwin]
+      - cmd: cmd /c ffi\android\scripts\build_android_sdk.bat
+        platforms: [windows]

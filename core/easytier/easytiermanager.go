@@ -1,3 +1,5 @@
+//go:build !et_ffi
+
 package easytier
 
 import (
@@ -411,6 +413,18 @@ func (m *EasyTierManager) AddPortForward(proto string, localAddr string, remoteA
 
 func (m *EasyTierManager) RemovePortForward(proto string, localAddr string, remoteAddr string) error {
 	return m.runPortForwardCmd("remove", proto, localAddr, remoteAddr, "删除端口转发失败")
+}
+
+// HasTUN 是否提供 TUN 直通虚拟 IP。桌面虽有 TUN 但流程围绕端口转发设计，
+// 故返回 false 保持原路径；FFI/Android（VpnService）返回 true。
+func (m *EasyTierManager) HasTUN() bool {
+	return false
+}
+
+// DialMode reports the transport used by PaperConnect. Desktop PaperConnect
+// uses EasyTier port forwards instead of dialing virtual IPs directly.
+func (m *EasyTierManager) DialMode() DialMode {
+	return DialModeProxy
 }
 
 func (m *EasyTierManager) runPortForwardCmd(action, proto, localAddr, remoteAddr, errMsg string) error {
