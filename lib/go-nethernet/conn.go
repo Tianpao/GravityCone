@@ -473,6 +473,13 @@ func (conn *Conn) addRemoteCandidate(candidate webrtc.ICECandidate) error {
 // matching the 'a=max-message-size' value in the SDP sent by vanilla peer connections.
 const maxMessageSize = 262143
 
+func normalizeSDP(data string) string {
+	if !strings.HasSuffix(data, "\r\n") {
+		return data + "\r\n"
+	}
+	return data
+}
+
 // parseDescription parses a [sdp.SessionDescription] signaled from a remote connection.
 // It transforms the fields of the [sdp.SessionDescription] into a description, which can be
 // used to start ICE, DTLS, and SCTP transports for a Conn.
@@ -523,10 +530,11 @@ func parseDescription(d *sdp.SessionDescription) (*description, error) {
 
 	attr, ok = m.Attribute("setup")
 	if !ok {
-		// Bedrock 1.26 Android omits setup and max-message-size in its
-		// CONNECTREQUEST SDP. RFC 8842 defaults an absent setup attribute in an
-		// offer to actpass, which is the role this listener already expects.
-		attr = sdp.ConnectionRoleActpass.String()
+		// Android Bedrock omits setup. RFC 4145 defines the default setup role as
+		// active, not actpass. Treating it as actpass made both endpoints select
+		// incompatible DTLS roles and surfaced as a fingerprint mismatch after
+		// ICE connected.
+		attr = sdp.ConnectionRoleActive.String()
 	}
 	var role webrtc.DTLSRole
 	switch attr {

@@ -71,6 +71,12 @@ type Dialer struct {
 	// as relayed candidates from TURN servers only.
 	ICEGatherPolicy webrtc.ICEGatherPolicy
 
+	// DisableCertificateFingerprintVerification permits a legacy local
+	// implementation whose SDP fingerprint does not match the certificate it
+	// presents during DTLS. It must only be enabled for explicitly trusted
+	// local discovery paths.
+	DisableCertificateFingerprintVerification bool
+
 	// DisableTrickleICE disables trickle ICE for connection negotiation.
 	//
 	// When set to true, the dialer waits for ICE gathering to complete and embeds
@@ -95,7 +101,13 @@ func (d Dialer) DialContext(ctx context.Context, networkID string, signaling Sig
 		d.ConnectionID = rand.Uint64()
 	}
 	if d.API == nil {
-		d.API = webrtc.NewAPI()
+		if d.DisableCertificateFingerprintVerification {
+			engine := webrtc.SettingEngine{}
+			engine.DisableCertificateFingerprintVerification(true)
+			d.API = webrtc.NewAPI(webrtc.WithSettingEngine(engine))
+		} else {
+			d.API = webrtc.NewAPI()
+		}
 	}
 	if d.Log == nil {
 		d.Log = slog.Default()
@@ -194,7 +206,7 @@ func (d Dialer) DialContext(ctx context.Context, networkID string, signaling Sig
 			switch signal.Type {
 			case SignalTypeAnswer:
 				s := &sdp.SessionDescription{}
-				if err := s.UnmarshalString(signal.Data); err != nil {
+				if err := s.UnmarshalString(normalizeSDP(signal.Data)); err != nil {
 					d.Log.Error("failed to decode answer SDP",
 						slog.Int("len", len(signal.Data)),
 						slog.String("data", truncateLog(signal.Data, 300)))
