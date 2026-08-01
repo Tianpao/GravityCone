@@ -277,7 +277,11 @@ func isPhysicalNIC(iface net.Interface) bool {
 // broadcastRakNetFakeServer advertises the forwarded Bedrock server on the guest LAN.
 // It answers discovery pings when port 19132 is available and always sends periodic
 // unsolicited pongs from a separate broadcast socket.
-func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fallbackName string, proxyPort uint16, readyCh chan<- error) {
+//
+// motdQueryAddr is where the real Bedrock server is queried for the actual MOTD:
+// proxy 模式经本地转发(127.0.0.1:proxyPort)访问 host;direct 模式(TUN)直连
+// host 虚拟 IP 的游戏端口。
+func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fallbackName string, proxyPort uint16, motdQueryAddr string, readyCh chan<- error) {
 	serverGUID := rand.Int63()
 	slog.Info("RakNet fake server starting", "guid", serverGUID, "proxyPort", proxyPort)
 
@@ -312,7 +316,7 @@ func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fall
 	readyCh <- nil
 
 	go func() {
-		queriedMOTD, ok := queryBedrockMOTD(fmt.Sprintf("127.0.0.1:%d", proxyPort), fallbackName, serverGUID, proxyPort)
+		queriedMOTD, ok := queryBedrockMOTD(motdQueryAddr, fallbackName, serverGUID, proxyPort)
 		if !ok {
 			return
 		}

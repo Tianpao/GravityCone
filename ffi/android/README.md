@@ -114,7 +114,7 @@ app/src/main/java/net/gravitycone/ffi/GravityConeAndroidAPI.java
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 ```
 
-如果需要 TUN 模式（未来支持），还需要 VpnService 权限：
+**VpnService 权限是必需的**（EasyTier 在 Android 上运行需要注入 TUN fd，见下文「VpnService（TUN 模式）」）：
 
 ```xml
 <service android:name=".YourVpnService"
@@ -174,6 +174,8 @@ GravityConeAndroidAPI.RoomType type = GravityConeAndroidAPI.parseRoomCode("U/123
 
 // 加入房间
 boolean ok = GravityConeAndroidAPI.setGuesting("U/1234-5678-9012-3456", "Alex");
+// ok == true: 已开始加入（房间码非空且当前没有房间在运行）
+// ok == false: 房间码为空，或已有房间/主机会话在进行中
 
 // 轮询状态
 String state = GravityConeAndroidAPI.getState();
@@ -181,11 +183,22 @@ String state = GravityConeAndroidAPI.getState();
 // guest-ok 示例: {"state":"guest-ok","index":5,"protocol":"scaffolding","url":"127.0.0.1:25565"}
 ```
 
+> **Bedrock 子协议**：`P/` 房间的 `sub_protocol` 为 `nethernet`（默认，优先）或 `raknet`（回退）。
+> 两种子协议在 Android 上均受支持：NetherNet 经本机 discovery 监听 + 隧道直连 host 虚拟 IP；
+> RakNet 经本地中继监听（`127.0.0.1`）把客户端流量转发到 host，无需端口转发。
+> 创建/加入房时自动协商，无需调用方干预。
+
 ### 退出房间
 
 ```java
 GravityConeAndroidAPI.setWaiting();
 ```
+
+`setWaiting()` 会停止当前房间/加入流程并把状态重置为 `waiting`。若在加入
+（`guest-connecting`）或建房（`host-scanning`/`host-starting`）过程中调用，
+后台流程会尽快中断；此后迟到的状态写入（包括错误）都会被丢弃，不会把
+`waiting` 覆盖回旧房间的 `guest-ok`/`host-ok`/`exception`。轮询到 `waiting`
+即可安全地发起下一次会话。
 
 ### 关闭引擎
 
@@ -260,6 +273,9 @@ GravityCone 使用 `no_tun` 模式（端口转发），但 EasyTier 的 Android 
 - 所有 `GravityConeAndroidAPI` 的公共方法都是线程安全的
 - `getState()` 设计为轮询调用（建议 500ms 间隔）
 - `stunProbe()` 是阻塞调用（3-10 秒），请在后台线程调用
+- 同一时刻只允许一个房间/加入会话：`setScanning`/`setGuesting` 的
+  「检查空闲 + 转移状态」是原子的，并发调用中只有一个会生效，其余静默失败
+  （`setGuesting` 返回 `false`）；任何会话都可用 `setWaiting()` 中断
 
 ## 日志
 

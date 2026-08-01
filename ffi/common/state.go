@@ -136,24 +136,56 @@ type guestContext struct {
 
 // --- State transition helpers ---
 
-type stateCapture struct {
-	index uint32
-}
-
-// transitionTo atomically transitions to a new state.
-// Returns a capture that the caller can use to verify it still owns the state.
-func transitionTo(newState AppState, extra interface{}) stateCapture {
+// transitionTo atomically transitions to a new state without ownership
+// checking. Used by tests and low-level callers; async room operations
+// should use beginTransition / transitionToIfOwner instead.
+func transitionTo(newState AppState, extra interface{}) {
 	globalState.mu.Lock()
 	globalState.index++
 	globalState.state = newState
 	globalState.extra = extra
 	globalState.lastError = ""
-	capture := stateCapture{index: globalState.index}
 	globalState.mu.Unlock()
-	return capture
 }
 
-// transitionToError transitions to the error state.
+// beginTransition atomically checks that the engine is Idle and transitions
+// to newState in one step, eliminating the TOCTOU between a separate
+// "can transition" check and the transition itself. Two concurrent
+// setScanning/setGuesting calls therefore cannot both start a room.
+// Returns false if a room is already active.
+func beginTransition(newState AppState, extra interface{}) bool {
+	globalState.mu.Lock()
+	defer globalState.mu.Unlock()
+	if globalState.state != StateIdle {
+		return false
+	}
+	globalState.index++
+	globalState.state = newState
+	globalState.extra = extra
+	globalState.lastError = ""
+	return true
+}
+
+// transitionToIfOwner transitions to the new state only if the caller still
+// owns it (globalState.extra == ctx). After goBackToIdle or a new session
+// replaces the extra, stale async room goroutines fail here instead of
+// resurrecting the cancelled room's state.
+func transitionToIfOwner(ctx interface{}, newState AppState, extra interface{}) bool {
+	globalState.mu.Lock()
+	defer globalState.mu.Unlock()
+	if globalState.extra != ctx {
+		return false
+	}
+	globalState.index++
+	globalState.state = newState
+	globalState.extra = extra
+	globalState.lastError = ""
+	return true
+}
+
+// transitionToError transitions to the error state without ownership
+// checking. Used by tests; async operations should use
+// transitionToErrorIfOwner.
 func transitionToError(errMsg string) {
 	log.Printf("[状态错误] %s", errMsg)
 	globalState.mu.Lock()
@@ -161,6 +193,22 @@ func transitionToError(errMsg string) {
 	globalState.state = StateError
 	globalState.lastError = errMsg
 	globalState.mu.Unlock()
+}
+
+// transitionToErrorIfOwner transitions to the error state only if the
+// caller still owns it; stale failures from cancelled operations are
+// dropped.
+func transitionToErrorIfOwner(ctx interface{}, errMsg string) bool {
+	log.Printf("[状态错误] %s", errMsg)
+	globalState.mu.Lock()
+	defer globalState.mu.Unlock()
+	if globalState.extra != ctx {
+		return false
+	}
+	globalState.index++
+	globalState.state = StateError
+	globalState.lastError = errMsg
+	return true
 }
 
 // canTransition returns true if the current state allows a transition.
@@ -203,12 +251,17 @@ func goBackToIdle() {
 }
 
 // updateExtra atomically replaces the extra context on the current state.
+// Only applies while the caller still owns the state (extra == ctx);
+// stale progress updates from cancelled async operations are dropped.
 // Used by async operations to update progress.
 func updateExtra(extra interface{}) {
 	globalState.mu.Lock()
+	defer globalState.mu.Unlock()
+	if globalState.extra != extra {
+		return
+	}
 	globalState.extra = extra
 	globalState.index++
-	globalState.mu.Unlock()
 }
 
 // mustJSON marshals a value to JSON string, panicking on error.

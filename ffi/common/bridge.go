@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"gravitycone/core/easytier"
 	"gravitycone/core/protocol/paperconnect"
@@ -58,11 +59,9 @@ func setWaiting() {
 // setScanning starts scanning for a local Minecraft server and creates a room.
 // room: optional room code (empty = generate new). player: player name.
 // protocol: "scaffolding" (default) or "paperconnect".
+// The idle check and the transition to HostScanning happen atomically, so two
+// concurrent calls cannot both start a room.
 func setScanning(room, player, protocol string) {
-	if !canTransition() {
-		return
-	}
-
 	if protocol == "" {
 		protocol = ProtocolScaffolding
 	}
@@ -71,18 +70,29 @@ func setScanning(room, player, protocol string) {
 		player = "Player"
 	}
 
+	var ctx *hostContext
 	switch protocol {
 	case ProtocolPaperConnect:
-		go startPaperConnectHost(player)
+		ctx = &hostContext{protocol: ProtocolPaperConnect}
 	default:
-		go startScaffoldingHost(player)
+		ctx = &hostContext{protocol: ProtocolScaffolding}
+	}
+	if !beginTransition(StateHostScanning, ctx) {
+		return
+	}
+
+	switch protocol {
+	case ProtocolPaperConnect:
+		go startPaperConnectHost(player, ctx)
+	default:
+		go startScaffoldingHost(player, ctx)
 	}
 }
 
 // setGuesting starts connecting to a remote room.
-// Returns false if the room code is invalid.
+// Returns false if the room code is empty or a room is already active.
 func setGuesting(roomCode, player string) bool {
-	if !canTransition() {
+	if roomCode == "" {
 		return false
 	}
 
@@ -92,12 +102,20 @@ func setGuesting(roomCode, player string) bool {
 
 	// Route based on room code prefix.
 	if isPaperConnectCode(roomCode) {
-		go joinPaperConnectRoom(roomCode, player)
+		ctx := &guestContext{protocol: ProtocolPaperConnect, roomCode: roomCode}
+		if !beginTransition(StateGuestConnecting, ctx) {
+			return false
+		}
+		go joinPaperConnectRoom(roomCode, player, ctx)
 		return true
 	}
 
 	// Scaffolding (U/ prefix or legacy Terracotta/PCL2CE codes).
-	go joinScaffoldingRoom(roomCode, player)
+	ctx := &guestContext{protocol: ProtocolScaffolding, roomCode: roomCode}
+	if !beginTransition(StateGuestConnecting, ctx) {
+		return false
+	}
+	go joinScaffoldingRoom(roomCode, player, ctx)
 	return true
 }
 
@@ -125,9 +143,8 @@ func isPaperConnectCode(code string) bool {
 
 // --- ScaffoldingMC (Java Edition) host ---
 
-func startScaffoldingHost(playerName string) {
-	ctx := &hostContext{protocol: ProtocolScaffolding}
-	transitionTo(StateHostScanning, ctx)
+func startScaffoldingHost(playerName string, ctx *hostContext) {
+	// 状态已在 setScanning 的 beginTransition 中转移到 HostScanning。
 
 	// Create scaffolding service.
 	svc := scaffolding.NewScaffoldingService(ffiEventEmitter{})
@@ -136,57 +153,68 @@ func startScaffoldingHost(playerName string) {
 	// In the future, we can integrate MinecraftScanner like Terracotta does.
 	mcPort := uint16(25565)
 
-	transitionTo(StateHostStarting, ctx)
+	if !transitionToIfOwner(ctx, StateHostStarting, ctx) {
+		return
+	}
 
 	result, err := svc.CreateRoom(mcPort, playerName, "", "")
 	if err != nil {
-		transitionToError(fmt.Sprintf("创建房间失败: %v", err))
+		transitionToErrorIfOwner(ctx, fmt.Sprintf("创建房间失败: %v", err))
 		return
 	}
 
 	ctx.roomCode = result.Code
 	ctx.mcPort = result.MCPort
+	var stopOnce sync.Once
 	ctx.stopFn = func() {
-		svc.StopRoom()
+		stopOnce.Do(func() {
+			svc.StopRoom()
+		})
 	}
-
-	transitionTo(StateHostReady, ctx)
+	// goBackToIdle 可能已在 stopFn 设置前执行；若所有权已失去，
+	// 自行清理，避免房间实例泄漏。
+	if !transitionToIfOwner(ctx, StateHostReady, ctx) {
+		ctx.stopFn()
+		return
+	}
 }
 
 // --- PaperConnect (Bedrock Edition) host ---
 
-func startPaperConnectHost(playerName string) {
-	ctx := &hostContext{protocol: ProtocolPaperConnect}
-	transitionTo(StateHostScanning, ctx)
+func startPaperConnectHost(playerName string, ctx *hostContext) {
+	// 状态已在 setScanning 的 beginTransition 中转移到 HostScanning。
 
 	svc := paperconnect.NewPaperConnectService(ffiEventEmitter{})
 
-	transitionTo(StateHostStarting, ctx)
+	if !transitionToIfOwner(ctx, StateHostStarting, ctx) {
+		return
+	}
 
 	result, err := svc.CreateRoom(playerName, "")
 	if err != nil {
-		transitionToError(fmt.Sprintf("创建房间失败: %v", err))
+		transitionToErrorIfOwner(ctx, fmt.Sprintf("创建房间失败: %v", err))
 		return
 	}
 
 	ctx.roomCode = result.Code
 	ctx.gamePort = result.GamePort
 	ctx.subProtocol = result.SubProtocol
+	var stopOnce sync.Once
 	ctx.stopFn = func() {
-		svc.StopRoom()
+		stopOnce.Do(func() {
+			svc.StopRoom()
+		})
 	}
-
-	transitionTo(StateHostReady, ctx)
+	if !transitionToIfOwner(ctx, StateHostReady, ctx) {
+		ctx.stopFn()
+		return
+	}
 }
 
 // --- ScaffoldingMC (Java Edition) guest ---
 
-func joinScaffoldingRoom(roomCode, playerName string) {
-	ctx := &guestContext{
-		protocol: ProtocolScaffolding,
-		roomCode: roomCode,
-	}
-	transitionTo(StateGuestConnecting, ctx)
+func joinScaffoldingRoom(roomCode, playerName string, ctx *guestContext) {
+	// 状态已在 setGuesting 的 beginTransition 中转移到 GuestConnecting。
 
 	// Set up progress callback.
 	progress := func(step string) {
@@ -200,42 +228,54 @@ func joinScaffoldingRoom(roomCode, playerName string) {
 
 	result, err := svc.JoinRoom(roomCode, playerName, "", "")
 	if err != nil {
-		transitionToError(fmt.Sprintf("加入房间失败: %v", err))
+		transitionToErrorIfOwner(ctx, fmt.Sprintf("加入房间失败: %v", err))
 		return
 	}
 
 	ctx.mcURL = fmt.Sprintf("%s:%d", result.MCAddress, result.MCPort)
+	var leaveOnce sync.Once
 	ctx.leaveFn = func() {
-		svc.LeaveRoom()
+		leaveOnce.Do(func() {
+			// CancelJoin 让进行中的加入流程尽快退出（LeaveRoom 只关
+			// guestStopCh，不置 joinCancelled）。
+			svc.CancelJoin()
+			svc.LeaveRoom()
+		})
 	}
-
-	transitionTo(StateGuestReady, ctx)
+	// goBackToIdle 可能已在 leaveFn 设置前执行；若所有权已失去，
+	// 自行清理，避免加入流程残留。
+	if !transitionToIfOwner(ctx, StateGuestReady, ctx) {
+		ctx.leaveFn()
+		return
+	}
 }
 
 // --- PaperConnect (Bedrock Edition) guest ---
 
-func joinPaperConnectRoom(roomCode, playerName string) {
-	ctx := &guestContext{
-		protocol: ProtocolPaperConnect,
-		roomCode: roomCode,
-	}
-	transitionTo(StateGuestConnecting, ctx)
+func joinPaperConnectRoom(roomCode, playerName string, ctx *guestContext) {
+	// 状态已在 setGuesting 的 beginTransition 中转移到 GuestConnecting。
 
 	svc := paperconnect.NewPaperConnectService(ffiEventEmitter{guest: ctx})
 
 	result, err := svc.JoinRoom(roomCode, playerName, "", "")
 	if err != nil {
-		transitionToError(fmt.Sprintf("加入房间失败: %v", err))
+		transitionToErrorIfOwner(ctx, fmt.Sprintf("加入房间失败: %v", err))
 		return
 	}
 
 	ctx.subProtocol = result.SubProtocol
 	ctx.mcURL = fmt.Sprintf("127.0.0.1:%d", result.GamePort)
+	var leaveOnce sync.Once
 	ctx.leaveFn = func() {
-		svc.LeaveRoom()
+		leaveOnce.Do(func() {
+			svc.CancelJoin()
+			svc.LeaveRoom()
+		})
 	}
-
-	transitionTo(StateGuestReady, ctx)
+	if !transitionToIfOwner(ctx, StateGuestReady, ctx) {
+		ctx.leaveFn()
+		return
+	}
 }
 
 // --- STUN (NAT Probing) ---

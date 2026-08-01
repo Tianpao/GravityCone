@@ -40,7 +40,11 @@ const (
 func FFIResetState()                                         { resetState() }
 func FFIIsInState(s AppState) bool                           { return isInState(s) }
 func FFICanTransition() bool                                 { return canTransition() }
-func FFITransitionTo(s AppState, e interface{}) stateCapture { return transitionTo(s, e) }
+func FFITransitionTo(s AppState, e interface{})                  { transitionTo(s, e) }
+func FFIBeginTransition(s AppState, e interface{}) bool          { return beginTransition(s, e) }
+func FFITransitionToIfOwner(ctx interface{}, s AppState, e interface{}) bool {
+	return transitionToIfOwner(ctx, s, e)
+}
 func FFITransitionToError(msg string)                        { transitionToError(msg) }
 func FFIGoBackToIdle()                                       { goBackToIdle() }
 func FFIUpdateExtra(e interface{})                           { updateExtra(e) }

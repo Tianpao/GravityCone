@@ -409,7 +409,9 @@ public final class GravityConeAndroidAPI {
      *
      * @param room   Room code (required). Supports U/ and P/ prefixes.
      * @param player Player name. Null or empty uses default "Player".
-     * @return true if the room code is valid and the connection started.
+     * @return true if the room code is non-empty and no host/guest session
+     *         is already active; the connection itself is reported
+     *         asynchronously through {@link #getState()}.
      */
     public static boolean setGuesting(String room, @Nullable String player) {
         Objects.requireNonNull(room, "room");

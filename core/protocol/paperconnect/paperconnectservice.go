@@ -80,6 +80,7 @@ type PaperConnectService struct {
 	guestRakConn          *raknet.Conn
 	guestDisc             *discovery.Listener
 	guestNnLn             *nethernet.Listener
+	guestRakRelayLn       *raknet.Listener // direct 模式本机 RakNet 中继监听
 	guestStopCh           chan struct{}
 	guestMu               sync.Mutex
 	guestRunning          bool
@@ -961,11 +962,15 @@ func (s *PaperConnectService) pcCleanupGuestGameResourcesLocked() {
 	if s.guestNnLn != nil {
 		s.guestNnLn.Close()
 	}
+	if s.guestRakRelayLn != nil {
+		s.guestRakRelayLn.Close()
+	}
 	if s.guestDisc != nil {
 		s.guestDisc.Close()
 	}
 	s.guestRakConn = nil
 	s.guestNnLn = nil
+	s.guestRakRelayLn = nil
 	s.guestDisc = nil
 	s.guestCancelFunc = nil
 	s.guestRakNetFakeStop = nil
@@ -1171,7 +1176,32 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 	serverName := s.guestMotd
 	readyCh := make(chan error, 1)
 	fakeStop := make(chan struct{})
-	go broadcastRakNetFakeServer(context.Background(), fakeStop, serverName, rakLocalPort, readyCh)
+
+	// direct 模式(TUN)没有端口转发：本地起一个 RakNet 监听，接受本机
+	// MC 客户端连接后经隧道中继到 host 虚拟 IP 的游戏端口。
+	motdQueryAddr := fmt.Sprintf("127.0.0.1:%d", rakLocalPort)
+	if manager.DialMode() == easytier.DialModeDirect {
+		relayLn, err := (raknet.ListenConfig{
+			MaxMTU:   rakNetMTU,
+			ErrorLog: slog.Default(),
+		}).Listen("127.0.0.1:0")
+		if err != nil {
+			slog.Error("RakNet relay listen failed", "err", err)
+			s.pcGuestSetupError(manager, protocol)
+			return
+		}
+		relayPort := uint16(relayLn.Addr().(*net.UDPAddr).Port)
+		if !pcAttachGuest(s, manager, &s.guestRakRelayLn, relayLn) {
+			relayLn.Close()
+			return
+		}
+		go s.pcRakNetRelayLoop(relayLn, manager, hostIP, gamePort)
+		// MOTD 从 host 直查（direct 模式直连可达），广播端口指向本机中继。
+		motdQueryAddr = fmt.Sprintf("%s:%d", hostIP, gamePort)
+		rakLocalPort = relayPort
+	}
+
+	go broadcastRakNetFakeServer(context.Background(), fakeStop, serverName, rakLocalPort, motdQueryAddr, readyCh)
 	if err := <-readyCh; err != nil {
 		slog.Error("RakNet fake server failed to start", "err", err, "proxyPort", rakLocalPort)
 		close(fakeStop)
@@ -1182,8 +1212,108 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 		close(fakeStop)
 		return
 	}
-	slog.Info("RakNet fake server ready", "proxyPort", rakLocalPort, "serverName", serverName)
+	slog.Info("RakNet fake server ready", "proxyPort", rakLocalPort, "serverName", serverName, "dialMode", manager.DialMode())
 	s.pcGuestConnectionReady(manager, protocol)
+}
+
+// pcRakNetRelayLoop accepts local Minecraft clients on the relay listener and
+// forwards their RakNet packets to the host through the EasyTier virtual
+// network. Used only in direct mode (Android TUN), where no local port
+// forward exists.
+func (s *PaperConnectService) pcRakNetRelayLoop(ln *raknet.Listener, manager *easytier.EasyTierManager, hostIP string, gamePort uint16) {
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			if s.pcGuestActive(manager) {
+				slog.Error("RakNet relay accept failed", "err", err)
+				s.pcGuestSetupError(manager, ProtocolRakNet)
+			}
+			return
+		}
+		localConn := conn.(*raknet.Conn)
+		slog.Info("local MC client connected via RakNet relay", "remote", localConn.RemoteAddr())
+
+		remoteAddr := fmt.Sprintf("%s:%d", hostIP, gamePort)
+		dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		remoteConn, err := (raknet.Dialer{
+			MaxMTU:   rakNetMTU,
+			ErrorLog: slog.Default(),
+		}).DialContext(dialCtx, remoteAddr)
+		dialCancel()
+		if err != nil {
+			slog.Error("RakNet relay dial to host failed", "err", err, "addr", remoteAddr)
+			_ = localConn.Close()
+			// 隧道暂时不可达，保留监听等待重试；玩家重进即可再连。
+			continue
+		}
+
+		proxyCtx, proxyCancel := context.WithCancel(context.Background())
+		if !pcAttachGuest(s, manager, &s.guestCancelFunc, proxyCancel) {
+			proxyCancel()
+			_ = localConn.Close()
+			_ = remoteConn.Close()
+			return
+		}
+		relayRakNetPackets(proxyCtx, slog.Default(), localConn, remoteConn)
+	}
+}
+
+// relayRakNetPackets forwards application-layer packets between two RakNet
+// connections until either side closes or the context is cancelled. Both
+// directions are forwarded without transformation; the tunnel protocol is
+// only needed on the host link of the NetherNet path, not here.
+func relayRakNetPackets(parentCtx context.Context, log *slog.Logger, local, remote *raknet.Conn) {
+	ctx, cancel := context.WithCancel(parentCtx)
+	defer cancel()
+	go func() {
+		<-ctx.Done()
+		_ = local.Close()
+		_ = remote.Close()
+	}()
+
+	var l2r, r2l atomic.Int64
+
+	go func() {
+		defer cancel()
+		for {
+			pk, err := local.ReadPacket()
+			if err != nil {
+				if !isClosedErr(err) && ctx.Err() == nil {
+					log.Error("local raknet read error", "err", err, "forwarded", l2r.Load())
+				}
+				return
+			}
+			l2r.Add(1)
+			if _, err := remote.Write(pk); err != nil {
+				if !isClosedErr(err) && ctx.Err() == nil {
+					log.Error("remote raknet write error", "err", err, "forwarded", l2r.Load())
+				}
+				return
+			}
+		}
+	}()
+
+	go func() {
+		defer cancel()
+		for {
+			pk, err := remote.ReadPacket()
+			if err != nil {
+				if !isClosedErr(err) && ctx.Err() == nil {
+					log.Error("remote raknet read error", "err", err, "forwarded", r2l.Load())
+				}
+				return
+			}
+			r2l.Add(1)
+			if _, err := local.Write(pk); err != nil {
+				if !isClosedErr(err) && ctx.Err() == nil {
+					log.Error("local raknet write error", "err", err, "forwarded", r2l.Load())
+				}
+				return
+			}
+		}
+	}()
+
+	<-ctx.Done()
 }
 
 func isAddressInUse(err error) bool {

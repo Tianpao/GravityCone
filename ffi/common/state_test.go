@@ -440,14 +440,111 @@ func TestBaseDir(t *testing.T) {
 	}
 }
 
-// --- transitionTo returns capture ---
+// --- beginTransition atomicity ---
 
-func TestTransitionToCapture(t *testing.T) {
+func TestBeginTransitionFromIdle(t *testing.T) {
 	resetState()
 
-	capture := transitionTo(StateHostScanning, nil)
-	if capture.index != globalState.index {
-		t.Error("capture.index should match globalState.index")
+	ctx := &hostContext{protocol: ProtocolScaffolding}
+	if !beginTransition(StateHostScanning, ctx) {
+		t.Error("beginTransition should succeed from Idle")
+	}
+	if !isInState(StateHostScanning) {
+		t.Error("should be in HostScanning after beginTransition")
+	}
+}
+
+func TestBeginTransitionRejectedWhenActive(t *testing.T) {
+	resetState()
+
+	ctx := &hostContext{protocol: ProtocolScaffolding}
+	beginTransition(StateHostScanning, ctx)
+
+	// A second beginTransition while a room is active must fail atomically.
+	ctx2 := &hostContext{protocol: ProtocolPaperConnect}
+	if beginTransition(StateHostScanning, ctx2) {
+		t.Error("beginTransition should fail while a room is active")
+	}
+	if !isInState(StateHostScanning) {
+		t.Error("state should be untouched by rejected beginTransition")
+	}
+	if globalState.extra != ctx {
+		t.Error("extra should remain owned by the first session")
+	}
+}
+
+func TestBeginTransitionRejectedFromError(t *testing.T) {
+	resetState()
+
+	transitionToError("boom")
+	if beginTransition(StateHostScanning, &hostContext{}) {
+		t.Error("beginTransition should fail from Error state")
+	}
+}
+
+// --- transitionToIfOwner ownership checks ---
+
+func TestTransitionToIfOwnerStaleRejected(t *testing.T) {
+	resetState()
+
+	ctx := &hostContext{protocol: ProtocolScaffolding}
+	beginTransition(StateHostScanning, ctx)
+
+	// goBackToIdle revokes ownership; a late async transition must not
+	// resurrect the cancelled room's state.
+	goBackToIdle()
+
+	if transitionToIfOwner(ctx, StateHostReady, ctx) {
+		t.Error("stale transition after goBackToIdle should be rejected")
+	}
+	if !isInState(StateIdle) {
+		t.Error("state must remain Idle after stale transition was rejected")
+	}
+}
+
+func TestTransitionToIfOwnerSucceedsWhileOwner(t *testing.T) {
+	resetState()
+
+	ctx := &hostContext{protocol: ProtocolScaffolding}
+	beginTransition(StateHostScanning, ctx)
+
+	if !transitionToIfOwner(ctx, StateHostStarting, ctx) {
+		t.Error("owner transition should succeed")
+	}
+	if !isInState(StateHostStarting) {
+		t.Error("should be in HostStarting")
+	}
+}
+
+func TestTransitionToErrorIfOwnerStaleRejected(t *testing.T) {
+	resetState()
+
+	ctx := &guestContext{protocol: ProtocolScaffolding}
+	beginTransition(StateGuestConnecting, ctx)
+	goBackToIdle()
+
+	if transitionToErrorIfOwner(ctx, "late failure") {
+		t.Error("stale error transition should be rejected")
+	}
+	if isInState(StateError) {
+		t.Error("state must not become Error from a stale goroutine")
+	}
+}
+
+func TestUpdateExtraStaleRejected(t *testing.T) {
+	resetState()
+
+	ctx := &guestContext{protocol: ProtocolScaffolding}
+	beginTransition(StateGuestConnecting, ctx)
+	goBackToIdle()
+
+	before := globalState.index
+	updateExtra(ctx)
+	if globalState.index != before {
+		t.Error("stale updateExtra should not touch the state")
+	}
+	if globalState.extra != nil {
+		t.Error("extra should stay nil after stale updateExtra")
 	}
 }
 
