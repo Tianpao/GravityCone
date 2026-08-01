@@ -3,7 +3,6 @@ package paperconnect
 import (
 	"context"
 	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"math/rand"
@@ -169,46 +168,6 @@ func getBroadcastAddrs(port int) ([]*net.UDPAddr, error) {
 		}
 	}
 	return addrs, nil
-}
-
-// getLocalAddrs returns all local IPv4 unicast addresses including 127.0.0.1.
-// On Windows, broadcasts to 255.255.255.255 don't loopback, so local unicast pings
-// are needed to discover servers on the same machine.
-func getLocalAddrs(port int) []*net.UDPAddr {
-	interfaces, err := anet.Interfaces()
-	if err != nil {
-		return nil
-	}
-	var addrs []*net.UDPAddr
-	for _, iface := range interfaces {
-		if !isPhysicalNIC(iface) {
-			continue
-		}
-		ifaceAddrs, err := anet.InterfaceAddrsByInterface(&iface)
-		if err != nil {
-			continue
-		}
-		for _, a := range ifaceAddrs {
-			ipNet, ok := a.(*net.IPNet)
-			if !ok {
-				continue
-			}
-			ip4 := ipNet.IP.To4()
-			if ip4 == nil || isEasyTierIP(ip4) {
-				continue
-			}
-			udpAddr, _ := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", ip4.String(), port))
-			if udpAddr != nil {
-				addrs = append(addrs, udpAddr)
-			}
-		}
-	}
-	// Always include 127.0.0.1 for reliable local loopback — Windows may not
-	// loopback unicast packets sent to the physical NIC IP.
-	if udpAddr, _ := net.ResolveUDPAddr("udp4", fmt.Sprintf("127.0.0.1:%d", port)); udpAddr != nil {
-		addrs = append(addrs, udpAddr)
-	}
-	return addrs
 }
 
 func buildUnconnectedPing() []byte {
@@ -517,11 +476,7 @@ func detectNetherNetWithID(ctx context.Context) (uint64, error) {
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		for id, data := range l.Responses() {
-			// 诊断：打印 MC 响应的原始字节，确认其 ServerData 版本/格式
-			//（v4/v5 为 df-mc 逆向的 1.21 时代格式，新版 MC 可能已变更）。
-			slog.Info("detectNetherNet: MC response captured",
-				"network_id", id, "len", len(data), "hex", hex.EncodeToString(data))
+		for id := range l.Responses() {
 			return id, nil
 		}
 		select {

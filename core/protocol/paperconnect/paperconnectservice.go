@@ -660,9 +660,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		return nil, fmt.Errorf("加入已取消")
 	}
 
-	// Phase 2 starts a static local proxy after discovery. The FFI library has
-	// no runtime port-forward RPC, and the advertised target ports are only
-	// available from the discovered hostname.
+	// Phase 2: proxy 模式重启 EasyTier 并携带静态端口转发（FFI 无运行时转发 RPC）。
 	dialMode := manager.DialMode()
 	tcpLocalLn, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -782,11 +780,6 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	s.guestProtocol = protocol
 	s.guestGamePort = gamePort
 	s.guestMotd = motd
-	if s.guestMotd == "" {
-		// ServerName 为空时 Minecraft 的局域网卡片可能无法正常显示，
-		// 兜底用玩家名（桌面/CLI/FFI 调用方可能不传 motd）。
-		s.guestMotd = playerName
-	}
 	s.pcResetGuestPortBusyLocked()
 	s.guestMu.Unlock()
 
@@ -1044,12 +1037,11 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 	gamePort := s.guestGamePort
 	s.guestMu.Unlock()
 
-	// Phase-two proxy forwards are installed before this function starts.
+	// proxy 模式的转发已在 Phase 2 装好。
 	rakDialAddr := pcRakDialAddr(manager.DialMode(), hostIP, gamePort, rakLocalPort)
 
 	if protocol == ProtocolNetherNet {
-		// Only the local discovery/broadcast phase is gated on Minecraft
-		// releasing UDP 7551; the tunnel is already available above.
+		// 仅本地 discovery 阶段受 MC 占用 7551 限制；隧道已就绪。
 
 		dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		rkConn, err := (raknet.Dialer{
@@ -1094,12 +1086,9 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 		s.pcClearGuestPortBusy(manager)
 
 		disc.ServerData(&discovery.ServerData{
-			ServerName: s.guestMotd,
-			LevelName:  "Join",
-			GameType:   discovery.GameTypeSurvival,
-			// PlayerCount 必须 >= 1：Minecraft 客户端对玩家数 <= 0 的世界
-			// 直接不显示（见 discovery.ServerData 字段注释），fake server
-			// 暂无玩家接入时也报 1，否则房间永远不会出现在局域网列表。
+			ServerName:            s.guestMotd,
+			LevelName:             "Join",
+			GameType:              discovery.GameTypeSurvival,
 			PlayerCount:           1,
 			MaxPlayerCount:        20,
 			AcceptsOnlineAuth:     true,
@@ -1124,9 +1113,7 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 		}
 
 		slog.Info("NetherNet listening for local client", "network_id", disc.NetworkID())
-		go s.pcBroadcastSelfTest()
 		go s.pcAdvertiseLoop(disc)
-		// Discovery diagnostics are emitted by the active listener; do not bind a competing UDP socket here.
 		s.pcGuestConnectionReady(manager, protocol)
 
 		for {
@@ -1325,109 +1312,4 @@ func (s *PaperConnectService) resolvePeers() []string {
 
 func (s *PaperConnectService) AddPeers(addrs []string) {
 	s.peerConfig.Add(addrs)
-}
-
-// pcAdvertiseLoop periodically unicasts unsolicited NetherNet discovery
-// responses to all local addresses (loopback, WiFi/cellular IPs). On Android
-// (and Windows, where broadcasts don't loop back), the local Minecraft
-// client's 255.255.255.255 discovery Request never reaches the fake server,
-// so the room never appears in the LAN list. Advertising the response
-// directly — the same technique as Java Edition's multicast MOTD
-// announcements (Terracotta) — makes the room show up regardless. The
-// response is sent from the listener's socket (source port 7551), so the
-// client can reply to it and connect.
-func (s *PaperConnectService) pcAdvertiseLoop(disc *discovery.Listener) {
-	stopCh := s.guestStopCh
-	ticker := time.NewTicker(1500 * time.Millisecond)
-	defer ticker.Stop()
-
-	addrs := []*net.UDPAddr{{
-		IP:   net.IPv4(127, 0, 0, 1),
-		Port: 7551,
-	}}
-	addrs = append(addrs, getLocalAddrs(7551)...)
-
-	for {
-		select {
-		case <-stopCh:
-			return
-		case <-disc.Context().Done():
-			return
-		case <-ticker.C:
-			for _, a := range addrs {
-				if err := disc.Advertise(a); err != nil {
-					slog.Warn("discovery advertisement failed", "to", a.String(), "err", err)
-				} else {
-					slog.Debug("discovery advertisement sent", "to", a.String())
-				}
-			}
-		}
-	}
-}
-
-// pcBroadcastSelfTest periodically sends NetherNet discovery request packets
-// to the local broadcast address, loopback and the local WiFi IP. The
-// discovery socket's "discovery packet received" log then shows which of
-// these actually reach it — isolating Android broadcast-reception problems
-// (MulticastLock, VPN routing, socket/network binding) from protocol issues.
-//
-// Two sockets are used so the logs can tell broadcast loopback apart from
-// unicast local delivery: requests echoing from the broadcast socket's port
-// arrived via 255.255.255.255 (AP loopback), while requests echoing from the
-// unicast socket's port arrived via direct local delivery (127.0.0.1 / local
-// IP unicast). On Android with the VPN active, the unicast socket also
-// reveals whether the packet took the TUN path (source = EasyTier virtual IP).
-func (s *PaperConnectService) pcBroadcastSelfTest() {
-	// Broadcast socket: sends only to 255.255.255.255.
-	bcConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
-	if err != nil {
-		slog.Warn("broadcast self-test: listen failed", "err", err)
-		return
-	}
-	defer bcConn.Close()
-	if rawConn, err := bcConn.SyscallConn(); err == nil {
-		_ = rawConn.Control(func(fd uintptr) {
-			_ = utils.SetBroadcast(fd)
-		})
-	}
-
-	// Unicast socket: sends to loopback and all local unicast addresses.
-	uniConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
-	if err != nil {
-		slog.Warn("broadcast self-test: unicast listen failed", "err", err)
-		return
-	}
-	defer uniConn.Close()
-
-	payload := discovery.Marshal(&discovery.RequestPacket{}, randomID())
-
-	bcAddr, err := net.ResolveUDPAddr("udp4", "255.255.255.255:7551")
-	if err != nil {
-		return
-	}
-	uniAddrs := []*net.UDPAddr{{
-		IP:   net.IPv4(127, 0, 0, 1),
-		Port: 7551,
-	}}
-	uniAddrs = append(uniAddrs, getLocalAddrs(7551)...)
-
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := bcConn.WriteToUDP(payload, bcAddr); err != nil {
-			slog.Warn("broadcast self-test: send failed", "to", bcAddr.String(), "err", err)
-		} else {
-			slog.Debug("broadcast self-test sent", "kind", "broadcast", "to", bcAddr.String())
-		}
-		for _, a := range uniAddrs {
-			if _, err := uniConn.WriteToUDP(payload, a); err != nil {
-				slog.Warn("broadcast self-test: send failed", "to", a.String(), "err", err)
-			} else {
-				slog.Debug("broadcast self-test sent", "kind", "unicast", "to", a.String())
-			}
-		}
-		time.Sleep(2 * time.Second)
-	}
-	slog.Debug("broadcast self-test finished",
-		"bcPort", bcConn.LocalAddr().(*net.UDPAddr).Port,
-		"uniPort", uniConn.LocalAddr().(*net.UDPAddr).Port)
 }

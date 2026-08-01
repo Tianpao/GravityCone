@@ -71,10 +71,7 @@ type Dialer struct {
 	// as relayed candidates from TURN servers only.
 	ICEGatherPolicy webrtc.ICEGatherPolicy
 
-	// DisableCertificateFingerprintVerification permits a legacy local
-	// implementation whose SDP fingerprint does not match the certificate it
-	// presents during DTLS. It must only be enabled for explicitly trusted
-	// local discovery paths.
+	// 允许 SDP 指纹与 DTLS 证书不匹配的旧式本地实现；仅限受信任的本地路径。
 	DisableCertificateFingerprintVerification bool
 
 	// DisableTrickleICE disables trickle ICE for connection negotiation.
@@ -207,9 +204,6 @@ func (d Dialer) DialContext(ctx context.Context, networkID string, signaling Sig
 			case SignalTypeAnswer:
 				s := &sdp.SessionDescription{}
 				if err := s.UnmarshalString(normalizeSDP(signal.Data)); err != nil {
-					d.Log.Error("failed to decode answer SDP",
-						slog.Int("len", len(signal.Data)),
-						slog.String("data", truncateLog(signal.Data, 300)))
 					d.signalError(signaling, networkID, ErrorCodeFailedToSetRemoteDescription)
 					return nil, fmt.Errorf("decode answer: %w", err)
 				}
@@ -431,12 +425,4 @@ func (d *dialerNotifier) NotifySignal(signal *Signal) bool {
 		d.Log.Warn("dropping signal because channel buffer is full", slog.Any("signal", signal))
 		return false
 	}
-}
-
-// truncateLog truncates s to at most max bytes for logging purposes.
-func truncateLog(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "...(truncated)"
 }

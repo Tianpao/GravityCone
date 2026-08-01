@@ -230,7 +230,6 @@ func (l *Listener) listen() {
 			_ = l.Close()
 			return
 		}
-		l.conf.Log.Debug("discovery packet received", "from", addr.String(), "len", n)
 		if err := l.handlePacket(b[:n], addr); err != nil {
 			l.conf.Log.Error("error handling packet", slog.Any("error", err), "from", addr)
 		}
@@ -290,17 +289,12 @@ func (l *Listener) handlePacket(data []byte, addr net.Addr) error {
 // It responds with both v4 (legacy) and v5 (1.21+) ResponsePackets for
 // compatibility with all Bedrock versions.
 func (l *Listener) handleRequest(addr net.Addr) error {
-	l.conf.Log.Debug("discovery request received", "from", addr.String())
 	return l.sendResponses(addr)
 }
 
-// Advertise sends unsolicited v4 + v5 ResponsePackets to addr. This is used
-// by servers on platforms where 255.255.255.255 broadcasts do not loop back
-// to the local host (e.g. Android): the local Minecraft client's discovery
-// Request never reaches the listener, so the response is advertised directly
-// to the client's own address instead (mirroring Java Edition's multicast
-// MOTD announcements). The packet is sent from the listener's socket, so the
-// source port matches the discovery port and the client can reply to it.
+// Advertise 主动向 addr 单播 v4+v5 ResponsePacket。广播不回环的平台
+// （Android/Windows）上，本机客户端的 Request 到不了 listener，需直接
+// 广告。从 listener 的 socket 发出，源端口与 discovery 端口一致。
 func (l *Listener) Advertise(addr net.Addr) error {
 	return l.sendResponses(addr)
 }
@@ -323,7 +317,6 @@ func (l *Listener) sendResponses(addr net.Addr) error {
 	if !sent {
 		return errors.New("application data not set yet")
 	}
-	l.conf.Log.Debug("discovery response sent", "to", addr.String())
 	return nil
 }
 
@@ -352,9 +345,6 @@ func (l *Listener) handleMessage(pk *MessagePacket, senderID uint64) error {
 		return fmt.Errorf("decode signal: %w", err)
 	}
 	signal.NetworkID = strconv.FormatUint(senderID, 10)
-	if l.conf.Log != nil {
-		l.conf.Log.Debug("discovery signal received", "type", signal.Type, "sender_id", senderID, "recipient_id", pk.RecipientID, "data_len", len(pk.Data))
-	}
 
 	l.notifiersMu.RLock()
 	notifiers := make([]nethernet.Notifier, 0, len(l.notifiers))
