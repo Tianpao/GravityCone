@@ -1,13 +1,11 @@
 import { defineStore } from 'pinia'
 import { Events } from '@wailsio/runtime'
 import { CreateRoom, StopRoom, GetRoomStatus, JoinRoom, LeaveRoom, GetConnectionStatus, CancelJoin } from '@/../bindings/gravitycone/core/protocol/scaffolding/scaffoldingservice'
-import { SetP2PDisabled } from '@/../bindings/gravitycone/core/easytier/settingsservice'
 import type { RoomStatus, ConnectionStatus } from '@/../bindings/gravitycone/core/protocol/scaffolding/models'
 
 type EventUnsubscriber = () => void
 
 const APP_VERSION = 'GravityCone v1.0.0'
-const P2P_DISABLED_KEY = 'gravitycone-p2p-disabled'
 
 export const useScaffoldingStore = defineStore('scaffolding', {
   state: () => ({
@@ -19,7 +17,6 @@ export const useScaffoldingStore = defineStore('scaffolding', {
     connectionStatus: null as ConnectionStatus | null,
     joining: false,
     guestError: '',
-    p2pDisabled: localStorage.getItem(P2P_DISABLED_KEY) === 'true',
     // Event listeners
     _hostUnsubscribers: [] as EventUnsubscriber[],
     _guestUnsubscribers: [] as EventUnsubscriber[],
@@ -32,28 +29,7 @@ export const useScaffoldingStore = defineStore('scaffolding', {
   },
 
   actions: {
-    // toggleP2PDisabled 切换"禁止P2P"并同步到后端（仅 GUI 生效，CLI 无此入口）。
-    async toggleP2PDisabled() {
-      this.p2pDisabled = !this.p2pDisabled
-      localStorage.setItem(P2P_DISABLED_KEY, String(this.p2pDisabled))
-      try {
-        await SetP2PDisabled(this.p2pDisabled)
-      } catch {
-        // 后端同步失败不影响联机流程
-      }
-    },
-
-    // applyP2PDisabled 把持久化的开关状态同步到后端（重启后恢复状态时调用）。
-    async applyP2PDisabled() {
-      try {
-        await SetP2PDisabled(this.p2pDisabled)
-      } catch {
-        // 后端同步失败不影响联机流程
-      }
-    },
-
     async createRoom(mcPort: number, playerName: string) {
-      await this.applyP2PDisabled()
       this.creating = true
       this.hostError = ''
       try {
@@ -139,7 +115,6 @@ export const useScaffoldingStore = defineStore('scaffolding', {
     },
 
     async joinRoom(roomCode: string, playerName: string) {
-      await this.applyP2PDisabled()
       this.joining = true
       this.guestError = ''
       try {

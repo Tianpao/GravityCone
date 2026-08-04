@@ -71,5 +71,25 @@ function handleAdd() {
     </div>
 
     <Separator />
+
+    <div class="flex flex-col gap-3">
+      <div class="text-sm font-medium">联机设置</div>
+
+      <Button
+        variant="outline"
+        class="w-full justify-between"
+        :class="settings.p2pDisabled && 'bg-destructive/10 border-destructive/40 text-destructive hover:bg-destructive/15 hover:text-destructive'"
+        @click="settings.toggleP2PDisabled()"
+      >
+        <span>禁止 P2P（强制走中继节点）</span>
+        <span>{{ settings.p2pDisabled ? '开' : '关' }}</span>
+      </Button>
+      <p v-if="settings.p2pDisabled" class="text-xs text-destructive/80">
+        开启后将禁止 P2P 直连，联机流量全部经过中继节点；房主需要能拉取到公共中继节点
+      </p>
+      <p v-else class="text-xs text-muted-foreground">
+        P2P 优先，NAT 打洞失败时自动走中继节点
+      </p>
+    </div>
   </div>
 </template>
