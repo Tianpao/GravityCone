@@ -55,6 +55,7 @@ type PaperConnectConnectionStatus struct {
 type PaperConnectService struct {
 	eventEmitter utils.EventEmitter
 	peerConfig   easytier.PeerConfig
+	uptimeClient *easytier.UptimeClient
 
 	// HOST state
 	hostManager    *easytier.EasyTierManager
@@ -108,6 +109,7 @@ func NewPaperConnectService(emitter utils.EventEmitter) *PaperConnectService {
 	}
 	return &PaperConnectService{
 		eventEmitter: emitter,
+		uptimeClient: easytier.NewUptimeClient(),
 	}
 }
 
@@ -236,7 +238,7 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 		IsHost:             true,
 		TCPPort:            tcpPort,
 		MCPort:             gamePort,
-		Peers:              s.resolvePeers(),
+		Peers:              s.resolvePeersWithUptime(),
 		UpstreamCompatible: true,
 	})
 	if err != nil {
@@ -628,7 +630,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		NetworkName:        rc.EasyTierNetworkName(),
 		NetworkSecret:      rc.EasyTierNetworkSecret(),
 		IsHost:             false,
-		Peers:              s.resolvePeers(),
+		Peers:              s.resolvePeersWithUptime(),
 		UpstreamCompatible: true,
 	})
 	if err != nil {
@@ -698,7 +700,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 			NetworkSecret:      rc.EasyTierNetworkSecret(),
 			IsHost:             false,
 			PortForwards:       pcGuestPortForwards(dialMode, protocol, hostIP, serverPort, gamePort, tcpLocalPort, rakLocalPort),
-			Peers:              s.resolvePeers(),
+			Peers:              s.resolvePeersWithUptime(),
 			UpstreamCompatible: true,
 		})
 		if err != nil {
@@ -1444,6 +1446,22 @@ func ConfigureCLIPeers(s *PaperConnectService, peers []string) {
 
 func (s *PaperConnectService) resolvePeers() []string {
 	return s.peerConfig.Resolve(paperConnectBuiltinPeers)
+}
+
+// resolvePeersWithUptime 在 resolvePeers 基础上追加 Uptime 分发服务拉取的
+// relay/P2P 节点（中继兜底与发现节点）；拉取失败时降级为内置节点，不阻塞联机。
+func (s *PaperConnectService) resolvePeersWithUptime() []string {
+	peers := s.resolvePeers()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	extra, err := s.uptimeClient.FetchPeers(ctx)
+	if err != nil {
+		slog.Warn("拉取 Uptime 节点失败，使用内置节点", "err", err)
+		return peers
+	}
+	slog.Info("已从 Uptime 拉取节点", "count", len(extra), "peers", extra)
+	return append(peers, extra...)
 }
 
 func (s *PaperConnectService) AddPeers(addrs []string) {
