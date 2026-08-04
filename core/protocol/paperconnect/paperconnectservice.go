@@ -181,8 +181,11 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	}
 	// If both found, prefer NetherNet (newer version)
 
-	// Generate room code
-	rc, err := GeneratePaperConnectRoomCode()
+	// 拉取 uptime 节点并选定中继 nodeID（须在生成房间码之前，房客据此定向取同一个中继）
+	hostPeers, nodeID := s.hostPeersAndNodeID()
+
+	// Generate room code (embeds the relay node ID)
+	rc, err := GeneratePaperConnectRoomCodeWithNodeID(nodeID)
 	if err != nil {
 		setupFailed = true
 		return nil, fmt.Errorf("生成房间代码失败: %w", err)
@@ -239,7 +242,7 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 		IsHost:             true,
 		TCPPort:            tcpPort,
 		MCPort:             gamePort,
-		Peers:              s.resolvePeersWithUptime(),
+		Peers:              hostPeers,
 		UpstreamCompatible: true,
 		DisableP2P:         s.p2pDisabled(),
 	})
@@ -632,7 +635,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		NetworkName:        rc.EasyTierNetworkName(),
 		NetworkSecret:      rc.EasyTierNetworkSecret(),
 		IsHost:             false,
-		Peers:              s.resolvePeersWithUptime(),
+		Peers:              s.guestPeers(rc.NodeID()),
 		UpstreamCompatible: true,
 		DisableP2P:         s.p2pDisabled(),
 	})
@@ -703,7 +706,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 			NetworkSecret:      rc.EasyTierNetworkSecret(),
 			IsHost:             false,
 			PortForwards:       pcGuestPortForwards(dialMode, protocol, hostIP, serverPort, gamePort, tcpLocalPort, rakLocalPort),
-			Peers:              s.resolvePeersWithUptime(),
+			Peers:              s.guestPeers(rc.NodeID()),
 			UpstreamCompatible: true,
 			DisableP2P:         s.p2pDisabled(),
 		})
@@ -1462,20 +1465,87 @@ func (s *PaperConnectService) p2pDisabled() bool {
 	return false
 }
 
-// resolvePeersWithUptime 在 resolvePeers 基础上追加 Uptime 分发服务拉取的
-// relay/P2P 节点（中继兜底与发现节点）；拉取失败时降级为内置节点，不阻塞联机。
-func (s *PaperConnectService) resolvePeersWithUptime() []string {
+// hostPeersAndNodeID 拉取 uptime 节点作为房主的 peers，并把选定的中继节点 ID
+// 返回用于编码进房间码（房客据此定向获取同一个中继）。拉取失败时房间标记为
+// "不使用公共节点"，仅用内置节点。
+func (s *PaperConnectService) hostPeersAndNodeID() ([]string, int) {
 	peers := s.resolvePeers()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	extra, err := s.uptimeClient.FetchPeers(ctx)
+	nodes, err := s.uptimeClient.FetchNodes(ctx)
 	if err != nil {
-		slog.Warn("拉取 Uptime 节点失败，使用内置节点", "err", err)
-		return peers
+		slog.Warn("拉取 Uptime 节点失败，房间标记为不使用公共节点", "err", err)
+		return peers, NodeIDReservedNoPublic
 	}
-	slog.Info("已从 Uptime 拉取节点", "count", len(extra), "peers", extra)
-	return append(peers, extra...)
+
+	relayID := NodeIDReservedNoPublic
+	urls := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		urls = append(urls, n.URL)
+		if n.IsRelay && relayID == NodeIDReservedNoPublic {
+			relayID = n.ID
+		}
+	}
+	slog.Info("已从 Uptime 拉取节点", "count", len(urls), "relayNodeID", relayID)
+	return append(peers, urls...), relayID
+}
+
+// guestPeers 按房间码内嵌的 nodeID 组装房客的 peers：
+//   - 保留 ID 00（自用中继）：不追加 uptime 公共中继，仅保留列表 P2P 发现节点
+//   - 保留 ID PP（不使用公共节点）：纯 P2P，仅内置节点
+//   - 其他：向 /api/node/connect/:nodeID 定向获取房主的中继；失败（旧房间码
+//     随机值/节点失效）则降级为完整列表节点
+func (s *PaperConnectService) guestPeers(nodeID int) []string {
+	peers := s.resolvePeers()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	switch {
+	case nodeID == NodeIDReservedNoPublic:
+		return peers
+
+	case nodeID == NodeIDReservedSelfRelay:
+		return append(peers, s.uptimeP2PURLs(ctx)...)
+
+	default:
+		url, err := s.uptimeClient.FetchNodeByID(ctx, nodeID)
+		if err != nil {
+			slog.Warn("按房间码获取中继节点失败，降级为列表节点", "nodeID", nodeID, "err", err)
+			return append(peers, s.uptimeAllURLs(ctx)...)
+		}
+		slog.Info("已按房间码定向获取中继节点", "nodeID", nodeID, "url", url)
+		return append(append(peers, url), s.uptimeP2PURLs(ctx)...)
+	}
+}
+
+func (s *PaperConnectService) uptimeP2PURLs(ctx context.Context) []string {
+	nodes, err := s.uptimeClient.FetchNodes(ctx)
+	if err != nil {
+		slog.Warn("拉取 Uptime 节点失败", "err", err)
+		return nil
+	}
+	urls := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		if !n.IsRelay {
+			urls = append(urls, n.URL)
+		}
+	}
+	return urls
+}
+
+func (s *PaperConnectService) uptimeAllURLs(ctx context.Context) []string {
+	nodes, err := s.uptimeClient.FetchNodes(ctx)
+	if err != nil {
+		slog.Warn("拉取 Uptime 节点失败", "err", err)
+		return nil
+	}
+	urls := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		urls = append(urls, n.URL)
+	}
+	return urls
 }
 
 func (s *PaperConnectService) AddPeers(addrs []string) {

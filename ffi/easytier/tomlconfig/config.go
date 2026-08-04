@@ -22,6 +22,7 @@ type StartOptions struct {
 	PortForwards       []string // "tcp://local_addr/remote_addr"
 	Peers              []string // Public peer addresses
 	UpstreamCompatible bool     // PaperConnect-style (no-tun, no p2p restrictions)
+	DisableP2P         bool     // Force relay-only mode (PaperConnect profile only)
 	MachineID          string   // Optional machine identifier
 }
 
@@ -80,7 +81,7 @@ func BuildTOMLConfig(opts StartOptions) string {
 	if opts.UpstreamCompatible {
 		// PaperConnect mode: no TUN, peer-to-peer allowed
 		b.WriteString("no_tun = true\n")
-		b.WriteString(fmt.Sprintf("disable_p2p = false\n"))
+		b.WriteString(fmt.Sprintf("disable_p2p = %t\n", opts.DisableP2P))
 	} else {
 		// ScaffoldingMC mode: private P2P network
 		b.WriteString("no_tun = true\n")

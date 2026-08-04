@@ -48,67 +48,81 @@ func NewUptimeClient() *UptimeClient {
 	}
 }
 
-// FetchPeers 拉取节点列表并换取连接地址，返回可直接作为 -p 参数的 URL 列表。
+// UptimeNodeResult 是拉取到并换取地址成功的节点。
+type UptimeNodeResult struct {
+	ID      int    // uptime 节点 ID（房主可编码进房间码）
+	Name    string // 节点名称
+	IsRelay bool   // 中继节点；false 为 P2P 发现节点
+	URL     string // EasyTier -p 地址
+}
+
+// FetchNodes 拉取节点列表并换取连接地址，返回结构化结果。
 // 单个节点换取失败会被跳过；所有节点都失败时返回错误。
-func (c *UptimeClient) FetchPeers(ctx context.Context) ([]string, error) {
+func (c *UptimeClient) FetchNodes(ctx context.Context) ([]UptimeNodeResult, error) {
 	if c.apiKey == "" {
 		return nil, fmt.Errorf("未配置环境变量 %s", UptimeAPIKeyEnv)
 	}
 
-	nodes, err := c.fetchNodeList(ctx)
+	relay, p2p, err := c.fetchNodeList(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if len(nodes) == 0 {
+	all := make([]uptimeNode, 0, len(relay)+len(p2p))
+	all = append(all, relay...)
+	all = append(all, p2p...)
+	if len(all) == 0 {
 		return nil, fmt.Errorf("Uptime 服务器未返回可用节点")
 	}
 
 	// 并行换取各节点连接地址；getKey 有效期仅数秒，须立即使用。
-	peers := make([]string, 0, len(nodes))
-	var mu sync.Mutex
+	results := make([]UptimeNodeResult, len(all))
 	var wg sync.WaitGroup
-	for _, n := range nodes {
+	for i, n := range all {
 		wg.Add(1)
-		go func(node uptimeNode) {
+		go func(idx int, node uptimeNode, isRelay bool) {
 			defer wg.Done()
 			url, err := c.fetchNodeURL(ctx, node.GetKey)
 			if err != nil {
 				slog.Warn("换取 Uptime 节点地址失败，跳过", "name", node.Name, "id", node.ID, "err", err)
 				return
 			}
-			mu.Lock()
-			peers = append(peers, url)
-			mu.Unlock()
-		}(n)
+			results[idx] = UptimeNodeResult{ID: node.ID, Name: node.Name, IsRelay: isRelay, URL: url}
+		}(i, n, i < len(relay))
 	}
 	wg.Wait()
 
-	if len(peers) == 0 {
+	filtered := results[:0]
+	for _, r := range results {
+		if r.URL != "" {
+			filtered = append(filtered, r)
+		}
+	}
+	if len(filtered) == 0 {
 		return nil, fmt.Errorf("所有 Uptime 节点地址换取失败")
 	}
-	return peers, nil
+	return filtered, nil
 }
 
 // fetchNodeList 请求 GET /api/node 获取 relay 与 P2P 节点列表。
-func (c *UptimeClient) fetchNodeList(ctx context.Context) ([]uptimeNode, error) {
+func (c *UptimeClient) fetchNodeList(ctx context.Context) (relay, p2p []uptimeNode, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		c.baseURL+"/api/node?relay=true&p2pnode=3", nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	c.setAuthHeaders(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("请求 Uptime 节点列表失败: %w", err)
+		return nil, nil, fmt.Errorf("请求 Uptime 节点列表失败: %w", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Uptime 节点列表返回 %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, nil, fmt.Errorf("Uptime 节点列表返回 %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var parsed struct {
@@ -120,9 +134,55 @@ func (c *UptimeClient) fetchNodeList(ctx context.Context) ([]uptimeNode, error) 
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("解析 Uptime 节点列表失败: %w", err)
+		return nil, nil, fmt.Errorf("解析 Uptime 节点列表失败: %w", err)
 	}
-	return append(parsed.Data.Relay, parsed.Data.P2P...), nil
+	return parsed.Data.Relay, parsed.Data.P2P, nil
+}
+
+// FetchNodeByID 按节点 ID 定向获取节点连接地址（GET /api/node/connect/:nodeId），
+// 用于房客跟随房主编码在房间码里的中继节点。节点不存在或不可用时返回错误，
+// 调用方据此降级。
+func (c *UptimeClient) FetchNodeByID(ctx context.Context, nodeID int) (string, error) {
+	if c.apiKey == "" {
+		return "", fmt.Errorf("未配置环境变量 %s", UptimeAPIKeyEnv)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("%s/api/node/connect/%d", c.baseURL, nodeID), nil)
+	if err != nil {
+		return "", err
+	}
+	c.setAuthHeaders(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("请求 Uptime 节点(%d)失败: %w", nodeID, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("Uptime 节点(%d)返回 %d: %s", nodeID, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var parsed struct {
+		Status  int  `json:"status"`
+		Success bool `json:"success"`
+		Data    struct {
+			GetKey string `json:"getKey"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", fmt.Errorf("解析 Uptime 节点(%d)响应失败: %w", nodeID, err)
+	}
+	if parsed.Data.GetKey == "" {
+		return "", fmt.Errorf("Uptime 节点(%d)未返回 getKey", nodeID)
+	}
+
+	// getKey 有效期仅数秒，立即换取连接地址。
+	return c.fetchNodeURL(ctx, parsed.Data.GetKey)
 }
 
 // fetchNodeURL 请求 GET /api/node/get/:getKey 换取节点连接地址。

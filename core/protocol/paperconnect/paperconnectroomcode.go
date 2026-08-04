@@ -14,10 +14,22 @@ func charToValue(c byte) (int, bool) {
 const pcRoomCodeHeader = "P/"
 const pcRoomName = "paper-connect"
 
+// uptime 节点 ID 的保留编码值（nodeID 编码占 N 部分最后一位 + S 部分最后一位）：
+//   - 00: 值 0，房主使用自用中继节点（不追加 uptime 公共中继）
+//   - PP: 值 23+34*23=805，不使用公共节点（纯 P2P，不追加 uptime 节点）
+const (
+	NodeIDReservedSelfRelay = 0
+	NodeIDReservedNoPublic  = 23 + 34*23 // "PP"
+	NodeIDMax               = 33 + 34*33 // 1155
+)
+
 // PaperConnectRoomCode represents a Bedrock Edition room code.
 // Format: P/NNNN-NNNN-SSSS-SSSS
-// N-part: 8 random chars for the EasyTier network name.
-// S-part: 8 chars adjusted so the little-endian base-34 value is divisible by 7.
+// N-part: 8 random chars for the EasyTier network name; last char encodes the
+// low digit of the uptime node ID.
+// S-part: 8 chars adjusted so the little-endian base-34 value is divisible by 7;
+// last char encodes the high digit of the uptime node ID (checksum adjusts the
+// second-to-last char instead).
 type PaperConnectRoomCode struct {
 	NetworkPart string // 8 chars
 	SecretPart  string // 8 chars
@@ -94,6 +106,58 @@ func pcAdjustForDivisibilityBySeven(chars []byte) {
 	}
 }
 
+// pcAdjustForDivisibilityBySevenAt 调整指定位置使小端 base-34 值整除 7。
+// 位置 6 的权重 34^6 ≡ 1 (mod 7)，调整量直接等量改变余数。
+func pcAdjustForDivisibilityBySevenAt(chars []byte, pos int) {
+	rem := pcConvertToLong(chars) % 7
+	if rem == 0 {
+		return
+	}
+	v, _ := charToValue(chars[pos])
+	newV := v - int(rem)
+	if newV < 0 {
+		newV += 7
+	}
+	chars[pos] = utils.Charset[newV]
+}
+
+// GeneratePaperConnectRoomCodeWithNodeID 生成携带 uptime 节点 ID 的房间码。
+// nodeID 按小端 base-34 编码：N 部分最后一位为低位、S 部分最后一位为高位；
+// 校验微调移到 S 部分倒数第二位（最后一位被 nodeID 占用）。
+func GeneratePaperConnectRoomCodeWithNodeID(nodeID int) (*PaperConnectRoomCode, error) {
+	if nodeID < 0 || nodeID > NodeIDMax {
+		return nil, fmt.Errorf("nodeID 超出可编码范围: %d", nodeID)
+	}
+
+	// N 部分：位置 7 编码 nodeID 低位，其余随机
+	var nPart [8]byte
+	for i := 0; i < 7; i++ {
+		c, err := utils.RandomChar()
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate random char: %w", err)
+		}
+		nPart[i] = c
+	}
+	nPart[7] = utils.Charset[nodeID%34]
+
+	// S 部分：位置 7 编码 nodeID 高位，位置 6 用作校验微调，其余随机
+	var sPart [8]byte
+	for i := 0; i < 8; i++ {
+		c, err := utils.RandomChar()
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate random char: %w", err)
+		}
+		sPart[i] = c
+	}
+	sPart[7] = utils.Charset[(nodeID/34)%34]
+	pcAdjustForDivisibilityBySevenAt(sPart[:], 6)
+
+	return &PaperConnectRoomCode{
+		NetworkPart: string(nPart[:]),
+		SecretPart:  string(sPart[:]),
+	}, nil
+}
+
 func GeneratePaperConnectRoomCode() (*PaperConnectRoomCode, error) {
 	// Generate N-part (8 random chars, no checksum constraint)
 	var nPart [8]byte
@@ -167,4 +231,12 @@ func (r *PaperConnectRoomCode) EasyTierNetworkName() string {
 func (r *PaperConnectRoomCode) EasyTierNetworkSecret() string {
 	s := r.SecretPart
 	return fmt.Sprintf("%s-%s", s[:4], s[4:])
+}
+
+// NodeID 解码内嵌的 uptime 节点 ID（N 部分最后一位为低位、S 部分最后一位为高位，
+// 小端 base-34）。旧格式房间码未内嵌 nodeID，解析结果为随机值，调用方需验证有效性。
+func (r *PaperConnectRoomCode) NodeID() int {
+	v7, _ := charToValue(r.NetworkPart[7])
+	v15, _ := charToValue(r.SecretPart[7])
+	return v7 + 34*v15
 }
