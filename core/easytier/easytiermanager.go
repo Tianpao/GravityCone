@@ -172,7 +172,7 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 			"--compression", "zstd",
 			"--default-protocol", "tcp",
 			"--private-mode", "true",
-			"--p2p-only",
+			"--disable-p2p", strconv.FormatBool(opts.DisableP2P),
 		)
 	}
 

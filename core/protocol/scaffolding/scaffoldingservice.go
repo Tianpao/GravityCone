@@ -1,6 +1,7 @@
 package scaffolding
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -105,6 +106,7 @@ func NewScaffoldingService(emitter utils.EventEmitter) *ScaffoldingService {
 	}
 	return &ScaffoldingService{
 		eventEmitter: emitter,
+		uptimeClient: easytier.NewUptimeClient(),
 	}
 }
 
@@ -128,6 +130,8 @@ type ScaffoldingService struct {
 	eventEmitter   utils.EventEmitter
 	joinProgressCb func(string) // set by CLI mode for progress notifications
 	peerConfig     easytier.PeerConfig
+	uptimeClient   *easytier.UptimeClient
+	settingsSvc    *easytier.SettingsService
 
 	// HOST state
 	hostManager    *easytier.EasyTierManager
@@ -196,8 +200,11 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 		return nil, fmt.Errorf("端口 %d 上未检测到 Minecraft 服务器，请确认服务器已启动", mcPort)
 	}
 
-	// 1. Generate room code
-	rc, err := GenerateRoomCode()
+	// 1. 拉取 uptime 节点并选定发现节点 nodeID（须在生成房间码之前，房客据此定向取同一个节点）
+	hostPeers, nodeID := s.hostPeersAndNodeID()
+
+	// 1. Generate room code (embeds the discovery node ID)
+	rc, err := GenerateRoomCodeWithNodeID(nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("生成房间代码失败: %w", err)
 	}
@@ -230,7 +237,8 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 		IsHost:        true,
 		TCPPort:       tcpPort,
 		MCPort:        mcPort,
-		Peers:         s.resolvePeers(),
+		Peers:         hostPeers,
+		DisableP2P:    s.p2pDisabled(),
 	})
 	if err != nil {
 		listener.Close()
@@ -608,7 +616,8 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 		NetworkName:   rc.EasyTierNetworkName(),
 		NetworkSecret: rc.EasyTierNetworkSecret(),
 		IsHost:        false,
-		Peers:         s.resolvePeers(),
+		Peers:         s.guestPeers(rc.NodeID()),
+		DisableP2P:    s.p2pDisabled(),
 	}); err != nil {
 		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
 	}
@@ -1148,7 +1157,17 @@ func (s *ScaffoldingService) Cleanup() {
 
 // ConfigureSettingsPeers provides GUI custom peers for future EasyTier starts.
 func ConfigureSettingsPeers(s *ScaffoldingService, settingsSvc *easytier.SettingsService) {
+	s.settingsSvc = settingsSvc
 	s.peerConfig.SetSettingsService(settingsSvc)
+}
+
+// p2pDisabled 返回是否禁止 P2P 直连（强制走中继）。仅 GUI 设置（CLI 不注入
+// SettingsService，恒为 false）。
+func (s *ScaffoldingService) p2pDisabled() bool {
+	if s.settingsSvc != nil {
+		return s.settingsSvc.GetP2PDisabled()
+	}
+	return false
 }
 
 // ConfigureCLIPeers replaces the built-in peers for CLI starts.
@@ -1158,6 +1177,89 @@ func ConfigureCLIPeers(s *ScaffoldingService, peers []string) {
 
 func (s *ScaffoldingService) resolvePeers() []string {
 	return s.peerConfig.Resolve(scaffoldingBuiltinPeers)
+}
+
+// hostPeersAndNodeID 拉取 uptime 节点作为房主的 peers，并把选定的中继节点 ID
+// 返回用于编码进房间码（房客据此定向获取同一个中继；P2P 发现节点同时作为
+// 发现兜底）。拉取失败时房间标记为"不使用公共节点"，仅用内置节点。
+func (s *ScaffoldingService) hostPeersAndNodeID() ([]string, int) {
+	peers := s.resolvePeers()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	nodes, err := s.uptimeClient.FetchNodes(ctx)
+	if err != nil {
+		slog.Warn("拉取 Uptime 节点失败，房间标记为不使用公共节点", "err", err)
+		return peers, NodeIDReservedNoPublic
+	}
+
+	relayID := NodeIDReservedNoPublic
+	urls := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		urls = append(urls, n.URL)
+		if n.IsRelay && relayID == NodeIDReservedNoPublic {
+			relayID = n.ID
+		}
+	}
+	slog.Info("已从 Uptime 拉取节点", "count", len(urls), "relayNodeID", relayID)
+	return append(peers, urls...), relayID
+}
+
+// guestPeers 按房间码内嵌的 nodeID 组装房客的 peers：
+//   - 保留 ID 00（自用中继）：不追加 uptime 公共中继，仅保留列表 P2P 发现节点
+//   - 保留 ID PP（不使用公共节点）：纯 P2P，仅内置节点
+//   - 其他：向 /api/node/connect/:nodeID 定向获取房主的中继；失败（旧房间码
+//     随机值/节点失效）则降级为完整列表节点
+func (s *ScaffoldingService) guestPeers(nodeID int) []string {
+	peers := s.resolvePeers()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	switch {
+	case nodeID == NodeIDReservedNoPublic:
+		return peers
+
+	case nodeID == NodeIDReservedSelfRelay:
+		return append(peers, s.uptimeP2PURLs(ctx)...)
+
+	default:
+		url, err := s.uptimeClient.FetchNodeByID(ctx, nodeID)
+		if err != nil {
+			slog.Warn("按房间码获取中继节点失败，降级为列表节点", "nodeID", nodeID, "err", err)
+			return append(peers, s.uptimeAllURLs(ctx)...)
+		}
+		slog.Info("已按房间码定向获取中继节点", "nodeID", nodeID, "url", url)
+		return append(append(peers, url), s.uptimeP2PURLs(ctx)...)
+	}
+}
+
+func (s *ScaffoldingService) uptimeP2PURLs(ctx context.Context) []string {
+	nodes, err := s.uptimeClient.FetchNodes(ctx)
+	if err != nil {
+		slog.Warn("拉取 Uptime 节点失败", "err", err)
+		return nil
+	}
+	urls := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		if !n.IsRelay {
+			urls = append(urls, n.URL)
+		}
+	}
+	return urls
+}
+
+func (s *ScaffoldingService) uptimeAllURLs(ctx context.Context) []string {
+	nodes, err := s.uptimeClient.FetchNodes(ctx)
+	if err != nil {
+		slog.Warn("拉取 Uptime 节点失败", "err", err)
+		return nil
+	}
+	urls := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		urls = append(urls, n.URL)
+	}
+	return urls
 }
 
 // AddPeers appends peer addresses for future EasyTier starts.

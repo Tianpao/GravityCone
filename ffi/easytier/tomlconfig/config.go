@@ -83,7 +83,7 @@ func BuildTOMLConfig(opts StartOptions) string {
 		b.WriteString("no_tun = true\n")
 		b.WriteString(fmt.Sprintf("disable_p2p = %t\n", opts.DisableP2P))
 	} else {
-		// ScaffoldingMC mode: private P2P network
+		// ScaffoldingMC mode: private network with configurable P2P (relay-capable)
 		b.WriteString("no_tun = true\n")
 		b.WriteString("enable_kcp_proxy = true\n")
 		b.WriteString("enable_quic_proxy = true\n")
@@ -92,7 +92,7 @@ func BuildTOMLConfig(opts StartOptions) string {
 		b.WriteString("data_compress_algo = \"zstd\"\n")
 		b.WriteString("default_protocol = \"tcp\"\n")
 		b.WriteString("private_mode = true\n")
-		b.WriteString("p2p_only = true\n")
+		b.WriteString(fmt.Sprintf("disable_p2p = %t\n", opts.DisableP2P))
 	}
 	b.WriteString("multi_thread = true\n")
 
