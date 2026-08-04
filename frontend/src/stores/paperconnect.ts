@@ -4,7 +4,10 @@ import {
   CreateRoom, StopRoom, GetRoomStatus,
   JoinRoom, LeaveRoom, GetConnectionStatus, CancelJoin, ConfirmMinecraftEnded
 } from '../../bindings/gravitycone/core/protocol/paperconnect/paperconnectservice.js'
+import { SetP2PDisabled } from '@/../bindings/gravitycone/core/easytier/settingsservice.js'
 import type { PaperConnectRoomStatus, PaperConnectConnectionStatus } from '../../bindings/gravitycone/core/protocol/paperconnect/models.js'
+
+const P2P_DISABLED_KEY = 'gravitycone-p2p-disabled'
 
 type EventUnsubscriber = () => void
 type EventData = Record<string, unknown>
@@ -21,6 +24,7 @@ interface PcState {
   pcJoining: boolean
   pcGuestError: string
   pcPortBusyMessage: string
+  pcP2PDisabled: boolean
   _hostUnsubscribers: EventUnsubscriber[]
   _guestUnsubscribers: EventUnsubscriber[]
 }
@@ -36,6 +40,7 @@ export const usePaperConnectStore = defineStore('paperconnect', {
     pcJoining: false,
     pcGuestError: '',
     pcPortBusyMessage: '',
+    pcP2PDisabled: localStorage.getItem(P2P_DISABLED_KEY) === 'true',
     _hostUnsubscribers: [],
     _guestUnsubscribers: [],
   }),
@@ -47,7 +52,28 @@ export const usePaperConnectStore = defineStore('paperconnect', {
   },
 
   actions: {
+    // toggleP2PDisabled 切换"禁止P2P"并同步到后端（仅 GUI 生效，CLI 无此入口）。
+    async toggleP2PDisabled() {
+      this.pcP2PDisabled = !this.pcP2PDisabled
+      localStorage.setItem(P2P_DISABLED_KEY, String(this.pcP2PDisabled))
+      try {
+        await SetP2PDisabled(this.pcP2PDisabled)
+      } catch {
+        // 后端同步失败不影响联机流程
+      }
+    },
+
+    // applyP2PDisabled 把持久化的开关状态同步到后端（重启后恢复状态时调用）。
+    async applyP2PDisabled() {
+      try {
+        await SetP2PDisabled(this.pcP2PDisabled)
+      } catch {
+        // 后端同步失败不影响联机流程
+      }
+    },
+
     async pcCreateRoom(playerName: string) {
+      await this.applyP2PDisabled()
       this.pcCreating = true
       this.pcHostError = ''
       this.startHostEvents()
@@ -83,6 +109,7 @@ export const usePaperConnectStore = defineStore('paperconnect', {
     },
 
     async pcJoinRoom(roomCode: string, playerName: string, motd: string = 'GravityCone联机房间') {
+      await this.applyP2PDisabled()
       this.pcJoining = true
       this.pcGuestError = ''
       // Subscribe before JoinRoom starts its asynchronous game-bridge setup so an

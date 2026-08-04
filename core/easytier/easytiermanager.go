@@ -135,6 +135,7 @@ type StartOptions struct {
 	PortForwards       []string // Port forward entries (e.g. "tcp://0.0.0.0:12345/10.144.144.1:12345")
 	Peers              []string // Public peer addresses passed as -p arguments.
 	UpstreamCompatible bool     // Use the original PaperConnect EasyTier argument profile.
+	DisableP2P         bool     // Force relay-only mode (--disable-p2p true). PaperConnect profile only.
 }
 
 func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
@@ -160,7 +161,7 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 		"--console-log-level", "info",
 	}
 	if opts.UpstreamCompatible {
-		args = append(args, "--no-tun", "--disable-p2p", "false")
+		args = append(args, "--no-tun", "--disable-p2p", strconv.FormatBool(opts.DisableP2P))
 	} else {
 		args = append(args,
 			"--no-tun",

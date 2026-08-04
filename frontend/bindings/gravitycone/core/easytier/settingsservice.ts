@@ -9,6 +9,20 @@ export function GetCustomPeers(): $CancellablePromise<string[] | null> {
     return $Call.ByID(1307178693);
 }
 
+/**
+ * GetP2PDisabled 返回是否禁止 P2P 直连（强制走中继节点）。
+ */
+export function GetP2PDisabled(): $CancellablePromise<boolean> {
+    return $Call.ByID(3556419187);
+}
+
 export function SetCustomPeers(peers: string[] | null): $CancellablePromise<void> {
     return $Call.ByID(91832177, peers);
+}
+
+/**
+ * SetP2PDisabled 设置禁止 P2P 直连，仅 GUI 使用（CLI 不注入 SettingsService）。
+ */
+export function SetP2PDisabled(disabled: boolean): $CancellablePromise<void> {
+    return $Call.ByID(1697731727, disabled);
 }

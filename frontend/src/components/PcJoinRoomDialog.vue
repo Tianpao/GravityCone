@@ -94,6 +94,17 @@ watch(() => props.open, (val) => {
           />
         </div>
 
+        <Button
+          variant="outline"
+          class="w-full justify-between"
+          :class="pcStore.pcP2PDisabled && 'bg-destructive/10 border-destructive/40 text-destructive hover:bg-destructive/15 hover:text-destructive'"
+          @click="pcStore.toggleP2PDisabled()"
+        >
+          <span>禁止 P2P（强制走中继节点）</span>
+          <span>{{ pcStore.pcP2PDisabled ? '开' : '关' }}</span>
+        </Button>
+        <p v-if="pcStore.pcP2PDisabled" class="text-xs text-destructive/80">开启后将禁止 P2P 直连，联机流量全部经过中继节点</p>
+
         <div v-if="pcStore.pcGuestError" class="bg-destructive/10 text-destructive text-sm p-2 rounded">
           {{ pcStore.pcGuestError }}
         </div>

@@ -56,6 +56,7 @@ type PaperConnectService struct {
 	eventEmitter utils.EventEmitter
 	peerConfig   easytier.PeerConfig
 	uptimeClient *easytier.UptimeClient
+	settingsSvc  *easytier.SettingsService
 
 	// HOST state
 	hostManager    *easytier.EasyTierManager
@@ -240,6 +241,7 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 		MCPort:             gamePort,
 		Peers:              s.resolvePeersWithUptime(),
 		UpstreamCompatible: true,
+		DisableP2P:         s.p2pDisabled(),
 	})
 	if err != nil {
 		if rakLn != nil {
@@ -632,6 +634,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		IsHost:             false,
 		Peers:              s.resolvePeersWithUptime(),
 		UpstreamCompatible: true,
+		DisableP2P:         s.p2pDisabled(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
@@ -702,6 +705,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 			PortForwards:       pcGuestPortForwards(dialMode, protocol, hostIP, serverPort, gamePort, tcpLocalPort, rakLocalPort),
 			Peers:              s.resolvePeersWithUptime(),
 			UpstreamCompatible: true,
+			DisableP2P:         s.p2pDisabled(),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("启动虚拟网络(端口转发)失败: %w", err)
@@ -1437,6 +1441,7 @@ func (s *PaperConnectService) Cleanup() {
 }
 
 func ConfigureSettingsPeers(s *PaperConnectService, settingsSvc *easytier.SettingsService) {
+	s.settingsSvc = settingsSvc
 	s.peerConfig.SetSettingsService(settingsSvc)
 }
 
@@ -1446,6 +1451,15 @@ func ConfigureCLIPeers(s *PaperConnectService, peers []string) {
 
 func (s *PaperConnectService) resolvePeers() []string {
 	return s.peerConfig.Resolve(paperConnectBuiltinPeers)
+}
+
+// p2pDisabled 返回是否禁止 P2P 直连（强制走中继）。仅 GUI 设置（CLI 不注入
+// SettingsService，恒为 false）。
+func (s *PaperConnectService) p2pDisabled() bool {
+	if s.settingsSvc != nil {
+		return s.settingsSvc.GetP2PDisabled()
+	}
+	return false
 }
 
 // resolvePeersWithUptime 在 resolvePeers 基础上追加 Uptime 分发服务拉取的
