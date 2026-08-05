@@ -12,7 +12,6 @@ import (
 
 	"github.com/wlynxg/anet"
 
-	"gravitycone/core/utils"
 )
 
 const rakNetDiscoveryPort = 19132
@@ -37,7 +36,7 @@ func ScanRakNetLAN(ctx context.Context, timeout time.Duration) (*RakNetServerInf
 
 	if rawConn, err := conn.SyscallConn(); err == nil {
 		rawConn.Control(func(fd uintptr) {
-			_ = utils.SetBroadcast(fd)
+			_ = SetBroadcast(fd)
 		})
 	}
 

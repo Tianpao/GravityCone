@@ -103,7 +103,7 @@ func (s *LanService) StartDiscovery() error {
 		Control: func(_ string, _ string, rawConn syscall.RawConn) error {
 			var controlErr error
 			if err := rawConn.Control(func(fd uintptr) {
-				controlErr = utils.SetReuseAddr(fd)
+				controlErr = SetReuseAddr(fd)
 			}); err != nil {
 				return err
 			}

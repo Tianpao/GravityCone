@@ -8,8 +8,6 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
-
-	"gravitycone/core/utils/process"
 )
 
 type peerInfo struct {
@@ -100,7 +98,7 @@ func (m *EasyTierManager) FindPeerByHostnamePrefix(hostnamePrefix string) (strin
 }
 
 func (m *EasyTierManager) runCli(args ...string) (string, error) {
-	cmd := process.NewHiddenCmd(m.cliPath, args...)
+	cmd := NewHiddenCmd(m.cliPath, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		slog.Error("easytier-cli failed", "path", m.cliPath, "args", args, "error", err, "output", string(out))

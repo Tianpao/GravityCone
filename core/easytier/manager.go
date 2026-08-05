@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"gravitycone/core/utils"
-	"gravitycone/core/utils/process"
 )
 
 const hostVirtualIP = "10.144.144.1"
@@ -82,7 +81,7 @@ func NewEasyTierManager() (*EasyTierManager, error) {
 }
 
 func resolveEasyTierBinary(name string) (string, error) {
-	exeName := process.PlatformExeName(name)
+	exeName := PlatformExeName(name)
 
 	if p, err := exec.LookPath(exeName); err == nil {
 		return p, nil
@@ -201,11 +200,11 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 		args = append(args, "--machine-id", machineID)
 	}
 
-	cmd := process.NewHiddenCmd(m.corePath, args...)
+	cmd := NewHiddenCmd(m.corePath, args...)
 	cmd.Stdout = easytierStdout
 	cmd.Stderr = easytierStderr
 
-	process.SetDetachedFlags(cmd)
+	SetDetachedFlags(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("启动 easytier-core 失败: %w", err)
@@ -273,7 +272,7 @@ func (m *EasyTierManager) Stop() error {
 	cmd := m.cmd
 	m.mu.Unlock()
 
-	process.KillProcessTree(cmd.Process)
+	KillProcessTree(cmd.Process)
 
 	done := make(chan struct{})
 	go func() {

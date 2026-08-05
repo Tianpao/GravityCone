@@ -14,7 +14,6 @@ import (
 
 	mcstatus "github.com/andre-carbajal/go-mcstatus"
 
-	"gravitycone/core/utils"
 )
 
 func buildUnconnectedPong(motd string, serverGUID int64) []byte {
@@ -50,7 +49,7 @@ func BroadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fall
 	defer bcConn.Close()
 	if rawConn, err := bcConn.SyscallConn(); err == nil {
 		_ = rawConn.Control(func(fd uintptr) {
-			_ = utils.SetBroadcast(fd)
+			_ = SetBroadcast(fd)
 		})
 	}
 
@@ -84,8 +83,8 @@ func BroadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fall
 	lc := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
 			return c.Control(func(fd uintptr) {
-				_ = utils.SetReuseAddr(fd)
-				_ = utils.SetBroadcast(fd)
+				_ = SetReuseAddr(fd)
+				_ = SetBroadcast(fd)
 			})
 		},
 	}
