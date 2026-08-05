@@ -5,7 +5,7 @@ package cli
 import (
 	"fmt"
 	"gravitycone/core/easytier"
-	"gravitycone/core/lan"
+	lansca "gravitycone/core/lan/scaffolding"
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
 	"strings"
@@ -15,7 +15,7 @@ import (
 // Handler dispatches CLI requests to core service methods.
 type Handler struct {
 	stunSvc         *easytier.StunService
-	lanSvc          *lan.LanService
+	lanSvc          *lansca.LanService
 	scaffoldingSvc  *scaffolding.ScaffoldingService
 	paperConnectSvc *paperconnect.PaperConnectService
 	writer          *StdioWriter
@@ -28,7 +28,7 @@ type Handler struct {
 // NewHandler creates a Handler with the given services and writer.
 func NewHandler(
 	stunSvc *easytier.StunService,
-	lanSvc *lan.LanService,
+	lanSvc *lansca.LanService,
 	scaffoldingSvc *scaffolding.ScaffoldingService,
 	paperConnectSvc *paperconnect.PaperConnectService,
 	writer *StdioWriter,

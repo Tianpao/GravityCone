@@ -1,4 +1,4 @@
-package lan
+package scaffolding
 
 import (
 	"fmt"

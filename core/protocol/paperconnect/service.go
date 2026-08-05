@@ -15,6 +15,7 @@ import (
 	raknet "github.com/sandertv/go-raknet"
 
 	"gravitycone/core/easytier"
+	lanpc "gravitycone/core/lan/paperconnect"
 	"gravitycone/core/protocol/common"
 	"gravitycone/core/utils"
 )
@@ -71,7 +72,7 @@ type PaperConnectService struct {
 	hostCancelFunc context.CancelFunc
 	hostProtocol   string            // ProtocolNetherNet or ProtocolRakNet
 	hostGamePort   uint16            // RakNet listener port (NetherNet) or scanned MC port (RakNet)
-	hostRakNetInfo *RakNetServerInfo // Server info from RakNet scan (for guest broadcast)
+	hostRakNetInfo *lanpc.RakNetServerInfo // Server info from RakNet scan (for guest broadcast)
 
 	// GUEST state
 	guestManager          *easytier.EasyTierManager
@@ -156,14 +157,14 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	defer cancelScan()
 
 	var nnFound, rkFound bool
-	var rakNetInfo *RakNetServerInfo
+	var rakNetInfo *lanpc.RakNetServerInfo
 
 	nnCh := make(chan bool, 1)
-	rkCh := make(chan *RakNetServerInfo, 1)
+	rkCh := make(chan *lanpc.RakNetServerInfo, 1)
 
-	go func() { nnCh <- detectNetherNet(ctx) }()
+	go func() { nnCh <- lanpc.DetectNetherNet(ctx) }()
 	go func() {
-		if info, err := scanRakNetLAN(ctx, 5*time.Second); err == nil {
+		if info, err := lanpc.ScanRakNetLAN(ctx, 5*time.Second); err == nil {
 			rkCh <- info
 		} else {
 			rkCh <- nil

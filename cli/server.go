@@ -6,7 +6,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"gravitycone/core/easytier"
-	"gravitycone/core/lan"
+	lansca "gravitycone/core/lan/scaffolding"
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
 	"gravitycone/core/utils"
@@ -63,7 +63,7 @@ func Run(peers []string, vendorPrefix string, motd string, easytierDir string) {
 
 	// Set up services
 	stunSvc := &easytier.StunService{}
-	lanSvc := lan.NewLanService(emitter)
+	lanSvc := lansca.NewLanService(emitter)
 	scaffoldingSvc := scaffolding.NewScaffoldingService(emitter)
 	paperConnectSvc := paperconnect.NewPaperConnectService(emitter)
 	if len(peers) > 0 {

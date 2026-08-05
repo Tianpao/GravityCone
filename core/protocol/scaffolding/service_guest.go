@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"gravitycone/core/easytier"
-	"gravitycone/core/lan"
+	lansca "gravitycone/core/lan/scaffolding"
 	"gravitycone/core/utils"
 )
 
@@ -524,7 +524,7 @@ func (s *ScaffoldingService) setupMCPortForward(hostIP string, mcPort uint16) {
 		if motd == "" {
 			motd = "§6§l双击进入联机房间（请保持GravityCone运行）"
 		}
-		s.guestFakeServer = lan.NewFakeServer(mcLocalPort, motd)
+		s.guestFakeServer = lansca.NewFakeServer(mcLocalPort, motd)
 	}
 	s.guestMu.Unlock()
 }

@@ -13,6 +13,7 @@ import (
 	raknet "github.com/sandertv/go-raknet"
 
 	"gravitycone/core/easytier"
+	lanpc "gravitycone/core/lan/paperconnect"
 )
 
 // dialRakNet 建立到 addr 的 RakNet 连接（30 秒超时）。
@@ -189,7 +190,7 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 		rakLocalPort = relayPort
 	}
 
-	go broadcastRakNetFakeServer(context.Background(), fakeStop, serverName, rakLocalPort, motdQueryAddr, readyCh)
+	go lanpc.BroadcastRakNetFakeServer(context.Background(), fakeStop, serverName, rakLocalPort, motdQueryAddr, readyCh)
 	if err := <-readyCh; err != nil {
 		slog.Error("RakNet fake server failed to start", "err", err, "proxyPort", rakLocalPort)
 		close(fakeStop)

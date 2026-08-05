@@ -8,7 +8,7 @@ import (
 	"gravitycone/core/app/account/microsoft"
 	"gravitycone/core/app/account/naids"
 	"gravitycone/core/easytier"
-	"gravitycone/core/lan"
+	lansca "gravitycone/core/lan/scaffolding"
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
 	"gravitycone/core/utils"
@@ -46,7 +46,7 @@ func init() {
 	application.RegisterEvent[map[string]string]("room.closed")
 	application.RegisterEvent[map[string]string]("room.disconnected")
 	application.RegisterEvent[[]scaffolding.PlayerInfo]("room.guest_player_list_updated")
-	application.RegisterEvent[lan.LanServer]("lan.server_found")
+	application.RegisterEvent[lansca.LanServer]("lan.server_found")
 	application.RegisterEvent[map[string]interface{}]("lan.server_lost")
 	application.RegisterEvent[map[string]string]("paperconnect.connection.port_busy")
 	application.RegisterEvent[map[string]string]("paperconnect.connection.ready")
@@ -100,7 +100,7 @@ func main() {
 
 	natayarkSvc := naids.NewNatayarkService(naidsID, naidsSecret)
 	minecraftSvc := microsoft.NewMinecraftService(clientID, clientSecret)
-	lanSvc := lan.NewLanService(nil)
+	lanSvc := lansca.NewLanService(nil)
 	scaffoldingSvc := scaffolding.NewScaffoldingService(nil)
 	paperConnectSvc := paperconnect.NewPaperConnectService(nil)
 	settingsSvc := &easytier.SettingsService{}

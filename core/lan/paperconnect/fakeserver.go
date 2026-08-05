@@ -36,7 +36,7 @@ func buildUnconnectedPong(motd string, serverGUID int64) []byte {
 // motdQueryAddr is where the real Bedrock server is queried for the actual MOTD:
 // proxy 模式经本地转发(127.0.0.1:proxyPort)访问 host;direct 模式(TUN)直连
 // host 虚拟 IP 的游戏端口。
-func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fallbackName string, proxyPort uint16, motdQueryAddr string, readyCh chan<- error) {
+func BroadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fallbackName string, proxyPort uint16, motdQueryAddr string, readyCh chan<- error) {
 	serverGUID := rand.Int63()
 	slog.Info("RakNet fake server starting", "guid", serverGUID, "proxyPort", proxyPort)
 
@@ -55,7 +55,7 @@ func broadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fall
 	}
 
 	broadcastAddrs, _ := getBroadcastAddrs(rakNetDiscoveryPort)
-	localAddrs := getLocalAddrs(rakNetDiscoveryPort)
+	localAddrs := GetLocalAddrs(rakNetDiscoveryPort)
 	slog.Info("RakNet fake server broadcast socket ready", "addr", bcConn.LocalAddr().String(),
 		"broadcastAddrs", len(broadcastAddrs), "localAddrs", len(localAddrs), "guid", serverGUID)
 

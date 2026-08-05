@@ -11,7 +11,7 @@ import (
 	mcstatus "github.com/andre-carbajal/go-mcstatus"
 
 	"gravitycone/core/easytier"
-	"gravitycone/core/lan"
+	lansca "gravitycone/core/lan/scaffolding"
 	"gravitycone/core/protocol/common"
 	"gravitycone/core/utils"
 )
@@ -148,7 +148,7 @@ type ScaffoldingService struct {
 	guestDirectLocal          bool                  // true when guest and host are on the same machine
 	guestIOMu                 sync.Mutex            // serializes writes on guestConn
 	guestReadCh               chan readResult       // background reader delivers responses here
-	guestFakeServer           *lan.FakeServer // LAN broadcaster for Minecraft discovery
+	guestFakeServer           *lansca.FakeServer // LAN broadcaster for Minecraft discovery
 	guestMCLocalPort          uint16                // local port forwarded to host's MC server via EasyTier
 	guestMCRemoteAddr         string                // remote addr for port-forward cleanup (host_virtual_ip:mc_port)
 	guestMotd                 string                // custom MOTD for LAN broadcast

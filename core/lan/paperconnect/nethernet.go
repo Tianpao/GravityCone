@@ -41,7 +41,7 @@ func detectNetherNetWithID(ctx context.Context) (uint64, error) {
 	return 0, errNoNetherNet
 }
 
-func detectNetherNet(ctx context.Context) bool {
+func DetectNetherNet(ctx context.Context) bool {
 	_, err := detectNetherNetWithID(ctx)
 	return err == nil
 }
