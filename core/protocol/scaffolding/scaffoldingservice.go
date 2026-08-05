@@ -20,7 +20,7 @@ import (
 )
 
 // BaseVendor is the default vendor suffix. Call MakeVendor to append optional prefixes.
-const BaseVendor = "GVC v0.1.3-alpha, EasyTier " + easytier.EasyTierVersion
+const BaseVendor = "GVC " + easytier.AppVersion + ", EasyTier " + easytier.EasyTierVersion
 
 const hostnamePrefix = "scaffolding-mc-server-"
 
@@ -734,17 +734,25 @@ func (s *ScaffoldingService) discoverHostAndConnect(manager *easytier.EasyTierMa
 	return "", 0, nil, lastErr
 }
 
+// verifyP2PTunnel 通过 ping 验证隧道连通性；失败时关闭连接并返回错误。
+func verifyP2PTunnel(conn net.Conn) error {
+	if err := WriteProtocolRequest(conn, ProtocolPing, nil); err != nil {
+		conn.Close()
+		return err
+	}
+	if _, _, err := ReadProtocolResponse(conn); err != nil {
+		conn.Close()
+		return err
+	}
+	return nil
+}
+
 func (s *ScaffoldingService) tryDirectLocalhost(scaffoldingPort uint16) *discoveredConn {
 	directConn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", scaffoldingPort), 2*time.Second)
 	if err != nil {
 		return nil
 	}
-	if WriteProtocolRequest(directConn, ProtocolPing, nil) != nil {
-		directConn.Close()
-		return nil
-	}
-	if _, _, err := ReadProtocolResponse(directConn); err != nil {
-		directConn.Close()
+	if err := verifyP2PTunnel(directConn); err != nil {
 		return nil
 	}
 	return &discoveredConn{conn: directConn, localPort: scaffoldingPort, directLocal: true}
@@ -758,12 +766,7 @@ func (s *ScaffoldingService) tryP2PConnect(manager *easytier.EasyTierManager, ho
 		if err != nil {
 			return 0, nil, fmt.Errorf("TUN直连失败 (%s:%d): %w", hostIP, scaffoldingPort, err)
 		}
-		if err := WriteProtocolRequest(conn, ProtocolPing, nil); err != nil {
-			conn.Close()
-			return 0, nil, fmt.Errorf("P2P隧道验证失败: %w", err)
-		}
-		if _, _, err := ReadProtocolResponse(conn); err != nil {
-			conn.Close()
+		if err := verifyP2PTunnel(conn); err != nil {
 			return 0, nil, fmt.Errorf("P2P隧道验证失败: %w", err)
 		}
 		return 0, conn, nil
@@ -788,12 +791,7 @@ func (s *ScaffoldingService) tryP2PConnect(manager *easytier.EasyTierManager, ho
 		return localPort, nil, fmt.Errorf("TCP连接失败 (127.0.0.1:%d -> %s:%d): %w", localPort, hostIP, scaffoldingPort, err)
 	}
 
-	if err := WriteProtocolRequest(conn, ProtocolPing, nil); err != nil {
-		conn.Close()
-		return localPort, nil, fmt.Errorf("P2P隧道验证失败: %w", err)
-	}
-	if _, _, err := ReadProtocolResponse(conn); err != nil {
-		conn.Close()
+	if err := verifyP2PTunnel(conn); err != nil {
 		return localPort, nil, fmt.Errorf("P2P隧道验证失败: %w", err)
 	}
 

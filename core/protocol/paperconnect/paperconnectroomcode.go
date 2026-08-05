@@ -63,38 +63,34 @@ func pcAdjustForDivisibilityBySevenAt(chars []byte, pos int) {
 	chars[pos] = utils.Charset[newV]
 }
 
-// GeneratePaperConnectRoomCodeWithNodeID 生成携带 uptime 节点 ID 的房间码。
+// generatePaperConnectRoomCode 生成房间码；nodeID < 0 时为旧格式（不内嵌
+// nodeID，S 部分校验微调位置 0），否则内嵌 uptime 节点 ID。
 // nodeID 按小端 base-34 编码：N 部分最后一位为低位、S 部分最后一位为高位；
 // 校验微调移到 S 部分倒数第二位（最后一位被 nodeID 占用）。
-func GeneratePaperConnectRoomCodeWithNodeID(nodeID int) (*PaperConnectRoomCode, error) {
-	if nodeID < 0 || nodeID > easytier.NodeIDMax {
+func generatePaperConnectRoomCode(nodeID int) (*PaperConnectRoomCode, error) {
+	if nodeID > easytier.NodeIDMax {
 		return nil, fmt.Errorf("nodeID 超出可编码范围: %d", nodeID)
 	}
+	withNodeID := nodeID >= 0
 
-	// N 部分：位置 7 编码 nodeID 低位，其余随机
-	lo, hi := easytier.NodeIDChars(nodeID)
-	var nPart [8]byte
-	for i := 0; i < 7; i++ {
-		c, err := utils.RandomChar()
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate random char: %w", err)
-		}
-		nPart[i] = c
+	var nPart, sPart [8]byte
+	if err := utils.RandomChars(nPart[:]); err != nil {
+		return nil, fmt.Errorf("failed to generate random char: %w", err)
 	}
-	nPart[7] = utils.Charset[lo]
+	if err := utils.RandomChars(sPart[:]); err != nil {
+		return nil, fmt.Errorf("failed to generate random char: %w", err)
+	}
 
-	// S 部分：位置 7 编码 nodeID 高位，位置 6 用作校验微调，其余随机。
-	// 位置 6 也须先填有效字符：调整函数会读取它的当前值计算新值。
-	var sPart [8]byte
-	for i := 0; i < 7; i++ {
-		c, err := utils.RandomChar()
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate random char: %w", err)
-		}
-		sPart[i] = c
+	if withNodeID {
+		lo, hi := easytier.NodeIDChars(nodeID)
+		nPart[7] = utils.Charset[lo]
+		sPart[7] = utils.Charset[hi]
+		// 位置 6 用作校验微调：调整函数会读取它的当前值计算新值。
+		pcAdjustForDivisibilityBySevenAt(sPart[:], 6)
+	} else {
+		// 旧格式：位置 0 的权重 34^0 ≡ 1 (mod 7)，微调该位即可
+		pcAdjustForDivisibilityBySevenAt(sPart[:], 0)
 	}
-	sPart[7] = utils.Charset[hi]
-	pcAdjustForDivisibilityBySevenAt(sPart[:], 6)
 
 	return &PaperConnectRoomCode{
 		NetworkPart: string(nPart[:]),
@@ -102,34 +98,16 @@ func GeneratePaperConnectRoomCodeWithNodeID(nodeID int) (*PaperConnectRoomCode, 
 	}, nil
 }
 
+// GeneratePaperConnectRoomCodeWithNodeID 生成携带 uptime 节点 ID 的房间码。
+func GeneratePaperConnectRoomCodeWithNodeID(nodeID int) (*PaperConnectRoomCode, error) {
+	if nodeID < 0 {
+		return nil, fmt.Errorf("nodeID 超出可编码范围: %d", nodeID)
+	}
+	return generatePaperConnectRoomCode(nodeID)
+}
+
 func GeneratePaperConnectRoomCode() (*PaperConnectRoomCode, error) {
-	// Generate N-part (8 random chars, no checksum constraint)
-	var nPart [8]byte
-	for i := range nPart {
-		c, err := utils.RandomChar()
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate random char: %w", err)
-		}
-		nPart[i] = c
-	}
-
-	// Generate S-part (8 random chars, then adjust for divisibility by 7).
-	// 位置 0 的权重 34^0 ≡ 1 (mod 7)，微调该位即可（旧实现调整末位，改为
-	// 固定首位与 WithNodeID 变体共用同一套逻辑）。
-	var sPart [8]byte
-	for i := range sPart {
-		c, err := utils.RandomChar()
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate random char: %w", err)
-		}
-		sPart[i] = c
-	}
-	pcAdjustForDivisibilityBySevenAt(sPart[:], 0)
-
-	return &PaperConnectRoomCode{
-		NetworkPart: string(nPart[:]),
-		SecretPart:  string(sPart[:]),
-	}, nil
+	return generatePaperConnectRoomCode(-1)
 }
 
 func ParsePaperConnectRoomCode(s string) (*PaperConnectRoomCode, error) {

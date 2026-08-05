@@ -144,6 +144,16 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 		}
 	}()
 
+	// 提前并行拉取 uptime 节点（与下面的 LAN 扫描重叠，房主开房可省最多 8 秒）。
+	// HostPeersAndNodeID 内部降级、无错误返回，扫描失败时丢弃结果即可。
+	hostPeersCh := make(chan []string, 1)
+	nodeIDCh := make(chan int, 1)
+	go func() {
+		hostPeers, nodeID := s.relay.HostPeersAndNodeID(s.resolvePeers())
+		hostPeersCh <- hostPeers
+		nodeIDCh <- nodeID
+	}()
+
 	// Detect protocol: scan both NetherNet and RakNet LAN lists.
 	ctx, cancelScan := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancelScan()
@@ -181,7 +191,8 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	// If both found, prefer NetherNet (newer version)
 
 	// 拉取 uptime 节点并选定中继 nodeID（须在生成房间码之前，房客据此定向取同一个中继）
-	hostPeers, nodeID := s.relay.HostPeersAndNodeID(s.resolvePeers())
+	hostPeers := <-hostPeersCh
+	nodeID := <-nodeIDCh
 
 	// Generate room code (embeds the relay node ID)
 	rc, err := GeneratePaperConnectRoomCodeWithNodeID(nodeID)
@@ -672,26 +683,26 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	}
 
 	// Phase 2: proxy 模式重启 EasyTier 并携带静态端口转发（FFI 无运行时转发 RPC）。
+	// direct 模式（TUN）无需本地端口，直接拨 host 虚拟 IP。
 	dialMode := manager.DialMode()
-	tcpLocalLn, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		manager.Stop()
-		return nil, fmt.Errorf("分配本地TCP端口失败: %w", err)
-	}
-	tcpLocalPort := uint16(tcpLocalLn.Addr().(*net.TCPAddr).Port)
-	_ = tcpLocalLn.Close()
+	var tcpLocalPort, rakLocalPort uint16
+	if dialMode == easytier.DialModeProxy {
+		tcpLocalLn, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			manager.Stop()
+			return nil, fmt.Errorf("分配本地TCP端口失败: %w", err)
+		}
+		tcpLocalPort = uint16(tcpLocalLn.Addr().(*net.TCPAddr).Port)
+		_ = tcpLocalLn.Close()
 
-	udpBindHost := "0.0.0.0"
-	if protocol == ProtocolNetherNet {
-		udpBindHost = "127.0.0.1"
+		rakLocalConn, err := net.ListenPacket("udp", pcUDPBindHost(protocol)+":0")
+		if err != nil {
+			manager.Stop()
+			return nil, fmt.Errorf("分配本地UDP端口失败: %w", err)
+		}
+		rakLocalPort = uint16(rakLocalConn.LocalAddr().(*net.UDPAddr).Port)
+		_ = rakLocalConn.Close()
 	}
-	rakLocalConn, err := net.ListenPacket("udp", udpBindHost+":0")
-	if err != nil {
-		manager.Stop()
-		return nil, fmt.Errorf("分配本地UDP端口失败: %w", err)
-	}
-	rakLocalPort := uint16(rakLocalConn.LocalAddr().(*net.UDPAddr).Port)
-	_ = rakLocalConn.Close()
 
 	if dialMode == easytier.DialModeProxy {
 		if err := manager.Stop(); err != nil {
@@ -727,7 +738,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 			return nil, fmt.Errorf("加入已取消")
 		}
 
-		pingAddr := pcControlDialAddr(dialMode, hostIP, serverPort, tcpLocalPort)
+		pingAddr := pcDialAddr(dialMode, hostIP, serverPort, tcpLocalPort)
 		conn, err := net.DialTimeout("tcp", pingAddr, 2*time.Second)
 		if err != nil {
 			time.Sleep(1 * time.Second)
@@ -767,7 +778,7 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 
 	clientId := scaffolding.MakeVendor(vendorPrefix)
 
-	controlAddr := pcControlDialAddr(dialMode, hostIP, serverPort, tcpLocalPort)
+	controlAddr := pcDialAddr(dialMode, hostIP, serverPort, tcpLocalPort)
 	controlHost, controlPort, err := net.SplitHostPort(controlAddr)
 	if err != nil {
 		manager.Stop()
@@ -1044,6 +1055,16 @@ func (s *PaperConnectService) pcBuildConnectionStatus() *PaperConnectConnectionS
 	}
 }
 
+// dialRakNet 建立到 addr 的 RakNet 连接（30 秒超时）。
+func dialRakNet(addr string) (*raknet.Conn, error) {
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer dialCancel()
+	return (raknet.Dialer{
+		MaxMTU:   rakNetMTU,
+		ErrorLog: slog.Default(),
+	}).DialContext(dialCtx, addr)
+}
+
 // pcGuestSetupConnection sets up the NetherNet or RakNet game connection asynchronously.
 func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierManager, playerName string, protocol string, rakLocalPort uint16) {
 	if s.joinCancelled.Load() {
@@ -1057,17 +1078,12 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 	s.guestMu.Unlock()
 
 	// proxy 模式的转发已在 Phase 2 装好。
-	rakDialAddr := pcRakDialAddr(manager.DialMode(), hostIP, gamePort, rakLocalPort)
+	rakDialAddr := pcDialAddr(manager.DialMode(), hostIP, gamePort, rakLocalPort)
 
 	if protocol == ProtocolNetherNet {
 		// 仅本地 discovery 阶段受 MC 占用 7551 限制；隧道已就绪。
 
-		dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		rkConn, err := (raknet.Dialer{
-			MaxMTU:   rakNetMTU,
-			ErrorLog: slog.Default(),
-		}).DialContext(dialCtx, rakDialAddr)
-		dialCancel()
+		rkConn, err := dialRakNet(rakDialAddr)
 		if err != nil {
 			slog.Error("RakNet dial to host failed", "err", err, "addr", rakDialAddr)
 			s.pcGuestSetupError(manager, protocol)
@@ -1167,12 +1183,7 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 				return
 			}
 
-			dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
-			rkConn, err = (raknet.Dialer{
-				MaxMTU:   rakNetMTU,
-				ErrorLog: slog.Default(),
-			}).DialContext(dialCtx, rakDialAddr)
-			dialCancel()
+			rkConn, err = dialRakNet(rakDialAddr)
 			if err != nil {
 				slog.Error("RakNet re-dial to host failed", "err", err, "addr", rakDialAddr)
 				s.pcGuestSetupError(manager, protocol)
@@ -1251,12 +1262,7 @@ func (s *PaperConnectService) pcRakNetRelayLoop(ln *raknet.Listener, manager *ea
 		slog.Info("local MC client connected via RakNet relay", "remote", localConn.RemoteAddr())
 
 		remoteAddr := fmt.Sprintf("%s:%d", hostIP, gamePort)
-		dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		remoteConn, err := (raknet.Dialer{
-			MaxMTU:   rakNetMTU,
-			ErrorLog: slog.Default(),
-		}).DialContext(dialCtx, remoteAddr)
-		dialCancel()
+		remoteConn, err := dialRakNet(remoteAddr)
 		if err != nil {
 			slog.Error("RakNet relay dial to host failed", "err", err, "addr", remoteAddr)
 			_ = localConn.Close()
@@ -1292,45 +1298,35 @@ func relayRakNetPackets(parentCtx context.Context, log *slog.Logger, local, remo
 
 	go func() {
 		defer cancel()
-		for {
-			pk, err := local.ReadPacket()
-			if err != nil {
-				if !isClosedErr(err) && ctx.Err() == nil {
-					log.Error("local raknet read error", "err", err, "forwarded", l2r.Load())
-				}
-				return
-			}
-			l2r.Add(1)
-			if _, err := remote.Write(pk); err != nil {
-				if !isClosedErr(err) && ctx.Err() == nil {
-					log.Error("remote raknet write error", "err", err, "forwarded", l2r.Load())
-				}
-				return
-			}
-		}
+		forwardOneWay(ctx, log, local, remote, &l2r, "local raknet read error", "remote raknet write error")
 	}()
 
 	go func() {
 		defer cancel()
-		for {
-			pk, err := remote.ReadPacket()
-			if err != nil {
-				if !isClosedErr(err) && ctx.Err() == nil {
-					log.Error("remote raknet read error", "err", err, "forwarded", r2l.Load())
-				}
-				return
-			}
-			r2l.Add(1)
-			if _, err := local.Write(pk); err != nil {
-				if !isClosedErr(err) && ctx.Err() == nil {
-					log.Error("local raknet write error", "err", err, "forwarded", r2l.Load())
-				}
-				return
-			}
-		}
+		forwardOneWay(ctx, log, remote, local, &r2l, "remote raknet read error", "local raknet write error")
 	}()
 
 	<-ctx.Done()
+}
+
+// forwardOneWay 把 src 的 RakNet 包转发到 dst，直至任一侧出错或 ctx 结束。
+func forwardOneWay(ctx context.Context, log *slog.Logger, src, dst *raknet.Conn, forwarded *atomic.Int64, readLabel, writeLabel string) {
+	for {
+		pk, err := src.ReadPacket()
+		if err != nil {
+			if !isClosedErr(err) && ctx.Err() == nil {
+				log.Error(readLabel, "err", err, "forwarded", forwarded.Load())
+			}
+			return
+		}
+		forwarded.Add(1)
+		if _, err := dst.Write(pk); err != nil {
+			if !isClosedErr(err) && ctx.Err() == nil {
+				log.Error(writeLabel, "err", err, "forwarded", forwarded.Load())
+			}
+			return
+		}
+	}
 }
 
 func isAddressInUse(err error) bool {

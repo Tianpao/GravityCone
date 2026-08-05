@@ -5,9 +5,10 @@ import (
 
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
+	"gravitycone/core/utils"
 )
 
-// --- isPaperConnectCode ---
+// --- IsPaperConnectCode ---
 
 func TestIsPaperConnectCode(t *testing.T) {
 	tests := []struct {
@@ -28,9 +29,9 @@ func TestIsPaperConnectCode(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := isPaperConnectCode(tt.code)
+		got := utils.IsPaperConnectCode(tt.code)
 		if got != tt.want {
-			t.Errorf("isPaperConnectCode(%q) = %v, want %v", tt.code, got, tt.want)
+			t.Errorf("IsPaperConnectCode(%q) = %v, want %v", tt.code, got, tt.want)
 		}
 	}
 }

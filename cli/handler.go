@@ -6,6 +6,7 @@ import (
 	"gravitycone/core/minecraft"
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
+	"gravitycone/core/utils"
 	"strconv"
 	"strings"
 	"sync"
@@ -117,11 +118,6 @@ func (h *Handler) handleRoom(req Request, action string) {
 	default:
 		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidMethod, req.Method))
 	}
-}
-
-// isPaperConnectCode returns true if the room code starts with "P/" or "p/".
-func isPaperConnectCode(code string) bool {
-	return len(code) >= 2 && (code[0] == 'P' || code[0] == 'p') && code[1] == '/'
 }
 
 // applyRelayParams reads the optional relay object from a request and
@@ -244,7 +240,7 @@ func (h *Handler) handleRoomJoin(req Request) {
 		return
 	}
 
-	if isPaperConnectCode(code) {
+	if utils.IsPaperConnectCode(code) {
 		result, err := h.paperConnectSvc.JoinRoom(code, playerName, h.vendorPrefix, h.motd)
 		if err != nil {
 			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))

@@ -50,16 +50,16 @@ func TestPCGuestPortForwards(t *testing.T) {
 }
 
 func TestPCGuestDialAddresses(t *testing.T) {
-	if got, want := pcControlDialAddr(easytier.DialModeProxy, "10.144.144.1", 40002, 40001), "127.0.0.1:40001"; got != want {
+	if got, want := pcDialAddr(easytier.DialModeProxy, "10.144.144.1", 40002, 40001), "127.0.0.1:40001"; got != want {
 		t.Fatalf("proxy control address = %q, want %q", got, want)
 	}
-	if got, want := pcRakDialAddr(easytier.DialModeProxy, "10.144.144.1", 40004, 40003), "127.0.0.1:40003"; got != want {
+	if got, want := pcDialAddr(easytier.DialModeProxy, "10.144.144.1", 40004, 40003), "127.0.0.1:40003"; got != want {
 		t.Fatalf("proxy RakNet address = %q, want %q", got, want)
 	}
-	if got, want := pcControlDialAddr(easytier.DialModeDirect, "10.144.144.1", 40002, 40001), "10.144.144.1:40002"; got != want {
+	if got, want := pcDialAddr(easytier.DialModeDirect, "10.144.144.1", 40002, 40001), "10.144.144.1:40002"; got != want {
 		t.Fatalf("direct control address = %q, want %q", got, want)
 	}
-	if got, want := pcRakDialAddr(easytier.DialModeDirect, "10.144.144.1", 40004, 40003), "10.144.144.1:40004"; got != want {
+	if got, want := pcDialAddr(easytier.DialModeDirect, "10.144.144.1", 40004, 40003), "10.144.144.1:40004"; got != want {
 		t.Fatalf("direct RakNet address = %q, want %q", got, want)
 	}
 }

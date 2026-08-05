@@ -8,74 +8,14 @@
 package easytier
 
 import (
-	"fmt"
 	"sync"
 
-	"gravitycone/core/utils"
 	ffi_et "gravitycone/ffi/easytier"
 )
 
-// EasyTierVersion mirrors the constant from easytierdownload.go
-// (which is excluded when et_ffi is set).
-const EasyTierVersion = "v2.6.4"
-
-// Event constants and data types — mirrored from easytierdownload.go
-// (which is excluded when et_ffi is set). These are referenced by main.go
-// for Wails event registration and must exist at compile time even though
-// they are never emitted in FFI mode (EnsureEasyTier is a no-op).
-const (
-	EventDownloadProgress = "download.progress"
-	EventDownloadError    = "download.error"
-)
-
-type DownloadProgressData struct {
-	Step      string `json:"step"`
-	Percent   int    `json:"percent"`
-	TotalSize int64  `json:"total_size"`
-	Speed     int64  `json:"speed"`
-}
-
-type DownloadErrorData struct {
-	Error string `json:"error"`
-}
-
-// SetEnsureEasyTierEmitter is a no-op on Android — no download events are emitted.
-func SetEnsureEasyTierEmitter(emitter utils.EventEmitter) {}
-
-// No-op stubs for desktop-only configuration functions.
-func SetCustomEasyTierDir(dir string)   {}
-func SetSkipEasyTierDownload(skip bool) {}
-func SetEasyTierLogOutput(path string)  {}
-
 // EnsureEasyTier is a no-op on Android — EasyTier is statically linked.
+// It exists because EasyTierDownloadService (untagged) calls it in all builds.
 func EnsureEasyTier() error { return nil }
-
-// resolveEasyTierBinary is unused on Android.
-func resolveEasyTierBinary(name string) (string, error) {
-	return name, nil
-}
-
-// allocateRPCPort is unused on Android — FFI has no RPC portal socket.
-func allocateRPCPort() (string, error) {
-	return "", fmt.Errorf("not available in FFI mode")
-}
-
-// --- StartOptions (mirrors desktop) ---
-
-type StartOptions struct {
-	NetworkName        string
-	NetworkSecret      string
-	Hostname           string
-	IsHost             bool
-	TCPPort            uint16
-	MCPort             uint16
-	ConfigPath         string
-	PortForwards       []string
-	Peers              []string
-	UpstreamCompatible bool
-	DisableP2P         bool                                                              // Force relay-only mode (--disable-p2p true). Applies to both profiles.
-	TunFdProvider      func(instName string, virtualIP string, cidr string) (int, error) // optional TUN fd injection (Android)
-}
 
 // --- EasyTierManager (wraps ffi/easytier.FFIManager) ---
 
@@ -101,6 +41,7 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 		Peers:              opts.Peers,
 		UpstreamCompatible: opts.UpstreamCompatible,
 		DisableP2P:         opts.DisableP2P,
+		MachineID:          opts.MachineID,
 	}
 	// Pass through the TUN fd provider if set (for Android VpnService).
 	// When nil, FFIManager.Start() falls back to DefaultTunFdProvider
@@ -158,15 +99,6 @@ func (m *EasyTierManager) RemovePortForward(proto, local, remote string) error {
 // (stun.rs's StunInfoCollector) and publishes it via collect_network_infos
 // as my_node_info.stun_info. Values are proto NatType integers — the same
 // numbering easytier-cli stun prints on desktop.
-
-type StunResult struct {
-	UdpNatType     int      `json:"udp_nat_type"`
-	TcpNatType     int      `json:"tcp_nat_type"`
-	LastUpdateTime int64    `json:"last_update_time"`
-	PublicIP       []string `json:"public_ip"`
-	MinPort        int      `json:"min_port"`
-	MaxPort        int      `json:"max_port"`
-}
 
 type StunService struct{}
 

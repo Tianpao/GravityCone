@@ -15,7 +15,12 @@
 // Build: go build -buildmode=c-shared -tags cgo -o libgravitycone.so .
 package main
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+
+	"gravitycone/core/easytier"
+)
 
 // State names (matching Terracotta's state identifiers).
 const (
@@ -113,9 +118,9 @@ type Metadata struct {
 // Shared by the C ABI (gc_get_metadata) and JNI (nativeGetMetadata) exports.
 func currentMetadataJSON() string {
 	data, _ := json.Marshal(Metadata{
-		Version:         "0.1.3-alpha",
+		Version:         strings.TrimPrefix(easytier.AppVersion, "v"),
 		CompileTime:     CompileTime.Load(),
-		EasyTierVersion: "v2.6.4",
+		EasyTierVersion: easytier.EasyTierVersion,
 	})
 	return string(data)
 }

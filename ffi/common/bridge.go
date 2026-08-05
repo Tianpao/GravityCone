@@ -8,6 +8,7 @@ import (
 	"gravitycone/core/easytier"
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
+	"gravitycone/core/utils"
 )
 
 // 启动器指定的中继节点（CLI/FFI 模式）：nodeID 编码进房间码（房主端），
@@ -140,7 +141,7 @@ func setGuesting(roomCode, player string) bool {
 	}
 
 	// Route based on room code prefix.
-	if isPaperConnectCode(roomCode) {
+	if utils.IsPaperConnectCode(roomCode) {
 		ctx := &guestContext{protocol: ProtocolPaperConnect, roomCode: roomCode}
 		if !beginTransition(StateGuestConnecting, ctx) {
 			return false
@@ -161,7 +162,7 @@ func setGuesting(roomCode, player string) bool {
 // verifyRoomCode checks the room code type.
 // Returns RoomCodeScaffolding (3), RoomCodePaperConnect (4), or RoomCodeInvalid (-1).
 func verifyRoomCode(code string) int {
-	if isPaperConnectCode(code) {
+	if utils.IsPaperConnectCode(code) {
 		if _, err := paperconnect.ParsePaperConnectRoomCode(code); err == nil {
 			return RoomCodePaperConnect
 		}
@@ -174,10 +175,6 @@ func verifyRoomCode(code string) int {
 	}
 
 	return RoomCodeInvalid
-}
-
-func isPaperConnectCode(code string) bool {
-	return len(code) >= 2 && (code[0] == 'P' || code[0] == 'p') && code[1] == '/'
 }
 
 // --- ScaffoldingMC (Java Edition) host ---

@@ -13,14 +13,6 @@ type RoomCode struct {
 	SecretPart  string // 8 chars: SSSS-SSSS (without dash)
 }
 
-func charToValue(c byte) int {
-	value, ok := utils.Value(c)
-	if !ok {
-		return -1
-	}
-	return value
-}
-
 // checksumSum 按加权公式求和：位置 i 的字符值乘以 6^(i%2)，跳过 skip 位置（-1 表示不跳过）。
 func checksumSum(chars [16]byte, skip int) int {
 	sum := 0
@@ -48,39 +40,38 @@ func isValidChecksum(chars [16]byte) bool {
 	return checksumSum(chars, -1)%7 == 0
 }
 
-// GenerateRoomCodeWithNodeID 生成携带 uptime 节点 ID 的房间码。
+// generateRoomCode 生成房间码；nodeID < 0 时为旧格式（不内嵌 nodeID，
+// 校验字符在位置 15），否则内嵌 uptime 节点 ID。
 // nodeID 按小端 base-34 编码：N 部分最后一位（位置 7）为低位、S 部分最后一位
 // （位置 15）为高位；校验微调从位置 15 移到位置 14（权重 1，任何字符值都可微调）。
-func GenerateRoomCodeWithNodeID(nodeID int) (*RoomCode, error) {
-	if nodeID < 0 || nodeID > easytier.NodeIDMax {
+func generateRoomCode(nodeID int) (*RoomCode, error) {
+	if nodeID > easytier.NodeIDMax {
 		return nil, fmt.Errorf("nodeID 超出可编码范围: %d", nodeID)
 	}
+	withNodeID := nodeID >= 0
 
 	var chars [16]byte
-	// 位置 7：nodeID 低位字符；位置 15：nodeID 高位字符
-	lo, hi := easytier.NodeIDChars(nodeID)
-	chars[7] = utils.Charset[lo]
-	chars[15] = utils.Charset[hi]
-
-	// 其余位置随机（位置 14 除外，留作校验微调）
-	for i := 0; i < 16; i++ {
-		if i == 7 || i == 14 || i == 15 {
-			continue
-		}
-		c, err := utils.RandomChar()
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate random char: %w", err)
-		}
-		chars[i] = c
+	if err := utils.RandomChars(chars[:]); err != nil {
+		return nil, fmt.Errorf("failed to generate random char: %w", err)
 	}
 
-	// 微调位置 14（权重 1）使加权和 % 7 == 0：v14 ≡ -sum (mod 7)。
-	// rem 恒在 [0,6]，Charset[rem] 就是值为 rem 的字符。
-	rem := (-checksumSum(chars, 14)) % 7
-	if rem < 0 {
-		rem += 7
+	if withNodeID {
+		lo, hi := easytier.NodeIDChars(nodeID)
+		chars[7] = utils.Charset[lo]
+		chars[15] = utils.Charset[hi]
+
+		// 微调位置 14（权重 1）使加权和 % 7 == 0：v14 ≡ -sum (mod 7)。
+		// rem 恒在 [0,6]，Charset[rem] 就是值为 rem 的字符。
+		rem := (-checksumSum(chars, 14)) % 7
+		if rem < 0 {
+			rem += 7
+		}
+		chars[14] = utils.Charset[rem]
+	} else {
+		// 旧格式：Position 15 is odd, so its weight is 6. We need (sum + v*6) % 7 == 0.
+		// v*6 mod 7 == (-v) mod 7, so we need v ≡ sum (mod 7)。rem 恒在 [0,6]。
+		chars[15] = utils.Charset[checksumSum(chars, 15)%7]
 	}
-	chars[14] = utils.Charset[rem]
 
 	return &RoomCode{
 		NetworkPart: string(chars[:8]),
@@ -88,27 +79,19 @@ func GenerateRoomCodeWithNodeID(nodeID int) (*RoomCode, error) {
 	}, nil
 }
 
+// GenerateRoomCodeWithNodeID 生成携带 uptime 节点 ID 的房间码。
+func GenerateRoomCodeWithNodeID(nodeID int) (*RoomCode, error) {
+	if nodeID < 0 {
+		return nil, fmt.Errorf("nodeID 超出可编码范围: %d", nodeID)
+	}
+	return generateRoomCode(nodeID)
+}
+
 // GenerateRoomCode generates a valid room code deterministically:
 // the first 15 characters are random, and the 16th is computed so
 // the checksum passes, eliminating rejection sampling.
 func GenerateRoomCode() (*RoomCode, error) {
-	var chars [16]byte
-	for i := 0; i < 15; i++ {
-		c, err := utils.RandomChar()
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate random char: %w", err)
-		}
-		chars[i] = c
-	}
-
-	// Position 15 is odd, so its weight is 6. We need (sum + v*6) % 7 == 0.
-	// v*6 mod 7 == (-v) mod 7, so we need v ≡ sum (mod 7)。rem 恒在 [0,6]。
-	chars[15] = utils.Charset[checksumSum(chars, 15)%7]
-
-	return &RoomCode{
-		NetworkPart: string(chars[:8]),
-		SecretPart:  string(chars[8:]),
-	}, nil
+	return generateRoomCode(-1)
 }
 
 func ParseRoomCode(s string) (*RoomCode, error) {
