@@ -188,6 +188,38 @@ String state = GravityConeAndroidAPI.getState();
 > RakNet 经本地中继监听（`127.0.0.1`）把客户端流量转发到 host，无需端口转发。
 > 创建/加入房时自动协商，无需调用方干预。
 
+### 中继节点（Relay）
+
+SDK **不内置节点分发服务**，中继节点由集成方（启动器）自行管理。建房/加房前
+调用 `setRelay(nodeId, url)` 指定中继节点：
+
+```java
+// 房主建房：nodeID 编码进生成的房间码，url 作为 EasyTier peer
+GravityConeAndroidAPI.setRelay(123, "tcp://1.2.3.4:5678");
+GravityConeAndroidAPI.setScanning(null, "Steve", "scaffolding");
+
+// 房客加房：中继地址由集成方自行获取后传入（nodeID 仅房主建房时使用）
+GravityConeAndroidAPI.setRelay(0, "tcp://1.2.3.4:5678");
+GravityConeAndroidAPI.setGuesting("U/1234-5678-9012-3456", "Alex");
+```
+
+- `setRelay` 设置后持久生效，直到再次调用；`url` 传空串即清除，恢复仅使用内置节点
+- 未调用 `setRelay` 时：房主生成的房间码编码 `805`（=不使用公共节点），双方仅用内置节点，无中继兜底
+- 房主仅传地址不传 ID 时，nodeID 默认 `0`（自用中继）
+
+#### 从联机码中解析 nodeID
+
+两种协议（`U/` ScaffoldingMC、`P/` PaperConnect）的编码规则一致：
+
+1. 去掉前缀与连字符，得到 16 个字符（转大写）
+2. 第 **8** 个字符（网络名部分最后一位）在 34 字符集 `0-9, A-H, J-N, P-Z`（值 0~33）中的值为**低位**；第 **16** 个字符（密钥部分最后一位）为**高位**
+3. `nodeID = 低位值 + 34 × 高位值`
+4. 保留值：`0`（`00`）= 房主使用自用中继；`805`（`PP`）= 不使用公共节点（纯 P2P）
+
+> 联机码内嵌 nodeID 的完整改动说明（校验微调位、兼容性等）见
+> [document/Protocol/scaffolding_relay.md](../../document/Protocol/scaffolding_relay.md)
+> 与 [document/Protocol/paperconnect_relay.md](../../document/Protocol/paperconnect_relay.md)。
+
 ### 退出房间
 
 ```java

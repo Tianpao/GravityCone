@@ -133,6 +133,17 @@ type ScaffoldingService struct {
 	uptimeClient   *easytier.UptimeClient
 	settingsSvc    *easytier.SettingsService
 
+	// 启动器指定的中继节点（CLI/FFI 模式）：nodeID 编码进房间码，
+	// url 直接作为 EasyTier peer。未设置时使用内置节点。
+	externalRelayMu  sync.Mutex
+	externalRelaySet bool
+	externalRelayID  int
+	externalRelayURL string
+
+	// Uptime 自动分发仅 GUI 启用（main.go 调用 EnableUptime）；CLI/FFI 不启用，
+	// 中继由启动器传入，不传时使用内置节点，绝不拉取 uptime。
+	uptimeEnabled bool
+
 	// HOST state
 	hostManager    *easytier.EasyTierManager
 	hostListener   net.Listener
@@ -1175,15 +1186,57 @@ func ConfigureCLIPeers(s *ScaffoldingService, peers []string) {
 	s.peerConfig.SetCLIOverride(peers)
 }
 
+// EnableUptime 启用 Uptime 节点自动分发。仅 GUI 调用；CLI/FFI 不启用，
+// 中继由启动器传入，不传时使用内置节点。
+func EnableUptime(s *ScaffoldingService) {
+	s.uptimeEnabled = true
+}
+
+// ConfigureExternalRelay sets the relay node provided by the caller
+// (CLI/FFI mode): nodeID is embedded into the room code on the host side,
+// and url is used directly as an EasyTier peer on both sides. Passing an
+// empty url or a negative nodeID clears the override, reverting to the
+// automatic uptime node fetch.
+func ConfigureExternalRelay(s *ScaffoldingService, nodeID int, url string) {
+	s.externalRelayMu.Lock()
+	defer s.externalRelayMu.Unlock()
+	if url == "" || nodeID < 0 {
+		s.externalRelaySet = false
+		s.externalRelayID = 0
+		s.externalRelayURL = ""
+		return
+	}
+	s.externalRelaySet = true
+	s.externalRelayID = nodeID
+	s.externalRelayURL = url
+}
+
+// externalRelay returns the caller-provided relay (nodeID, url) and whether one is set.
+func (s *ScaffoldingService) externalRelay() (nodeID int, url string, ok bool) {
+	s.externalRelayMu.Lock()
+	defer s.externalRelayMu.Unlock()
+	return s.externalRelayID, s.externalRelayURL, s.externalRelaySet
+}
+
 func (s *ScaffoldingService) resolvePeers() []string {
 	return s.peerConfig.Resolve(scaffoldingBuiltinPeers)
 }
 
-// hostPeersAndNodeID 拉取 uptime 节点作为房主的 peers，并把选定的中继节点 ID
-// 返回用于编码进房间码（房客据此定向获取同一个中继；P2P 发现节点同时作为
-// 发现兜底）。拉取失败时房间标记为"不使用公共节点"，仅用内置节点。
+// hostPeersAndNodeID 组装房主的 peers 并返回要编码进房间码的中继节点 ID。
+// 启动器指定了中继（CLI/FFI）时直接用其 nodeID 与地址；否则未启用 uptime
+// （CLI/FFI）时房间标记为"不使用公共节点"，仅用内置节点；仅 GUI 拉取
+// uptime 节点（P2P 发现节点同时作为发现兜底），拉取失败同样降级内置节点。
 func (s *ScaffoldingService) hostPeersAndNodeID() ([]string, int) {
 	peers := s.resolvePeers()
+
+	if nodeID, url, ok := s.externalRelay(); ok {
+		slog.Info("使用启动器指定的中继节点", "nodeID", nodeID, "url", url)
+		return append(peers, url), nodeID
+	}
+
+	if !s.uptimeEnabled {
+		return peers, NodeIDReservedNoPublic
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -1205,13 +1258,24 @@ func (s *ScaffoldingService) hostPeersAndNodeID() ([]string, int) {
 	return append(peers, urls...), relayID
 }
 
-// guestPeers 按房间码内嵌的 nodeID 组装房客的 peers：
+// guestPeers 组装房客的 peers。启动器指定了中继时，节点地址已由其
+// 获取处理完毕，直接使用传入地址（不按房间码 nodeID 定向获取）；
+// 未启用 uptime（CLI/FFI）时仅用内置节点；GUI 按房间码内嵌 nodeID 分支：
 //   - 保留 ID 00（自用中继）：不追加 uptime 公共中继，仅保留列表 P2P 发现节点
 //   - 保留 ID PP（不使用公共节点）：纯 P2P，仅内置节点
 //   - 其他：向 /api/node/connect/:nodeID 定向获取房主的中继；失败（旧房间码
 //     随机值/节点失效）则降级为完整列表节点
 func (s *ScaffoldingService) guestPeers(nodeID int) []string {
 	peers := s.resolvePeers()
+
+	if _, url, ok := s.externalRelay(); ok {
+		slog.Info("使用启动器指定的中继节点", "url", url)
+		return append(peers, url)
+	}
+
+	if !s.uptimeEnabled {
+		return peers
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -10,6 +10,45 @@ import (
 	"gravitycone/core/protocol/scaffolding"
 )
 
+// 启动器指定的中继节点（CLI/FFI 模式）：nodeID 编码进房间码（房主端），
+// url 直接作为 EasyTier peer（房主与房客两端）。setRelay 在 setScanning /
+// setGuesting 前调用；设置后持久保持，直到再次调用（url 为空则清除，
+// 恢复 uptime 自动获取）。
+var (
+	relayMu     sync.Mutex
+	relayNodeID int
+	relayURL    string
+)
+
+// setRelay 设置启动器提供的中继节点；url 为空时清除覆盖。
+func setRelay(nodeID int, url string) {
+	relayMu.Lock()
+	defer relayMu.Unlock()
+	relayNodeID = nodeID
+	relayURL = url
+}
+
+// relayParams 返回当前启动器指定的中继配置。
+func relayParams() (nodeID int, url string) {
+	relayMu.Lock()
+	defer relayMu.Unlock()
+	return relayNodeID, relayURL
+}
+
+// applyRelayToScaffolding 把启动器指定的中继注入 Scaffolding 服务
+// （url 为空时清除覆盖，恢复 uptime 自动获取）。
+func applyRelayToScaffolding(svc *scaffolding.ScaffoldingService) {
+	nodeID, url := relayParams()
+	scaffolding.ConfigureExternalRelay(svc, nodeID, url)
+}
+
+// applyRelayToPaperConnect 把启动器指定的中继注入 PaperConnect 服务
+// （url 为空时清除覆盖，恢复 uptime 自动获取）。
+func applyRelayToPaperConnect(svc *paperconnect.PaperConnectService) {
+	nodeID, url := relayParams()
+	paperconnect.ConfigureExternalRelay(svc, nodeID, url)
+}
+
 // ffiEventEmitter bridges asynchronous core-service events into the state
 // JSON that Android polls. PaperConnect establishes its game bridge after
 // JoinRoom returns, so dropping these events made an Android join look
@@ -148,6 +187,7 @@ func startScaffoldingHost(playerName string, ctx *hostContext) {
 
 	// Create scaffolding service.
 	svc := scaffolding.NewScaffoldingService(ffiEventEmitter{})
+	applyRelayToScaffolding(svc)
 
 	// Scan for available MC port. For now, use default 25565.
 	// In the future, we can integrate MinecraftScanner like Terracotta does.
@@ -185,6 +225,7 @@ func startPaperConnectHost(playerName string, ctx *hostContext) {
 	// 状态已在 setScanning 的 beginTransition 中转移到 HostScanning。
 
 	svc := paperconnect.NewPaperConnectService(ffiEventEmitter{})
+	applyRelayToPaperConnect(svc)
 
 	if !transitionToIfOwner(ctx, StateHostStarting, ctx) {
 		return
@@ -223,6 +264,7 @@ func joinScaffoldingRoom(roomCode, playerName string, ctx *guestContext) {
 	}
 
 	svc := scaffolding.NewScaffoldingService(ffiEventEmitter{})
+	applyRelayToScaffolding(svc)
 	// Inject progress callback equivalent to CLI mode.
 	scaffolding.SetScaffoldingJoinProgress(svc, progress)
 
@@ -256,6 +298,7 @@ func joinPaperConnectRoom(roomCode, playerName string, ctx *guestContext) {
 	// 状态已在 setGuesting 的 beginTransition 中转移到 GuestConnecting。
 
 	svc := paperconnect.NewPaperConnectService(ffiEventEmitter{guest: ctx})
+	applyRelayToPaperConnect(svc)
 
 	result, err := svc.JoinRoom(roomCode, playerName, "", "")
 	if err != nil {

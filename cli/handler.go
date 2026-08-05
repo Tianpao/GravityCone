@@ -123,7 +123,25 @@ func isPaperConnectCode(code string) bool {
 	return len(code) >= 2 && (code[0] == 'P' || code[0] == 'p') && code[1] == '/'
 }
 
+// applyRelayParams reads the optional relay params from a request and
+// injects them into both protocol services: relay_node_id is embedded into
+// the room code on the host side, relay_url is used directly as an EasyTier
+// peer on both sides. When only the url is provided, the nodeID defaults to
+// 0 (self-managed relay); when the url is empty the external relay is
+// cleared, reverting to the automatic uptime node fetch.
+func (h *Handler) applyRelayParams(req Request) {
+	relayID, relayIDSet := req.getOptionalInt("relay_node_id")
+	relayURL := req.getOptionalString("relay_url")
+	if relayURL != "" && !relayIDSet {
+		relayID = scaffolding.NodeIDReservedSelfRelay
+	}
+	scaffolding.ConfigureExternalRelay(h.scaffoldingSvc, relayID, relayURL)
+	paperconnect.ConfigureExternalRelay(h.paperConnectSvc, relayID, relayURL)
+}
+
 func (h *Handler) handleRoomCreate(req Request) {
+	h.applyRelayParams(req)
+
 	playerName, err := req.getString("player_name")
 	if err != nil {
 		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
@@ -180,6 +198,8 @@ func (h *Handler) handleRoomStop(req Request) {
 }
 
 func (h *Handler) handleRoomJoin(req Request) {
+	h.applyRelayParams(req)
+
 	code, err := req.getString("code")
 	if err != nil {
 		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
@@ -468,6 +488,35 @@ func (r *Request) getString(key string) (string, error) {
 		return "", fmt.Errorf("parameter %s must be a string", key)
 	}
 	return s, nil
+}
+
+// getOptionalInt returns the integer value of an optional parameter.
+// ok is false when the parameter is absent or not a number.
+func (r *Request) getOptionalInt(key string) (int, bool) {
+	v, ok := r.Params[key]
+	if !ok {
+		return 0, false
+	}
+	// JSON numbers are float64 in Go's default unmarshal
+	switch n := v.(type) {
+	case float64:
+		return int(n), true
+	case int:
+		return n, true
+	default:
+		return 0, false
+	}
+}
+
+// getOptionalString returns the string value of an optional parameter
+// ("" when absent or not a string).
+func (r *Request) getOptionalString(key string) string {
+	v, ok := r.Params[key]
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
 }
 
 func (r *Request) getInt(key string) (int, error) {

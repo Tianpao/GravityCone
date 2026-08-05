@@ -104,6 +104,23 @@ func gc_set_guesting(room, player *C.char) C.int {
 	return 0
 }
 
+// gc_set_relay sets the relay node provided by the caller.
+// Call before gc_set_scanning / gc_set_guesting.
+// nodeID: node ID embedded into the room code on the host side
+// (0 = self-managed relay, 805 = no public nodes; ignored on the guest side).
+// url: relay connection address used as an EasyTier peer on both sides
+// (e.g. "tcp://1.2.3.4:5678"). Pass NULL or empty to clear the override,
+// reverting to the automatic uptime node fetch.
+//
+//export gc_set_relay
+func gc_set_relay(nodeID C.int, url *C.char) {
+	u := ""
+	if url != nil {
+		u = C.GoString(url)
+	}
+	setRelay(int(nodeID), u)
+}
+
 // --- STUN (NAT Probing) ---
 
 // gc_stun_probe runs a STUN NAT type probe.
