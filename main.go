@@ -105,6 +105,9 @@ func main() {
 	settingsSvc := &easytier.SettingsService{}
 	scaffolding.ConfigureSettingsPeers(scaffoldingSvc, settingsSvc)
 	paperconnect.ConfigureSettingsPeers(paperConnectSvc, settingsSvc)
+	// Uptime 节点自动分发仅 GUI 启用；CLI/FFI 中继由启动器传入
+	scaffolding.EnableUptime(scaffoldingSvc)
+	paperconnect.EnableUptime(paperConnectSvc)
 
 	app := application.New(application.Options{
 		Name:        "GravityCone",

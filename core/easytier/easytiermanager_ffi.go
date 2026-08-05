@@ -73,6 +73,7 @@ type StartOptions struct {
 	PortForwards       []string
 	Peers              []string
 	UpstreamCompatible bool
+	DisableP2P         bool                                                              // Force relay-only mode (--disable-p2p true). Applies to both profiles.
 	TunFdProvider      func(instName string, virtualIP string, cidr string) (int, error) // optional TUN fd injection (Android)
 }
 
@@ -99,6 +100,7 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 		PortForwards:       opts.PortForwards,
 		Peers:              opts.Peers,
 		UpstreamCompatible: opts.UpstreamCompatible,
+		DisableP2P:         opts.DisableP2P,
 	}
 	// Pass through the TUN fd provider if set (for Android VpnService).
 	// When nil, FFIManager.Start() falls back to DefaultTunFdProvider

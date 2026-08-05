@@ -55,6 +55,7 @@ type PaperConnectConnectionStatus struct {
 type PaperConnectService struct {
 	eventEmitter utils.EventEmitter
 	peerConfig   easytier.PeerConfig
+	relay        *easytier.RelayManager
 
 	// HOST state
 	hostManager    *easytier.EasyTierManager
@@ -108,6 +109,7 @@ func NewPaperConnectService(emitter utils.EventEmitter) *PaperConnectService {
 	}
 	return &PaperConnectService{
 		eventEmitter: emitter,
+		relay:        easytier.NewRelayManager(),
 	}
 }
 
@@ -178,8 +180,11 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	}
 	// If both found, prefer NetherNet (newer version)
 
-	// Generate room code
-	rc, err := GeneratePaperConnectRoomCode()
+	// 拉取 uptime 节点并选定中继 nodeID（须在生成房间码之前，房客据此定向取同一个中继）
+	hostPeers, nodeID := s.relay.HostPeersAndNodeID(s.resolvePeers())
+
+	// Generate room code (embeds the relay node ID)
+	rc, err := GeneratePaperConnectRoomCodeWithNodeID(nodeID)
 	if err != nil {
 		setupFailed = true
 		return nil, fmt.Errorf("生成房间代码失败: %w", err)
@@ -236,8 +241,9 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 		IsHost:             true,
 		TCPPort:            tcpPort,
 		MCPort:             gamePort,
-		Peers:              s.resolvePeers(),
+		Peers:              hostPeers,
 		UpstreamCompatible: true,
+		DisableP2P:         s.relay.P2PDisabled(),
 	})
 	if err != nil {
 		if rakLn != nil {
@@ -618,6 +624,9 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		return nil, err
 	}
 
+	// 房客 peers 只计算一次（proxy 模式两阶段共用；uptime 地址换取只做一遍）
+	guestPeers := s.relay.GuestPeers(s.resolvePeers(), rc.NodeID())
+
 	// Phase 1: start EasyTier without port forwards to discover host.
 	manager, err := easytier.NewEasyTierManager()
 	if err != nil {
@@ -628,8 +637,9 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		NetworkName:        rc.EasyTierNetworkName(),
 		NetworkSecret:      rc.EasyTierNetworkSecret(),
 		IsHost:             false,
-		Peers:              s.resolvePeers(),
+		Peers:              guestPeers,
 		UpstreamCompatible: true,
+		DisableP2P:         s.relay.P2PDisabled(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
@@ -698,8 +708,9 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 			NetworkSecret:      rc.EasyTierNetworkSecret(),
 			IsHost:             false,
 			PortForwards:       pcGuestPortForwards(dialMode, protocol, hostIP, serverPort, gamePort, tcpLocalPort, rakLocalPort),
-			Peers:              s.resolvePeers(),
+			Peers:              guestPeers,
 			UpstreamCompatible: true,
+			DisableP2P:         s.relay.P2PDisabled(),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("启动虚拟网络(端口转发)失败: %w", err)
@@ -1435,11 +1446,27 @@ func (s *PaperConnectService) Cleanup() {
 }
 
 func ConfigureSettingsPeers(s *PaperConnectService, settingsSvc *easytier.SettingsService) {
+	s.relay.SetSettingsService(settingsSvc)
 	s.peerConfig.SetSettingsService(settingsSvc)
 }
 
 func ConfigureCLIPeers(s *PaperConnectService, peers []string) {
 	s.peerConfig.SetCLIOverride(peers)
+}
+
+// EnableUptime 启用 Uptime 节点自动分发。仅 GUI 调用；CLI/FFI 不启用，
+// 中继由启动器传入，不传时使用内置节点。
+func EnableUptime(s *PaperConnectService) {
+	s.relay.EnableUptime()
+}
+
+// ConfigureExternalRelay sets the relay node provided by the caller
+// (CLI/FFI mode): nodeID is embedded into the room code on the host side,
+// and url is used directly as an EasyTier peer on both sides. Passing an
+// empty url or a negative nodeID clears the override, reverting to the
+// automatic uptime node fetch.
+func ConfigureExternalRelay(s *PaperConnectService, nodeID int, url string) {
+	s.relay.SetExternal(nodeID, url)
 }
 
 func (s *PaperConnectService) resolvePeers() []string {

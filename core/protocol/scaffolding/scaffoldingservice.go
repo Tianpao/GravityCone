@@ -105,6 +105,7 @@ func NewScaffoldingService(emitter utils.EventEmitter) *ScaffoldingService {
 	}
 	return &ScaffoldingService{
 		eventEmitter: emitter,
+		relay:        easytier.NewRelayManager(),
 	}
 }
 
@@ -128,6 +129,7 @@ type ScaffoldingService struct {
 	eventEmitter   utils.EventEmitter
 	joinProgressCb func(string) // set by CLI mode for progress notifications
 	peerConfig     easytier.PeerConfig
+	relay          *easytier.RelayManager
 
 	// HOST state
 	hostManager    *easytier.EasyTierManager
@@ -196,8 +198,11 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 		return nil, fmt.Errorf("端口 %d 上未检测到 Minecraft 服务器，请确认服务器已启动", mcPort)
 	}
 
-	// 1. Generate room code
-	rc, err := GenerateRoomCode()
+	// 1. 拉取 uptime 节点并选定发现节点 nodeID（须在生成房间码之前，房客据此定向取同一个节点）
+	hostPeers, nodeID := s.relay.HostPeersAndNodeID(s.resolvePeers())
+
+	// 1. Generate room code (embeds the discovery node ID)
+	rc, err := GenerateRoomCodeWithNodeID(nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("生成房间代码失败: %w", err)
 	}
@@ -230,7 +235,8 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 		IsHost:        true,
 		TCPPort:       tcpPort,
 		MCPort:        mcPort,
-		Peers:         s.resolvePeers(),
+		Peers:         hostPeers,
+		DisableP2P:    s.relay.P2PDisabled(),
 	})
 	if err != nil {
 		listener.Close()
@@ -608,7 +614,8 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 		NetworkName:   rc.EasyTierNetworkName(),
 		NetworkSecret: rc.EasyTierNetworkSecret(),
 		IsHost:        false,
-		Peers:         s.resolvePeers(),
+		Peers:         s.relay.GuestPeers(s.resolvePeers(), rc.NodeID()),
+		DisableP2P:    s.relay.P2PDisabled(),
 	}); err != nil {
 		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
 	}
@@ -1148,12 +1155,28 @@ func (s *ScaffoldingService) Cleanup() {
 
 // ConfigureSettingsPeers provides GUI custom peers for future EasyTier starts.
 func ConfigureSettingsPeers(s *ScaffoldingService, settingsSvc *easytier.SettingsService) {
+	s.relay.SetSettingsService(settingsSvc)
 	s.peerConfig.SetSettingsService(settingsSvc)
 }
 
 // ConfigureCLIPeers replaces the built-in peers for CLI starts.
 func ConfigureCLIPeers(s *ScaffoldingService, peers []string) {
 	s.peerConfig.SetCLIOverride(peers)
+}
+
+// EnableUptime 启用 Uptime 节点自动分发。仅 GUI 调用；CLI/FFI 不启用，
+// 中继由启动器传入，不传时使用内置节点。
+func EnableUptime(s *ScaffoldingService) {
+	s.relay.EnableUptime()
+}
+
+// ConfigureExternalRelay sets the relay node provided by the caller
+// (CLI/FFI mode): nodeID is embedded into the room code on the host side,
+// and url is used directly as an EasyTier peer on both sides. Passing an
+// empty url or a negative nodeID clears the override, reverting to the
+// automatic uptime node fetch.
+func ConfigureExternalRelay(s *ScaffoldingService, nodeID int, url string) {
+	s.relay.SetExternal(nodeID, url)
 }
 
 func (s *ScaffoldingService) resolvePeers() []string {

@@ -50,6 +50,7 @@ PaperConnect 是 GravityCone 面向 **Minecraft Bedrock Edition** 的房间协�
 | `player_name` | string | 是 | 玩家名称 |
 | `protocol` | string | 是 | 必须为 `"paperconnect"` |
 | `mc_port` | number | 否 | PaperConnect 不接受此参数；游戏端口由本机检测或代理自动分配 |
+| `relay` | object | 否 | 中继节点配置 `{"node_id": 123, "url": "tcp://1.2.3.4:5678"}`：`node_id` 编码进生成的房间码（0=自用中继，805=不使用公共节点，省略默认 0）；`url` 直接作为 EasyTier peer。不传时仅使用内置节点（房间码编码 `805`=不使用公共节点） |
 
 ### `room.join`
 
@@ -92,6 +93,7 @@ PaperConnect 是 GravityCone 面向 **Minecraft Bedrock Edition** 的房间协�
 |-------------|------|------|------|
 | `code` | string | 是 | `P/` 前缀房间代码 |
 | `player_name` | string | 是 | 玩家名称 |
+| `relay` | object | 否 | 中继节点配置 `{"url": "tcp://1.2.3.4:5678"}`（`node_id` 仅房主建房时使用）。`url` 直接作为 EasyTier peer（节点地址获取由启动器自行处理）。不传时仅使用内置节点 |
 
 #### 本地发现
 

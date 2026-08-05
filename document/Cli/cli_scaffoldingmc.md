@@ -42,6 +42,7 @@ ScaffoldingMC 是 GravityCone 面向 **Minecraft Java Edition** 的房间协议�
 |-------------|------|------|------|
 | `mc_port` | number | 是 | Minecraft 服务器端口（1025-65535） |
 | `player_name` | string | 是 | 玩家名称 |
+| `relay` | object | 否 | 中继节点配置 `{"node_id": 123, "url": "tcp://1.2.3.4:5678"}`：`node_id` 编码进生成的房间码（0=自用中继，805=不使用公共节点，省略默认 0）；`url` 直接作为 EasyTier peer。不传时仅使用内置节点（房间码编码 `805`=不使用公共节点） |
 
 ### `room.join`
 
@@ -89,6 +90,7 @@ ScaffoldingMC 是 GravityCone 面向 **Minecraft Java Edition** 的房间协议�
 |-------------|------|------|------|
 | `code` | string | 是 | `U/` 前缀房间代码 |
 | `player_name` | string | 是 | 玩家名称 |
+| `relay` | object | 否 | 中继节点配置 `{"url": "tcp://1.2.3.4:5678"}`（`node_id` 仅房主建房时使用）。`url` 直接作为 EasyTier peer（节点地址获取由启动器自行处理）。不传时仅使用内置节点 |
 
 #### ScaffoldingMC 进度步骤
 

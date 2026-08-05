@@ -211,6 +211,15 @@ func Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeSetGuesting(
 	return C.JNI_FALSE
 }
 
+//export Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeSetRelay
+func Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeSetRelay(
+	env *C.JNIEnv, clazz C.jclass,
+	nodeID C.jint, url C.jstring,
+) {
+	u := jniToGoString(env, url)
+	setRelay(int(nodeID), u)
+}
+
 //export Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeVerifyRoomCode
 func Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeVerifyRoomCode(
 	env *C.JNIEnv, clazz C.jclass, code C.jstring,

@@ -52,8 +52,8 @@ func TestBuildTOMLConfigScaffoldingHost(t *testing.T) {
 	if !strings.Contains(got, "private_mode = true") {
 		t.Error("missing private_mode for Scaffolding")
 	}
-	if !strings.Contains(got, "p2p_only = true") {
-		t.Error("missing p2p_only for Scaffolding")
+	if !strings.Contains(got, "disable_p2p = false") {
+		t.Error("missing disable_p2p = false for Scaffolding")
 	}
 	// Check host-specific
 	if !strings.Contains(got, `ipv4 = "10.144.144.1"`) {
@@ -73,9 +73,9 @@ func TestBuildTOMLConfigScaffoldingHost(t *testing.T) {
 	if !strings.Contains(got, `listeners = ["tcp://0.0.0.0:0", "udp://0.0.0.0:0"]`) {
 		t.Error("missing listeners")
 	}
-	// Should NOT have PaperConnect flags
-	if strings.Contains(got, "disable_p2p") {
-		t.Error("should not have disable_p2p for Scaffolding")
+	// Should NOT have p2p_only (replaced by disable_p2p)
+	if strings.Contains(got, "p2p_only") {
+		t.Error("should not have p2p_only for Scaffolding")
 	}
 	// Should NOT have dhcp
 	if strings.Contains(got, "dhcp") {

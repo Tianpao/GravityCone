@@ -6,6 +6,7 @@ import (
 	"gravitycone/core/minecraft"
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -123,7 +124,54 @@ func isPaperConnectCode(code string) bool {
 	return len(code) >= 2 && (code[0] == 'P' || code[0] == 'p') && code[1] == '/'
 }
 
+// applyRelayParams reads the optional relay object from a request and
+// injects it into both protocol services. Format:
+//
+//	"relay": {"node_id": 123, "url": "tcp://1.2.3.4:5678"}
+//
+// node_id is embedded into the room code on the host side (0 = self-managed
+// relay, 805 = no public nodes; default 0 when omitted); url is used
+// directly as an EasyTier peer on both sides. When relay is absent or url
+// is empty the external relay is cleared, reverting to built-in peers only
+// (pure P2P).
+func (h *Handler) applyRelayParams(req Request) error {
+	relayID, relayURL := 0, ""
+
+	if raw, ok := req.Params["relay"]; ok {
+		relayObj, ok := raw.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("parameter relay must be an object with node_id and url")
+		}
+		if v, ok := relayObj["url"]; ok {
+			s, ok := v.(string)
+			if !ok {
+				return fmt.Errorf("relay.url must be a string")
+			}
+			relayURL = s
+		}
+		// url 为空视为未设置中继（纯 P2P），node_id 无需校验
+		if relayURL != "" {
+			if v, ok := relayObj["node_id"]; ok {
+				n, ok := toInt(v)
+				if !ok {
+					return fmt.Errorf("relay.node_id must be a number")
+				}
+				relayID = n
+			}
+		}
+	}
+
+	scaffolding.ConfigureExternalRelay(h.scaffoldingSvc, relayID, relayURL)
+	paperconnect.ConfigureExternalRelay(h.paperConnectSvc, relayID, relayURL)
+	return nil
+}
+
 func (h *Handler) handleRoomCreate(req Request) {
+	if err := h.applyRelayParams(req); err != nil {
+		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
+		return
+	}
+
 	playerName, err := req.getString("player_name")
 	if err != nil {
 		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
@@ -180,6 +228,11 @@ func (h *Handler) handleRoomStop(req Request) {
 }
 
 func (h *Handler) handleRoomJoin(req Request) {
+	if err := h.applyRelayParams(req); err != nil {
+		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
+		return
+	}
+
 	code, err := req.getString("code")
 	if err != nil {
 		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
@@ -470,18 +523,34 @@ func (r *Request) getString(key string) (string, error) {
 	return s, nil
 }
 
+// toInt converts a JSON parameter value to int. Accepts numbers and
+// numeric strings (e.g. "25565"), since launchers commonly emit integer
+// params as strings.
+func toInt(v interface{}) (int, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int(n), true
+	case int:
+		return n, true
+	case string:
+		i, err := strconv.Atoi(strings.TrimSpace(n))
+		if err != nil {
+			return 0, false
+		}
+		return i, true
+	default:
+		return 0, false
+	}
+}
+
 func (r *Request) getInt(key string) (int, error) {
 	v, ok := r.Params[key]
 	if !ok {
 		return 0, fmt.Errorf("missing required parameter: %s", key)
 	}
-	// JSON numbers are float64 in Go's default unmarshal
-	switch n := v.(type) {
-	case float64:
-		return int(n), nil
-	case int:
-		return n, nil
-	default:
+	n, ok := toInt(v)
+	if !ok {
 		return 0, fmt.Errorf("parameter %s must be a number", key)
 	}
+	return n, nil
 }

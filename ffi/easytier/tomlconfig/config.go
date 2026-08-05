@@ -22,6 +22,7 @@ type StartOptions struct {
 	PortForwards       []string // "tcp://local_addr/remote_addr"
 	Peers              []string // Public peer addresses
 	UpstreamCompatible bool     // PaperConnect-style (no-tun, no p2p restrictions)
+	DisableP2P         bool     // Force relay-only mode (--disable-p2p true). Applies to both profiles.
 	MachineID          string   // Optional machine identifier
 }
 
@@ -80,9 +81,9 @@ func BuildTOMLConfig(opts StartOptions) string {
 	if opts.UpstreamCompatible {
 		// PaperConnect mode: no TUN, peer-to-peer allowed
 		b.WriteString("no_tun = true\n")
-		b.WriteString(fmt.Sprintf("disable_p2p = false\n"))
+		b.WriteString(fmt.Sprintf("disable_p2p = %t\n", opts.DisableP2P))
 	} else {
-		// ScaffoldingMC mode: private P2P network
+		// ScaffoldingMC mode: private network with configurable P2P (relay-capable)
 		b.WriteString("no_tun = true\n")
 		b.WriteString("enable_kcp_proxy = true\n")
 		b.WriteString("enable_quic_proxy = true\n")
@@ -91,7 +92,7 @@ func BuildTOMLConfig(opts StartOptions) string {
 		b.WriteString("data_compress_algo = \"zstd\"\n")
 		b.WriteString("default_protocol = \"tcp\"\n")
 		b.WriteString("private_mode = true\n")
-		b.WriteString("p2p_only = true\n")
+		b.WriteString(fmt.Sprintf("disable_p2p = %t\n", opts.DisableP2P))
 	}
 	b.WriteString("multi_thread = true\n")
 

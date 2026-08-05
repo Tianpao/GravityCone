@@ -414,6 +414,31 @@ public final class GravityConeAndroidAPI {
     }
 
     /**
+     * Set the relay node provided by the caller.
+     *
+     * <p>Call before {@link #setScanning} / {@link #setGuesting}. The nodeID
+     * is embedded into the generated room code on the host side; the url is
+     * used directly as an EasyTier peer on both sides (address acquisition
+     * for the guest is handled by the caller). The setting persists until
+     * changed again.</p>
+     *
+     * @param nodeId Node ID to embed into the room code
+     *               (0 = self-managed relay, 805 = no public nodes;
+     *               ignored on the guest side). To read back the nodeID
+     *               embedded in a room code, see the "中继节点（Relay）"
+     *               section of the SDK README — the encoding rules match
+     *               document/Protocol/scaffolding_relay.md and
+     *               document/Protocol/paperconnect_relay.md.
+     * @param url    Relay connection address (e.g. "tcp://1.2.3.4:5678").
+     *               Null or empty clears the override, reverting to the
+     *               built-in peers only (no node distribution service).
+     */
+    public static void setRelay(int nodeId, @Nullable String url) {
+        assertStarted();
+        nativeSetRelay(nodeId, url != null ? url : "");
+    }
+
+    /**
      * Join a remote room.
      *
      * <p>State transitions: idle → guest-connecting → guest-ready.
@@ -736,6 +761,7 @@ public final class GravityConeAndroidAPI {
     private static native void nativeSetWaiting();
     private static native void nativeSetScanning(String room, String player, String protocol);
     private static native boolean nativeSetGuesting(String room, String player);
+    private static native void nativeSetRelay(int nodeId, String url);
     private static native int nativeVerifyRoomCode(String code);
     private static native String nativeStunProbe();
     private static native String nativeGetMetadata();

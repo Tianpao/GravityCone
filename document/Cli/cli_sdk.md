@@ -186,6 +186,25 @@ CLI 支持两种联机协议：
 - `room.stop`、`room.leave`、`room.cancel_join` 和 `room.status` 自动检测当前活跃的协议。
 - `room.create`、`room.join`、`room.status` 的协议专属参数、结果和事件请参见对应文档。
 
+### 中继节点参数（可选）
+
+两种协议的 `room.create` / `room.join` 均支持可选参数 `relay`（对象）：
+
+```json
+{"id": 4, "method": "room.create", "params": {
+  "mc_port": 25565,
+  "player_name": "Steve",
+  "relay": {"node_id": 123, "url": "tcp://1.2.3.4:5678"}
+}}
+```
+
+| 字段 | 适用 | 说明 |
+|------|------|------|
+| `relay.node_id` | `room.create` | 中继节点 ID，编码进生成的房间码（0=自用中继，805=不使用公共节点）；省略时默认 0（`node_id` 也可传数字字符串） |
+| `relay.url` | `room.create` / `room.join` | 中继节点连接地址，直接作为 EasyTier peer；房客端的地址获取由启动器自行处理 |
+
+> CLI/FFI 不使用 Uptime 节点分发服务。不传 `relay` 或 `relay.url` 为空时仅使用内置节点：房主房间码编码 `805`（不使用公共节点），房客使用内置节点，双方在无公共中继的情况下依赖 P2P 直连。
+
 ### 共享房间方法
 
 #### `room.stop`
@@ -494,10 +513,10 @@ printf '{"id":1,"method":"system.ping","params":{}}\n{"id":2,"method":"system.sh
 | `system.shutdown` | 无 | <1s | 关闭 CLI |
 | `system.add_peers` | `peers` | <1s | 动态添加节点 |
 | `stun.probe` | 无 | 3-10s | NAT 探查 |
-| `room.create` | `mc_port`, `player_name` | 2-5s | 创建房间（ScaffoldingMC，详见 `cli_scaffoldingmc.md`） |
-| `room.create` | `player_name`, `protocol` | 2-5s | 创建房间（PaperConnect，详见 `cli_paperconnect.md`） |
+| `room.create` | `mc_port`, `player_name`；可选 `relay` | 2-5s | 创建房间（ScaffoldingMC，详见 `cli_scaffoldingmc.md`） |
+| `room.create` | `player_name`, `protocol`；可选 `relay` | 2-5s | 创建房间（PaperConnect，详见 `cli_paperconnect.md`） |
 | `room.stop` | 无 | <1s | 停止当前协议的房间 |
-| `room.join` | `code`, `player_name` | 5-30s | 加入房间（详见对应协议文档） |
+| `room.join` | `code`, `player_name`；可选 `relay` | 5-30s | 加入房间（详见对应协议文档） |
 | `room.cancel_join` | 无 | <1s | 取消加入 |
 | `room.leave` | 无 | <1s | 离开房间 |
 | `room.status` | 无 | <1s | 查询当前协议的房间状态 |
