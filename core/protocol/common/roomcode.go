@@ -1,7 +1,8 @@
-package utils
+package common
 
 import "crypto/rand"
 
+// Charset 是房间码字符集（34 字符，无 I/O 混淆）。
 const Charset = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 
 var values = func() [256]int8 {
@@ -15,6 +16,7 @@ var values = func() [256]int8 {
 	return table
 }()
 
+// Value 返回字符在字符集中的值；不在字符集中的字符返回 false。
 func Value(c byte) (int, bool) {
 	value := int(values[c])
 	return value, value >= 0
@@ -25,6 +27,7 @@ func IsPaperConnectCode(code string) bool {
 	return len(code) >= 2 && (code[0] == 'P' || code[0] == 'p') && code[1] == '/'
 }
 
+// RandomChar 从字符集随机取一个字符。
 func RandomChar() (byte, error) {
 	var buf [1]byte
 	if _, err := rand.Read(buf[:]); err != nil {

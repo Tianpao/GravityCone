@@ -1,4 +1,4 @@
-package account
+package naids
 
 import (
 	"context"
@@ -8,12 +8,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"gravitycone/core/app/account"
 )
 
 const (
@@ -92,7 +92,7 @@ func (s *NatayarkService) StartLogin() (*NatayarkLoginResult, error) {
 	authURL := fmt.Sprintf("%s?response_type=code&redirect_uri=%s&client_id=%s",
 		natayarkAuthorizeURL, redirectURI, s.clientID)
 
-	if err := openBrowser(authURL); err != nil {
+	if err := account.OpenBrowser(authURL); err != nil {
 		srv.Shutdown(context.Background())
 		return nil, fmt.Errorf("failed to open browser: %w", err)
 	}
@@ -217,15 +217,4 @@ func (s *NatayarkService) fetchUserData(token string) (*NatayarkUser, error) {
 		return nil, fmt.Errorf("API error: %s (code %d)", apiResp.Msg, apiResp.Code)
 	}
 	return &apiResp.Data, nil
-}
-
-func openBrowser(url string) error {
-	switch runtime.GOOS {
-	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	case "darwin":
-		return exec.Command("open", url).Start()
-	default:
-		return exec.Command("xdg-open", url).Start()
-	}
 }

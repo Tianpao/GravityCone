@@ -5,9 +5,10 @@ package main
 import (
 	"embed"
 	"gravitycone/core/app"
-	"gravitycone/core/app/account"
+	"gravitycone/core/app/account/microsoft"
+	"gravitycone/core/app/account/naids"
 	"gravitycone/core/easytier"
-	"gravitycone/core/minecraft"
+	"gravitycone/core/lan"
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
 	"gravitycone/core/utils"
@@ -45,7 +46,7 @@ func init() {
 	application.RegisterEvent[map[string]string]("room.closed")
 	application.RegisterEvent[map[string]string]("room.disconnected")
 	application.RegisterEvent[[]scaffolding.PlayerInfo]("room.guest_player_list_updated")
-	application.RegisterEvent[minecraft.LanServer]("lan.server_found")
+	application.RegisterEvent[lan.LanServer]("lan.server_found")
 	application.RegisterEvent[map[string]interface{}]("lan.server_lost")
 	application.RegisterEvent[map[string]string]("paperconnect.connection.port_busy")
 	application.RegisterEvent[map[string]string]("paperconnect.connection.ready")
@@ -97,9 +98,9 @@ func main() {
 		easytier.SetEasyTierLogOutput(filepath.Join(logDir, "easytier.log"))
 	}
 
-	natayarkSvc := account.NewNatayarkService(naidsID, naidsSecret)
-	minecraftSvc := account.NewMinecraftService(clientID, clientSecret)
-	lanSvc := minecraft.NewLanService(nil)
+	natayarkSvc := naids.NewNatayarkService(naidsID, naidsSecret)
+	minecraftSvc := microsoft.NewMinecraftService(clientID, clientSecret)
+	lanSvc := lan.NewLanService(nil)
 	scaffoldingSvc := scaffolding.NewScaffoldingService(nil)
 	paperConnectSvc := paperconnect.NewPaperConnectService(nil)
 	settingsSvc := &easytier.SettingsService{}

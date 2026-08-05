@@ -3,9 +3,9 @@ package main
 import (
 	"testing"
 
+	"gravitycone/core/protocol/common"
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
-	"gravitycone/core/utils"
 )
 
 // --- IsPaperConnectCode ---
@@ -29,7 +29,7 @@ func TestIsPaperConnectCode(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := utils.IsPaperConnectCode(tt.code)
+		got := common.IsPaperConnectCode(tt.code)
 		if got != tt.want {
 			t.Errorf("IsPaperConnectCode(%q) = %v, want %v", tt.code, got, tt.want)
 		}

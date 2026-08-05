@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"gravitycone/core/easytier"
-	"gravitycone/core/utils"
+	"gravitycone/core/protocol/common"
 )
 
 // TestNodeIDRoundTrip 验证 nodeID 编码/解码往返（解析通过即校验满足，无需再单独断言）。
@@ -76,10 +76,10 @@ func TestLegacyRoomCodeCompatibility(t *testing.T) {
 func TestNodeIDCharset(t *testing.T) {
 	for id := 0; id <= easytier.NodeIDMax; id++ {
 		lo, hi := easytier.NodeIDChars(id)
-		if _, ok := utils.Value(utils.Charset[lo]); !ok {
+		if _, ok := common.Value(common.Charset[lo]); !ok {
 			t.Fatalf("low char not in charset for id %d", id)
 		}
-		if _, ok := utils.Value(utils.Charset[hi]); !ok {
+		if _, ok := common.Value(common.Charset[hi]); !ok {
 			t.Fatalf("high char not in charset for id %d", id)
 		}
 	}

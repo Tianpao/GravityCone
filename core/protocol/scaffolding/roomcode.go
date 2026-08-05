@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"gravitycone/core/easytier"
-	"gravitycone/core/utils"
+	"gravitycone/core/protocol/common"
 )
 
 type RoomCode struct {
@@ -20,7 +20,7 @@ func checksumSum(chars [16]byte, skip int) int {
 		if i == skip {
 			continue
 		}
-		v, _ := utils.Value(chars[i])
+		v, _ := common.Value(chars[i])
 		if i%2 == 1 {
 			v *= 6
 		}
@@ -33,7 +33,7 @@ func checksumSum(chars [16]byte, skip int) int {
 // contributes value*6^(i%2)) is divisible by 7.
 func isValidChecksum(chars [16]byte) bool {
 	for i := 0; i < 16; i++ {
-		if _, ok := utils.Value(chars[i]); !ok {
+		if _, ok := common.Value(chars[i]); !ok {
 			return false
 		}
 	}
@@ -51,14 +51,14 @@ func generateRoomCode(nodeID int) (*RoomCode, error) {
 	withNodeID := nodeID >= 0
 
 	var chars [16]byte
-	if err := utils.RandomChars(chars[:]); err != nil {
+	if err := common.RandomChars(chars[:]); err != nil {
 		return nil, fmt.Errorf("failed to generate random char: %w", err)
 	}
 
 	if withNodeID {
 		lo, hi := easytier.NodeIDChars(nodeID)
-		chars[7] = utils.Charset[lo]
-		chars[15] = utils.Charset[hi]
+		chars[7] = common.Charset[lo]
+		chars[15] = common.Charset[hi]
 
 		// 微调位置 14（权重 1）使加权和 % 7 == 0：v14 ≡ -sum (mod 7)。
 		// rem 恒在 [0,6]，Charset[rem] 就是值为 rem 的字符。
@@ -66,11 +66,11 @@ func generateRoomCode(nodeID int) (*RoomCode, error) {
 		if rem < 0 {
 			rem += 7
 		}
-		chars[14] = utils.Charset[rem]
+		chars[14] = common.Charset[rem]
 	} else {
 		// 旧格式：Position 15 is odd, so its weight is 6. We need (sum + v*6) % 7 == 0.
 		// v*6 mod 7 == (-v) mod 7, so we need v ≡ sum (mod 7)。rem 恒在 [0,6]。
-		chars[15] = utils.Charset[checksumSum(chars, 15)%7]
+		chars[15] = common.Charset[checksumSum(chars, 15)%7]
 	}
 
 	return &RoomCode{
@@ -111,7 +111,7 @@ func ParseRoomCode(s string) (*RoomCode, error) {
 	if !isValidChecksum(chars) {
 		// Find the first invalid char for a better error message.
 		for i := 0; i < 16; i++ {
-			if _, ok := utils.Value(chars[i]); !ok {
+			if _, ok := common.Value(chars[i]); !ok {
 				return nil, fmt.Errorf("房间代码包含无效字符: %c", chars[i])
 			}
 		}
@@ -143,7 +143,7 @@ func (r *RoomCode) EasyTierNetworkSecret() string {
 // NodeID 解码内嵌的 uptime 节点 ID（N 部分最后一位为低位、S 部分最后一位为高位，
 // 小端 base-34）。旧格式房间码未内嵌 nodeID，解析结果为随机值，调用方需验证有效性。
 func (r *RoomCode) NodeID() int {
-	lo, _ := utils.Value(r.NetworkPart[7])
-	hi, _ := utils.Value(r.SecretPart[7])
+	lo, _ := common.Value(r.NetworkPart[7])
+	hi, _ := common.Value(r.SecretPart[7])
 	return easytier.NodeIDFromChars(lo, hi)
 }

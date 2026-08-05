@@ -5,11 +5,9 @@ package cli
 import (
 	"fmt"
 	"gravitycone/core/easytier"
-	"gravitycone/core/minecraft"
+	"gravitycone/core/lan"
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
-	"gravitycone/core/utils"
-	"strconv"
 	"strings"
 	"sync"
 )
@@ -17,7 +15,7 @@ import (
 // Handler dispatches CLI requests to core service methods.
 type Handler struct {
 	stunSvc         *easytier.StunService
-	lanSvc          *minecraft.LanService
+	lanSvc          *lan.LanService
 	scaffoldingSvc  *scaffolding.ScaffoldingService
 	paperConnectSvc *paperconnect.PaperConnectService
 	writer          *StdioWriter
@@ -30,7 +28,7 @@ type Handler struct {
 // NewHandler creates a Handler with the given services and writer.
 func NewHandler(
 	stunSvc *easytier.StunService,
-	lanSvc *minecraft.LanService,
+	lanSvc *lan.LanService,
 	scaffoldingSvc *scaffolding.ScaffoldingService,
 	paperConnectSvc *paperconnect.PaperConnectService,
 	writer *StdioWriter,
@@ -164,205 +162,6 @@ func (h *Handler) applyRelayParams(req Request) error {
 	return nil
 }
 
-func (h *Handler) handleRoomCreate(req Request) {
-	if err := h.applyRelayParams(req); err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
-		return
-	}
-
-	playerName, err := req.getString("player_name")
-	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
-		return
-	}
-
-	protocol, _ := req.getString("protocol")
-
-	if protocol == "paperconnect" {
-		result, err := h.paperConnectSvc.CreateRoom(playerName, h.vendorPrefix)
-		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
-			return
-		}
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
-			"code":         result.Code,
-			"game_port":    result.GamePort,
-			"online_count": result.OnlineCount,
-			"players":      result.Players,
-			"running":      result.Running,
-			"protocol":     "paperconnect",
-			"sub_protocol": result.SubProtocol,
-		}))
-		return
-	}
-
-	// Default: Scaffolding (Java Edition)
-	mcPort, err := req.getInt("mc_port")
-	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
-		return
-	}
-
-	result, err := h.scaffoldingSvc.CreateRoom(uint16(mcPort), playerName, h.vendorPrefix, h.motd)
-	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
-		return
-	}
-	h.writer.WriteResponse(successResponse(req.ID, result))
-}
-
-func (h *Handler) handleRoomStop(req Request) {
-	// Try PaperConnect first, then Scaffolding
-	if err := h.paperConnectSvc.StopRoom(); err == nil {
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
-		return
-	}
-	err := h.scaffoldingSvc.StopRoom()
-	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
-		return
-	}
-	h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
-}
-
-func (h *Handler) handleRoomJoin(req Request) {
-	if err := h.applyRelayParams(req); err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
-		return
-	}
-
-	code, err := req.getString("code")
-	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
-		return
-	}
-	playerName, err := req.getString("player_name")
-	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
-		return
-	}
-
-	if utils.IsPaperConnectCode(code) {
-		result, err := h.paperConnectSvc.JoinRoom(code, playerName, h.vendorPrefix, h.motd)
-		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
-			return
-		}
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
-			"room_code":         result.RoomCode,
-			"host_address":      result.HostAddress,
-			"game_port":         result.GamePort,
-			"connected":         result.Connected,
-			"online_count":      result.OnlineCount,
-			"players":           result.Players,
-			"heartbeating":      result.Heartbeating,
-			"disconnect_reason": result.DisconnectReason,
-			"protocol":          "paperconnect",
-			"sub_protocol":      result.SubProtocol,
-		}))
-		return
-	}
-
-	// Scaffolding (U/) join with progress callback
-	scaffolding.SetScaffoldingJoinProgress(h.scaffoldingSvc, func(step string) {
-		h.writer.WriteResponse(progressResponse(req.ID, map[string]string{
-			"step":    step,
-			"message": progressMessage(step),
-		}))
-	})
-	defer scaffolding.SetScaffoldingJoinProgress(h.scaffoldingSvc, nil)
-
-	result, err := h.scaffoldingSvc.JoinRoom(code, playerName, h.vendorPrefix, h.motd)
-	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
-		return
-	}
-	h.writer.WriteResponse(successResponse(req.ID, result))
-}
-
-func (h *Handler) handleRoomLeave(req Request) {
-	// Try PaperConnect first, then Scaffolding
-	if err := h.paperConnectSvc.LeaveRoom(); err == nil {
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
-		return
-	}
-	err := h.scaffoldingSvc.LeaveRoom()
-	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
-		return
-	}
-	h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
-}
-
-func (h *Handler) handleRoomStatus(req Request) {
-	// Try PaperConnect host status first
-	pcHostStatus, pcHostErr := h.paperConnectSvc.GetRoomStatus()
-	if pcHostErr == nil {
-		result := hostStatusResult(pcHostStatus.Code, pcHostStatus.OnlineCount, pcHostStatus.Players, pcHostStatus.Running)
-		result["game_port"] = pcHostStatus.GamePort
-		result["protocol"] = "paperconnect"
-		result["sub_protocol"] = pcHostStatus.SubProtocol
-		h.writer.WriteResponse(successResponse(req.ID, result))
-		return
-	}
-
-	// Try Scaffolding host status
-	hostStatus, hostErr := h.scaffoldingSvc.GetRoomStatus()
-	if hostErr == nil {
-		result := hostStatusResult(hostStatus.Code, hostStatus.OnlineCount, hostStatus.Players, hostStatus.Running)
-		result["mc_address"] = hostStatus.MCAddress
-		result["mc_port"] = hostStatus.MCPort
-		h.writer.WriteResponse(successResponse(req.ID, result))
-		return
-	}
-
-	// Try PaperConnect guest status
-	pcGuestStatus, pcGuestErr := h.paperConnectSvc.GetConnectionStatus()
-	if pcGuestErr == nil {
-		result := guestStatusResult(pcGuestStatus.RoomCode, pcGuestStatus.HostAddress, pcGuestStatus.Connected, pcGuestStatus.OnlineCount, pcGuestStatus.Players, pcGuestStatus.Heartbeating, pcGuestStatus.DisconnectReason)
-		result["game_port"] = pcGuestStatus.GamePort
-		result["protocol"] = "paperconnect"
-		result["sub_protocol"] = pcGuestStatus.SubProtocol
-		h.writer.WriteResponse(successResponse(req.ID, result))
-		return
-	}
-
-	// Try Scaffolding guest status
-	guestStatus, guestErr := h.scaffoldingSvc.GetConnectionStatus()
-	if guestErr == nil {
-		result := guestStatusResult(guestStatus.RoomCode, guestStatus.HostAddress, guestStatus.Connected, guestStatus.OnlineCount, guestStatus.Players, guestStatus.Heartbeating, guestStatus.DisconnectReason)
-		result["mc_address"] = guestStatus.MCAddress
-		result["mc_port"] = guestStatus.MCPort
-		h.writer.WriteResponse(successResponse(req.ID, result))
-		return
-	}
-
-	h.writer.WriteResponse(successResponse(req.ID, map[string]string{"role": "none"}))
-}
-
-func hostStatusResult(code string, onlineCount int, players interface{}, running bool) map[string]interface{} {
-	return map[string]interface{}{
-		"role":         "host",
-		"code":         code,
-		"online_count": onlineCount,
-		"players":      players,
-		"running":      running,
-	}
-}
-
-func guestStatusResult(roomCode, hostAddress string, connected bool, onlineCount int, players interface{}, heartbeating bool, disconnectReason string) map[string]interface{} {
-	return map[string]interface{}{
-		"role":              "guest",
-		"room_code":         roomCode,
-		"host_address":      hostAddress,
-		"connected":         connected,
-		"online_count":      onlineCount,
-		"players":           players,
-		"heartbeating":      heartbeating,
-		"disconnect_reason": disconnectReason,
-	}
-}
-
 func (h *Handler) handleLan(req Request, action string) {
 	switch action {
 	case "start_discovery":
@@ -423,132 +222,4 @@ func (h *Handler) handleSystem(req Request, action string) {
 	default:
 		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidMethod, req.Method))
 	}
-}
-
-func (h *Handler) handleAddPeers(req Request) {
-	rawPeers, ok := req.Params["peers"]
-	if !ok {
-		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, "missing required parameter: peers"))
-		return
-	}
-	peersArr, ok := rawPeers.([]interface{})
-	if !ok {
-		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, "parameter peers must be an array of strings"))
-		return
-	}
-	var addrs []string
-	for _, v := range peersArr {
-		s, ok := v.(string)
-		if !ok {
-			h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, "parameter peers must be an array of strings"))
-			return
-		}
-		if s != "" {
-			addrs = append(addrs, s)
-		}
-	}
-	if len(addrs) == 0 {
-		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, "peers array must not be empty"))
-		return
-	}
-	h.scaffoldingSvc.AddPeers(addrs)
-	h.paperConnectSvc.AddPeers(addrs)
-	h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
-}
-
-// mapStunError maps a STUN-related error to a CLI error code.
-func mapStunError(err error) string {
-	msg := err.Error()
-	if strings.Contains(msg, "easytier-cli") {
-		return ErrSTUNFailed
-	}
-	if strings.Contains(msg, "parse") {
-		return ErrSTUNParseError
-	}
-	if strings.Contains(msg, "not found") {
-		return ErrEasytierNotFound
-	}
-	return ErrInternalError
-}
-
-// mapRoomError maps a room-related error to a CLI error code.
-func mapRoomError(err error) string {
-	msg := err.Error()
-	if strings.Contains(msg, "已有房间在运行") {
-		return ErrRoomAlreadyRun
-	}
-	if strings.Contains(msg, "已在一个房间中") {
-		return ErrRoomAlreadyRun
-	}
-	if strings.Contains(msg, "未找到") || strings.Contains(msg, "房间代码") {
-		return ErrRoomNotFound
-	}
-	if strings.Contains(msg, "未连接") {
-		return ErrNotConnected
-	}
-	return ErrInternalError
-}
-
-// progressMessage returns a human-readable message for a join progress step.
-func progressMessage(step string) string {
-	switch step {
-	case "resolving":
-		return "正在解析房间代码"
-	case "connecting":
-		return "正在连接 EasyTier 网络..."
-	case "waiting_peer":
-		return "等待对端节点上线..."
-	case "handshaking":
-		return "正在握手协商..."
-	case "ready":
-		return "连接就绪"
-	default:
-		return step
-	}
-}
-
-// --- Request parameter helpers ---
-
-func (r *Request) getString(key string) (string, error) {
-	v, ok := r.Params[key]
-	if !ok {
-		return "", fmt.Errorf("missing required parameter: %s", key)
-	}
-	s, ok := v.(string)
-	if !ok {
-		return "", fmt.Errorf("parameter %s must be a string", key)
-	}
-	return s, nil
-}
-
-// toInt converts a JSON parameter value to int. Accepts numbers and
-// numeric strings (e.g. "25565"), since launchers commonly emit integer
-// params as strings.
-func toInt(v interface{}) (int, bool) {
-	switch n := v.(type) {
-	case float64:
-		return int(n), true
-	case int:
-		return n, true
-	case string:
-		i, err := strconv.Atoi(strings.TrimSpace(n))
-		if err != nil {
-			return 0, false
-		}
-		return i, true
-	default:
-		return 0, false
-	}
-}
-
-func (r *Request) getInt(key string) (int, error) {
-	v, ok := r.Params[key]
-	if !ok {
-		return 0, fmt.Errorf("missing required parameter: %s", key)
-	}
-	n, ok := toInt(v)
-	if !ok {
-		return 0, fmt.Errorf("parameter %s must be a number", key)
-	}
-	return n, nil
 }

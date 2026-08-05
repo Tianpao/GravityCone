@@ -1,4 +1,4 @@
-package account
+package microsoft
 
 import (
 	"bytes"
@@ -8,17 +8,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
+
+	"gravitycone/core/app/account"
 )
 
 const (
@@ -32,13 +29,6 @@ const (
 	msLoginTimeout = 5 * time.Minute
 	msHTTPTimeout  = 15 * time.Second
 )
-
-type MinecraftUser struct {
-	Username    string `json:"username"`
-	UUID        string `json:"uuid"`
-	AccessToken string `json:"access_token"`
-	AvatarPNG   string `json:"avatar_png"`
-}
 
 type msTokenResponse struct {
 	AccessToken  string `json:"access_token"`
@@ -65,31 +55,6 @@ type mcAuthResponse struct {
 	AccessToken string `json:"access_token"`
 }
 
-type mcProfileResponse struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Skins []struct {
-		ID    string `json:"id"`
-		State string `json:"state"`
-		URL   string `json:"url"`
-	} `json:"skins"`
-}
-
-type minecraftSession struct {
-	MSAccessToken  string         `json:"ms_access_token"`
-	MSRefreshToken string         `json:"ms_refresh_token"`
-	User           *MinecraftUser `json:"user"`
-}
-
-type MinecraftService struct {
-	clientID       string
-	clientSecret   string
-	msAccessToken  string
-	msRefreshToken string
-	client         *http.Client
-	User           *MinecraftUser
-}
-
 var charsetForPKCE = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
 
 func generateCodeVerifier() string {
@@ -109,84 +74,6 @@ func generateCodeVerifier() string {
 func generateCodeChallenge(verifier string) string {
 	h := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(h[:])
-}
-
-func NewMinecraftService(clientID, clientSecret string) *MinecraftService {
-	return &MinecraftService{
-		clientID:     clientID,
-		clientSecret: clientSecret,
-		client:       &http.Client{Timeout: msHTTPTimeout},
-	}
-}
-
-func (s *MinecraftService) sessionFilePath() string {
-	dir, _ := os.UserConfigDir()
-	return filepath.Join(dir, "GravityCone", "minecraft_session.json")
-}
-
-func (s *MinecraftService) saveSession() {
-	path := s.sessionFilePath()
-	_ = os.MkdirAll(filepath.Dir(path), 0700)
-	data := minecraftSession{
-		MSAccessToken:  s.msAccessToken,
-		MSRefreshToken: s.msRefreshToken,
-		User:           s.User,
-	}
-	b, _ := json.Marshal(data)
-	_ = os.WriteFile(path, b, 0600)
-}
-
-func (s *MinecraftService) loadSession() {
-	path := s.sessionFilePath()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	var data minecraftSession
-	if json.Unmarshal(b, &data) != nil {
-		return
-	}
-	if data.MSAccessToken != "" && data.User != nil {
-		s.msAccessToken = data.MSAccessToken
-		s.msRefreshToken = data.MSRefreshToken
-		s.User = data.User
-	}
-}
-
-func (s *MinecraftService) clearState() {
-	s.msAccessToken = ""
-	s.msRefreshToken = ""
-	s.User = nil
-	_ = os.Remove(s.sessionFilePath())
-}
-
-func (s *MinecraftService) RestoreSession() error {
-	s.loadSession()
-	if s.msAccessToken == "" || s.User == nil {
-		return nil
-	}
-	if _, err := s.fetchMcProfile(s.User.AccessToken); err == nil {
-		s.saveSession()
-		return nil
-	}
-	if err := s.refreshMsToken(); err != nil {
-		s.clearState()
-		return nil
-	}
-	mcToken, err := s.runTokenChain()
-	if err != nil {
-		s.clearState()
-		return nil
-	}
-	user, err := s.fetchMcProfile(mcToken)
-	if err != nil {
-		s.clearState()
-		return nil
-	}
-	user.AccessToken = mcToken
-	s.User = user
-	s.saveSession()
-	return nil
 }
 
 func (s *MinecraftService) StartLogin() (*MinecraftUser, error) {
@@ -234,7 +121,7 @@ func (s *MinecraftService) StartLogin() (*MinecraftUser, error) {
 
 	authURL := msAuthorizeURL + "?" + params.Encode()
 
-	if err := openBrowser(authURL); err != nil {
+	if err := account.OpenBrowser(authURL); err != nil {
 		srv.Shutdown(context.Background())
 		return nil, fmt.Errorf("failed to open browser: %w", err)
 	}
@@ -261,14 +148,6 @@ func (s *MinecraftService) StartLogin() (*MinecraftUser, error) {
 		srv.Shutdown(context.Background())
 		return nil, fmt.Errorf("login timed out after 5 minutes")
 	}
-}
-
-func (s *MinecraftService) GetCurrentUser() *MinecraftUser {
-	return s.User
-}
-
-func (s *MinecraftService) Logout() {
-	s.clearState()
 }
 
 func (s *MinecraftService) postTokenForm(data url.Values) (*msTokenResponse, error) {
@@ -456,114 +335,4 @@ func (s *MinecraftService) exchangeXstsForMcToken(xstsToken, userhash string) (s
 		return "", fmt.Errorf("empty Minecraft access token in response")
 	}
 	return mcResp.AccessToken, nil
-}
-
-func (s *MinecraftService) fetchMcProfile(accessToken string) (*MinecraftUser, error) {
-	req, _ := http.NewRequest("GET", mcProfileURL, nil)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("the Microsoft account does not own Minecraft Java Edition")
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Minecraft profile API error (HTTP %d): %s", resp.StatusCode, string(body))
-	}
-
-	var profile mcProfileResponse
-	if err := json.Unmarshal(body, &profile); err != nil {
-		return nil, fmt.Errorf("invalid profile response: %s", string(body))
-	}
-	if profile.ID == "" || profile.Name == "" {
-		return nil, fmt.Errorf("incomplete Minecraft profile (user may not own the game)")
-	}
-
-	var skinURL string
-	for _, s := range profile.Skins {
-		if s.State == "ACTIVE" && s.URL != "" {
-			skinURL = s.URL
-			break
-		}
-	}
-
-	var avatarPNG string
-	if skinURL != "" {
-		avatarPNG = cropAvatarFromSkin(skinURL)
-	}
-
-	return &MinecraftUser{
-		Username:  profile.Name,
-		UUID:      profile.ID,
-		AvatarPNG: avatarPNG,
-	}, nil
-}
-
-func cropAvatarFromSkin(skinURL string) string {
-	resp, err := (&http.Client{Timeout: msHTTPTimeout}).Get(skinURL)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-
-	img, err := png.Decode(resp.Body)
-	if err != nil {
-		return ""
-	}
-
-	const scale = 8
-	outW := 10 * scale
-	outH := 8 * scale
-	out := image.NewNRGBA(image.Rect(0, 0, outW, outH))
-
-	drawBlock := func(srcX, srcY, dstCol, w int, skipTransparent bool) {
-		for dy := 0; dy < 8; dy++ {
-			for dx := 0; dx < w; dx++ {
-				c := color.NRGBAModel.Convert(img.At(srcX+dx, srcY+dy)).(color.NRGBA)
-				if skipTransparent && c.A == 0 {
-					continue
-				}
-				// Fill the scale×scale block directly in Pix
-				baseY := (dy * scale) * out.Stride
-				baseX := (dstCol+dx)*scale*4 + baseY
-				for sy := 0; sy < scale; sy++ {
-					rowOff := baseX + sy*out.Stride
-					for sx := 0; sx < scale; sx++ {
-						off := rowOff + sx*4
-						out.Pix[off] = c.R
-						out.Pix[off+1] = c.G
-						out.Pix[off+2] = c.B
-						out.Pix[off+3] = c.A
-					}
-				}
-			}
-		}
-	}
-
-	// Base head front: 8×8 at (8,8), centered at output column 1
-	drawBlock(8, 8, 1, 8, false)
-	// Hat overlay front: 8×8 at (40,8), over the base head
-	drawBlock(40, 8, 1, 8, true)
-
-	if img.Bounds().Dy() >= 64 {
-		// Hat side extensions (1px wide each)
-		drawBlock(39, 8, 0, 1, true)
-		drawBlock(48, 8, 9, 1, true)
-	}
-
-	var buf bytes.Buffer
-	if png.Encode(&buf, out) != nil {
-		return ""
-	}
-	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 }

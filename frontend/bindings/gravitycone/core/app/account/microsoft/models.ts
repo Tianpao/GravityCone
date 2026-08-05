@@ -7,18 +7,3 @@ export interface MinecraftUser {
     "access_token": string;
     "avatar_png": string;
 }
-
-export interface NatayarkLoginResult {
-    "user": NatayarkUser | null;
-    "access_token": string;
-}
-
-export interface NatayarkUser {
-    "id": number;
-    "username": string;
-    "email": string;
-    "realname": boolean;
-    "status": number;
-    "last_login": string;
-    "regtime": string;
-}

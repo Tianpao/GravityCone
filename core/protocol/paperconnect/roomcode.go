@@ -5,11 +5,11 @@ import (
 	"strings"
 
 	"gravitycone/core/easytier"
-	"gravitycone/core/utils"
+	"gravitycone/core/protocol/common"
 )
 
 func charToValue(c byte) (int, bool) {
-	return utils.Value(c)
+	return common.Value(c)
 }
 
 const pcRoomCodeHeader = "P/"
@@ -60,7 +60,7 @@ func pcAdjustForDivisibilityBySevenAt(chars []byte, pos int) {
 	if newV < 0 {
 		newV += 7
 	}
-	chars[pos] = utils.Charset[newV]
+	chars[pos] = common.Charset[newV]
 }
 
 // generatePaperConnectRoomCode 生成房间码；nodeID < 0 时为旧格式（不内嵌
@@ -74,17 +74,17 @@ func generatePaperConnectRoomCode(nodeID int) (*PaperConnectRoomCode, error) {
 	withNodeID := nodeID >= 0
 
 	var nPart, sPart [8]byte
-	if err := utils.RandomChars(nPart[:]); err != nil {
+	if err := common.RandomChars(nPart[:]); err != nil {
 		return nil, fmt.Errorf("failed to generate random char: %w", err)
 	}
-	if err := utils.RandomChars(sPart[:]); err != nil {
+	if err := common.RandomChars(sPart[:]); err != nil {
 		return nil, fmt.Errorf("failed to generate random char: %w", err)
 	}
 
 	if withNodeID {
 		lo, hi := easytier.NodeIDChars(nodeID)
-		nPart[7] = utils.Charset[lo]
-		sPart[7] = utils.Charset[hi]
+		nPart[7] = common.Charset[lo]
+		sPart[7] = common.Charset[hi]
 		// 位置 6 用作校验微调：调整函数会读取它的当前值计算新值。
 		pcAdjustForDivisibilityBySevenAt(sPart[:], 6)
 	} else {
