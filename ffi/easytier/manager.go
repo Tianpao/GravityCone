@@ -27,7 +27,6 @@ type FFIManager struct {
 	instName      string // instance name in FFI name cache
 	virtualIP     string // cached self virtual IP
 	isRunning     bool
-	startOpts     StartOptions
 	TunFdProvider func(instName string, virtualIP string, cidr string) (int, error) // optional TUN fd injection callback
 }
 
@@ -109,7 +108,6 @@ func (m *FFIManager) Start(opts ffi_toml.StartOptions) (string, error) {
 
 	m.mu.Lock()
 	m.instName = instName
-	m.startOpts = opts
 	m.isRunning = true
 	m.mu.Unlock()
 
@@ -291,7 +289,7 @@ func (m *FFIManager) injectTunFd(instName string, opts StartOptions, provider fu
 		// established. The VPN address must match that assignment: routing a
 		// guessed address into the TUN makes phase-two port forwarding appear
 		// healthy while game traffic is black-holed.
-		ip, err := m.pollVirtualIP(instName, 30*time.Second)
+		ip, err := m.pollVirtualIP(instName, 30*time.Second, 200*time.Millisecond)
 		if err != nil {
 			return "", fmt.Errorf("等待 guest 虚拟IP失败: %w", err)
 		}
@@ -314,6 +312,14 @@ func (m *FFIManager) injectTunFd(instName string, opts StartOptions, provider fu
 	return virtualIP, nil
 }
 
+// ffiRunningInfoLite 轮询时只解析所需字段，跳过 routes/peers 等大数组的解析。
+type ffiRunningInfoLite struct {
+	ErrorMsg   string `json:"error_msg"`
+	MyNodeInfo *struct {
+		VirtualIP4 *ffiIPv4Inet `json:"virtual_ipv4"`
+	} `json:"my_node_info"`
+}
+
 // selfVirtualIP queries collect_network_infos for this instance's virtual IP.
 // Returns an error if the instance is gone or not ready yet.
 func (m *FFIManager) selfVirtualIP(instName string) (string, error) {
@@ -326,7 +332,7 @@ func (m *FFIManager) selfVirtualIP(instName string) (string, error) {
 		if info.Name != instName {
 			continue
 		}
-		var ri ffiRunningInfo
+		var ri ffiRunningInfoLite
 		if err := json.Unmarshal([]byte(info.Info), &ri); err != nil {
 			continue
 		}
@@ -345,13 +351,13 @@ func (m *FFIManager) selfVirtualIP(instName string) (string, error) {
 
 // pollVirtualIP polls collect_network_infos for the virtual IP assigned to this instance.
 // Used by GUEST mode (DHCP) to get the IP before calling the VpnService callback.
-func (m *FFIManager) pollVirtualIP(instName string, timeout time.Duration) (string, error) {
+func (m *FFIManager) pollVirtualIP(instName string, timeout, interval time.Duration) (string, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if ip, err := m.selfVirtualIP(instName); err == nil && ip != "" {
 			return ip, nil
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(interval)
 	}
 	return "", fmt.Errorf("轮询虚拟IP超时 (%v)", timeout)
 }
@@ -361,14 +367,11 @@ func (m *FFIManager) waitForVirtualIP(timeout time.Duration) (string, error) {
 	instName := m.instName
 	m.mu.Unlock()
 
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if ip, err := m.selfVirtualIP(instName); err == nil && ip != "" {
-			return ip, nil
-		}
-		time.Sleep(500 * time.Millisecond)
+	ip, err := m.pollVirtualIP(instName, timeout, 500*time.Millisecond)
+	if err != nil {
+		return "", fmt.Errorf("等待获取虚拟IP超时")
 	}
-	return "", fmt.Errorf("等待获取虚拟IP超时")
+	return ip, nil
 }
 
 // stripCIDR removes CIDR suffix from IP (e.g. "10.144.0.1/24" → "10.144.0.1").

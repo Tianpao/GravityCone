@@ -37,7 +37,7 @@ gravitycone-cli [-p <addr>] [--peers <addr>] [-v <prefix>] [--vendor <prefix>] [
 | `--vendor <prefix>` | 同 `-v` |
 | `-m <motd>` | 自定义局域网广播 MOTD，其他玩家在多人游戏列表中看到的房间名称 |
 | `--motd <motd>` | 同 `-m` |
-| `-e <dir>` | 指定 EasyTier 二进制文件所在目录，指定后跳过自动下载 |
+| `-e <dir>` | 指定 EasyTier 二进制文件所在目录 |
 | `--easytier-dir <dir>` | 同 `-e` |
 
 地址支持逗号分隔，以下写法均合法：
@@ -60,12 +60,12 @@ gravitycone-cli --vendor GC -p tcp://1.2.3.4:5678
 gravitycone-cli -m "PCL CE 联机房间"
 gravitycone-cli --motd "PCL CE 联机房间" -p tcp://1.2.3.4:5678
 
-# 指定 EasyTier 目录（跳过自动下载）
+# 指定 EasyTier 目录
 gravitycone-cli -e /path/to/easytier
 gravitycone-cli --easytier-dir ./easytier -p tcp://1.2.3.4:5678
 ```
 
-不指定节点则使用内置默认节点，不指定厂商前缀则默认为空，不指定 MOTD 则使用默认值 `§6§l双击进入联机房间（请保持GravityCone运行）`。指定 `--easytier-dir` 后，程序从该目录查找 `easytier-core` 和 `easytier-cli`，不再自动下载；若目录中找不到二进制文件则启动时报错。
+不指定节点则使用内置默认节点，不指定厂商前缀则默认为空，不指定 MOTD 则使用默认值 `§6§l双击进入联机房间（请保持GravityCone运行）`。CLI **不会自动下载** EasyTier 二进制；程序从`--easytier-dir` 指定目录、默认配置目录（GUI 的下载目录）查找 `easytier-core` 和 `easytier-cli`，找不到时在创建或加入房间时报错。
 
 ### 日志文件
 

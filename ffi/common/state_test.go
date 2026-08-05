@@ -17,8 +17,6 @@ func resetState() {
 	globalState.mu.Unlock()
 }
 
-// --- Test-only state transition helpers ---
-//
 // Production code transitions exclusively through beginTransition /
 // transitionToIfOwner / transitionToErrorIfOwner (ownership-checked).
 // These unguarded variants exist so tests can drive the state machine
@@ -27,7 +25,7 @@ func resetState() {
 
 // transitionTo atomically transitions to a new state without ownership
 // checking.
-func transitionTo(newState AppState, extra interface{}) {
+func transitionTo(newState AppState, extra any) {
 	globalState.mu.Lock()
 	globalState.index++
 	globalState.state = newState
@@ -62,8 +60,6 @@ func isInState(s AppState) bool {
 	return globalState.state == s
 }
 
-// --- Initial state ---
-
 func TestInitialState(t *testing.T) {
 	resetState()
 
@@ -74,8 +70,6 @@ func TestInitialState(t *testing.T) {
 		t.Error("should be able to transition from Idle")
 	}
 }
-
-// --- Host lifecycle ---
 
 func TestHostLifecycle(t *testing.T) {
 	resetState()
@@ -113,8 +107,6 @@ func TestHostLifecycle(t *testing.T) {
 	}
 }
 
-// --- Guest lifecycle ---
-
 func TestGuestLifecycle(t *testing.T) {
 	resetState()
 
@@ -143,8 +135,6 @@ func TestGuestLifecycle(t *testing.T) {
 	}
 }
 
-// --- Error state ---
-
 func TestErrorState(t *testing.T) {
 	resetState()
 
@@ -168,8 +158,6 @@ func TestErrorState(t *testing.T) {
 	}
 }
 
-// --- canTransition guard ---
-
 func TestCanTransitionGuard(t *testing.T) {
 	resetState()
 
@@ -191,14 +179,12 @@ func TestCanTransitionGuard(t *testing.T) {
 	}
 }
 
-// --- buildStateJSON ---
-
 func TestBuildStateJSON(t *testing.T) {
 	tests := []struct {
 		name      string
 		state     AppState
 		index     uint32
-		extra     interface{}
+		extra     any
 		wantState string // expected "state" field value
 		wantRoom  string // expected "room" field (empty if absent)
 	}{
@@ -299,24 +285,20 @@ func TestBuildStateJSON(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := buildStateJSON(tt.state, tt.index, tt.extra, "")
 
-			// Parse as generic map to check fields
-			var m map[string]interface{}
+			var m map[string]any
 			if err := json.Unmarshal([]byte(got), &m); err != nil {
 				t.Fatalf("invalid JSON: %s, err: %v", got, err)
 			}
 
-			// Check state field
 			if m["state"] != tt.wantState {
 				t.Errorf("state = %v, want %v", m["state"], tt.wantState)
 			}
 
-			// Check index field
 			idx, ok := m["index"].(float64)
 			if !ok || uint32(idx) != tt.index {
 				t.Errorf("index = %v, want %d", m["index"], tt.index)
 			}
 
-			// Check room field if expected
 			if tt.wantRoom != "" {
 				if m["room"] != tt.wantRoom {
 					t.Errorf("room = %v, want %v", m["room"], tt.wantRoom)
@@ -334,7 +316,7 @@ func TestBuildStateJSONHostOkFields(t *testing.T) {
 		mcPort:   25565,
 	}, "")
 
-	var m map[string]interface{}
+	var m map[string]any
 	json.Unmarshal([]byte(got), &m)
 
 	if m["protocol"] != ProtocolScaffolding {
@@ -375,7 +357,7 @@ func TestBuildStateJSONGuestOkFields(t *testing.T) {
 		mcURL:    "127.0.0.1:25565",
 	}, "")
 
-	var m map[string]interface{}
+	var m map[string]any
 	json.Unmarshal([]byte(got), &m)
 
 	if m["url"] != "127.0.0.1:25565" {
@@ -398,8 +380,6 @@ func TestBuildStateJSONGuestOkFields(t *testing.T) {
 		t.Errorf("sub_protocol = %v, want raknet", m["sub_protocol"])
 	}
 }
-
-// --- goBackToIdle cleanup callbacks ---
 
 func TestGoBackToIdleCallsStopFn(t *testing.T) {
 	resetState()
@@ -453,8 +433,6 @@ func TestGoBackToIdleNilCallbacks(t *testing.T) {
 	goBackToIdle()
 }
 
-// --- updateExtra ---
-
 func TestUpdateExtra(t *testing.T) {
 	resetState()
 
@@ -473,8 +451,6 @@ func TestUpdateExtra(t *testing.T) {
 		t.Error("updateExtra should replace extra")
 	}
 }
-
-// --- beginTransition atomicity ---
 
 func TestBeginTransitionFromIdle(t *testing.T) {
 	resetState()
@@ -515,8 +491,6 @@ func TestBeginTransitionRejectedFromError(t *testing.T) {
 		t.Error("beginTransition should fail from Error state")
 	}
 }
-
-// --- transitionToIfOwner ownership checks ---
 
 func TestTransitionToIfOwnerStaleRejected(t *testing.T) {
 	resetState()
@@ -582,8 +556,6 @@ func TestUpdateExtraStaleRejected(t *testing.T) {
 	}
 }
 
-// --- index increments ---
-
 func TestIndexIncrements(t *testing.T) {
 	resetState()
 
@@ -606,8 +578,6 @@ func TestIndexIncrements(t *testing.T) {
 	}
 }
 
-// --- CompileTime ---
-
 func TestCompileTime(t *testing.T) {
 	var ct atomic.Int64
 	ct.Store(1234567890)
@@ -617,11 +587,9 @@ func TestCompileTime(t *testing.T) {
 	}
 }
 
-// --- mustJSON ---
-
 func TestMustJSON(t *testing.T) {
 	got := mustJSON(WaitingState{State: StateNameWaiting, Index: 42})
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal([]byte(got), &m); err != nil {
 		t.Fatalf("mustJSON produced invalid JSON: %s", got)
 	}
@@ -633,13 +601,11 @@ func TestMustJSON(t *testing.T) {
 	}
 }
 
-// --- getStateJSON integration ---
-
 func TestGetStateJSON(t *testing.T) {
 	resetState()
 
 	got := getStateJSON()
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal([]byte(got), &m); err != nil {
 		t.Fatalf("getStateJSON produced invalid JSON: %s", got)
 	}

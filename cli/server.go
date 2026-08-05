@@ -1,10 +1,12 @@
+//go:build !et_ffi
+
 package cli
 
 import (
 	"bufio"
 	"encoding/json"
 	"gravitycone/core/easytier"
-	"gravitycone/core/minecraft"
+	lansca "gravitycone/core/lan/scaffolding"
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
 	"gravitycone/core/utils"
@@ -23,9 +25,9 @@ const version = "1.0.0"
 // peers overrides the default EasyTier public peer list.
 // vendorPrefix is prepended to the vendor string in room operations.
 // motd is the custom MOTD for LAN broadcast (empty uses the default).
-// easytierDir specifies a custom EasyTier binary directory; when set, auto-download is skipped.
+// easytierDir specifies a custom EasyTier binary directory.
+// Missing binaries fail at room create/join (no auto-download in CLI builds).
 func Run(peers []string, vendorPrefix string, motd string, easytierDir string) {
-	// Resolve logs directory next to the CLI executable
 	logsDir, stdioLogPath, etLogPath, gccoreLogPath, err := resolveLogPaths()
 	if err != nil {
 		slog.Error("failed to resolve log paths", "error", err)
@@ -45,29 +47,19 @@ func Run(peers []string, vendorPrefix string, motd string, easytierDir string) {
 	defer gccoreLog.Close()
 	utils.InitLogger(gccoreLog, &slog.HandlerOptions{AddSource: false})
 
-	// Redirect EasyTier logs to file
 	easytier.SetEasyTierLogOutput(etLogPath)
 
-	// Set up writer and emitter early so download progress can be reported
+	// Set up writer and emitter early so service events can be reported
 	writer := NewStdioWriter()
 	emitter := NewStdioEventEmitter(writer)
-	easytier.SetEnsureEasyTierEmitter(emitter)
 
-	// Configure custom EasyTier directory if provided
 	if easytierDir != "" {
 		easytier.SetCustomEasyTierDir(easytierDir)
-		easytier.SetSkipEasyTierDownload(true)
 		slog.Info("Using custom EasyTier directory", "path", easytierDir)
 	}
 
-	// Ensure EasyTier binaries are available (auto-download if missing and not skipped)
-	if err := easytier.EnsureEasyTier(); err != nil {
-		slog.Warn("EasyTier not available", "error", err)
-	}
-
-	// Set up services
 	stunSvc := &easytier.StunService{}
-	lanSvc := minecraft.NewLanService(emitter)
+	lanSvc := lansca.NewLanService(emitter)
 	scaffoldingSvc := scaffolding.NewScaffoldingService(emitter)
 	paperConnectSvc := paperconnect.NewPaperConnectService(emitter)
 	if len(peers) > 0 {
@@ -79,7 +71,6 @@ func Run(peers []string, vendorPrefix string, motd string, easytierDir string) {
 	shutdownCh := make(chan struct{})
 	handler := NewHandler(stunSvc, lanSvc, scaffoldingSvc, paperConnectSvc, writer, shutdownCh, vendorPrefix, motd)
 
-	// Open stdio log file
 	stdioLog, err := os.OpenFile(stdioLogPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		slog.Warn("failed to open stdio.log", "error", err)
@@ -88,19 +79,16 @@ func Run(peers []string, vendorPrefix string, motd string, easytierDir string) {
 		writer.SetTee(stdioLog)
 	}
 
-	// Emit system.ready
 	writer.WriteEvent(Event{
 		Event: "system.ready",
 		Data:  map[string]string{"version": version},
 	})
 
-	// Handle signals for graceful shutdown
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt)
 
 	var wg sync.WaitGroup
 
-	// Read loop on stdin
 	go func() {
 		scanner := bufio.NewScanner(utils.NewDecodedReader(os.Stdin))
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -129,7 +117,6 @@ func Run(peers []string, vendorPrefix string, motd string, easytierDir string) {
 		}()
 	}()
 
-	// Wait for shutdown signal
 	select {
 	case <-shutdownCh:
 	case <-sigCh:
@@ -139,7 +126,6 @@ func Run(peers []string, vendorPrefix string, motd string, easytierDir string) {
 	wg.Wait()
 	time.Sleep(50 * time.Millisecond)
 
-	// Cleanup
 	scaffoldingSvc.Cleanup()
 	paperConnectSvc.Cleanup()
 	lanSvc.StopDiscovery()

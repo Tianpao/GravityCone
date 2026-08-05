@@ -40,10 +40,7 @@ func loadOrGenerateMachineID() (string, error) {
 		}
 	}
 
-	id, err := generateMachineID()
-	if err != nil {
-		return "", fmt.Errorf("无法生成机器ID: %w", err)
-	}
+	id := generateMachineID()
 
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return id, nil // return ID even if persist fails
@@ -52,11 +49,9 @@ func loadOrGenerateMachineID() (string, error) {
 	return id, nil
 }
 
-func generateMachineID() (string, error) {
+func generateMachineID() string {
 	var buf [8]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return "", err
-	}
+	rand.Read(buf[:])
 	h := hex.EncodeToString(buf[:])
-	return fmt.Sprintf("%s-%s-%s-%s", h[:4], h[4:8], h[8:12], h[12:16]), nil
+	return fmt.Sprintf("%s-%s-%s-%s", h[:4], h[4:8], h[8:12], h[12:16])
 }

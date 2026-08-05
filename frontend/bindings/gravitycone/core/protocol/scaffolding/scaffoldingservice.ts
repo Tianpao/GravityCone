@@ -9,9 +9,6 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
-/**
- * AddPeers appends peer addresses for future EasyTier starts.
- */
 export function AddPeers(addrs: string[] | null): $CancellablePromise<void> {
     return $Call.ByID(261516947, addrs);
 }
@@ -23,9 +20,6 @@ export function CancelJoin(): $CancellablePromise<void> {
     return $Call.ByID(455884165);
 }
 
-/**
- * Cleanup stops any running room or connection (called on app shutdown)
- */
 export function Cleanup(): $CancellablePromise<void> {
     return $Call.ByID(4022543137);
 }

@@ -12,6 +12,10 @@ export interface DownloadProgressData {
     "speed": number;
 }
 
+/**
+ * StunResult 是 NAT 探测结果，桌面由 easytier-cli stun 输出，Android 由
+ * FFI 的 collect_network_infos 提供（proto NatType 整数，编号与桌面一致）。
+ */
 export interface StunResult {
     "udp_nat_type": number;
     "tcp_nat_type": number;

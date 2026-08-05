@@ -17,7 +17,7 @@ import (
 // API Key 通过环境变量 UPTIME_API_KEY 提供，请求需携带固定 User-Agent 供服务端校验绑定。
 const (
 	UptimeBaseURL   = "https://uptime.1tmc.top"
-	UptimeUserAgent = "GravityCone/v0.1.4-alpha"
+	UptimeUserAgent = "GravityCone/" + AppVersion
 	UptimeAPIKeyEnv = "UPTIME_API_KEY"
 )
 
@@ -56,24 +56,32 @@ type UptimeNodeResult struct {
 	URL     string // EasyTier -p 地址
 }
 
-// FetchNodes 拉取节点列表并换取全部连接地址，返回结构化结果。
-// 单个节点换取失败会被跳过；所有节点都失败时返回错误。
-func (c *UptimeClient) FetchNodes(ctx context.Context) ([]UptimeNodeResult, error) {
+// fetchAllNodes 拉取节点列表并合并为单一数组；返回 relay 节点数量（列表
+// 前 relayCount 个）用于标记节点类型。
+func (c *UptimeClient) fetchAllNodes(ctx context.Context) (all []uptimeNode, relayCount int, err error) {
 	relay, p2p, err := c.fetchNodeList(ctx)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	all := make([]uptimeNode, 0, len(relay)+len(p2p))
+	all = make([]uptimeNode, 0, len(relay)+len(p2p))
 	all = append(all, relay...)
 	all = append(all, p2p...)
 	if len(all) == 0 {
-		return nil, fmt.Errorf("Uptime 服务器未返回可用节点")
+		return nil, 0, fmt.Errorf("Uptime 服务器未返回可用节点")
 	}
+	return all, len(relay), nil
+}
 
-	// 并行换取各节点连接地址；getKey 有效期仅数秒，须立即使用。
-	results := make([]UptimeNodeResult, len(all))
+// exchangeNodeURLs 并行换取各节点连接地址（getKey 有效期仅数秒，须立即使用）。
+// skip 返回 true 的节点不换取；换取失败的节点 URL 为空。所有节点都失败时
+// 返回全空切片。
+func (c *UptimeClient) exchangeNodeURLs(ctx context.Context, nodes []uptimeNode, relayCount int, skip func(i int, n uptimeNode) bool) []UptimeNodeResult {
+	results := make([]UptimeNodeResult, len(nodes))
 	var wg sync.WaitGroup
-	for i, n := range all {
+	for i, n := range nodes {
+		if skip != nil && skip(i, n) {
+			continue
+		}
 		wg.Add(1)
 		go func(idx int, node uptimeNode, isRelay bool) {
 			defer wg.Done()
@@ -83,9 +91,21 @@ func (c *UptimeClient) FetchNodes(ctx context.Context) ([]UptimeNodeResult, erro
 				return
 			}
 			results[idx] = UptimeNodeResult{ID: node.ID, Name: node.Name, IsRelay: isRelay, URL: url}
-		}(i, n, i < len(relay))
+		}(i, n, i < relayCount)
 	}
 	wg.Wait()
+	return results
+}
+
+// FetchNodes 拉取节点列表并换取全部连接地址，返回结构化结果。
+// 单个节点换取失败会被跳过；所有节点都失败时返回错误。
+func (c *UptimeClient) FetchNodes(ctx context.Context) ([]UptimeNodeResult, error) {
+	all, relayCount, err := c.fetchAllNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	results := c.exchangeNodeURLs(ctx, all, relayCount, nil)
 
 	filtered := results[:0]
 	for _, r := range results {
@@ -106,15 +126,9 @@ func (c *UptimeClient) FetchNodes(ctx context.Context) ([]UptimeNodeResult, erro
 //     nodes 为全部节点（降级兜底）
 //   - targetID == 0（自用中继）：targetURL 为空，nodes 为 P2P 发现节点，不换取中继地址
 func (c *UptimeClient) FetchNodesForJoin(ctx context.Context, targetID int) (targetURL string, nodes []UptimeNodeResult, err error) {
-	relay, p2p, err := c.fetchNodeList(ctx)
+	all, relayCount, err := c.fetchAllNodes(ctx)
 	if err != nil {
 		return "", nil, err
-	}
-	all := make([]uptimeNode, 0, len(relay)+len(p2p))
-	all = append(all, relay...)
-	all = append(all, p2p...)
-	if len(all) == 0 {
-		return "", nil, fmt.Errorf("Uptime 服务器未返回可用节点")
 	}
 
 	// 定向目标存在与否决定换取范围；目标缺失时降级为全部节点
@@ -131,26 +145,10 @@ func (c *UptimeClient) FetchNodesForJoin(ctx context.Context, targetID int) (tar
 		}
 	}
 
-	results := make([]UptimeNodeResult, len(all))
-	var wg sync.WaitGroup
-	for i := range all {
-		n := all[i]
-		isRelay := i < len(relay)
-		if isRelay && !exchangeAll && (target == nil || n.ID != target.ID) {
-			continue // 非降级：中继只换取定向目标一个
-		}
-		wg.Add(1)
-		go func(idx int, node uptimeNode, isRelay bool) {
-			defer wg.Done()
-			url, err := c.fetchNodeURL(ctx, node.GetKey)
-			if err != nil {
-				slog.Warn("换取 Uptime 节点地址失败，跳过", "name", node.Name, "id", node.ID, "err", err)
-				return
-			}
-			results[idx] = UptimeNodeResult{ID: node.ID, Name: node.Name, IsRelay: isRelay, URL: url}
-		}(i, n, isRelay)
-	}
-	wg.Wait()
+	results := c.exchangeNodeURLs(ctx, all, relayCount, func(i int, n uptimeNode) bool {
+		// 非降级：中继只换取定向目标一个
+		return i < relayCount && !exchangeAll && (target == nil || n.ID != target.ID)
+	})
 
 	// 过滤换取失败的节点；定向目标从 nodes 中分离，避免重复
 	targetURL = ""

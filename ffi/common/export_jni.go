@@ -115,19 +115,11 @@ func jniFromGoString(env *C.JNIEnv, s string) C.jstring {
 	return C.jni_NewStringUTF(env, cStr)
 }
 
-// =========================================================================
-// JVM caching for reverse JNI calls (Go → Java)
-// =========================================================================
-
 var (
 	cachedJVM      *C.JavaVM
 	cachedClassRef C.jclass // global reference to GravityConeAndroidAPI class
 	jvmInitialized bool
 )
-
-// =========================================================================
-// JNI native methods — called by GravityConeAndroidAPI.java
-// =========================================================================
 
 //export Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeInit
 func Java_net_gravitycone_ffi_GravityConeAndroidAPI_nativeInit(
@@ -326,7 +318,6 @@ func callJavaVpnServiceCallback(instName string, virtualIP string, cidr string) 
 		return -1, fmt.Errorf("JNI GetStaticMethodID failed: onVpnServiceStateChanged not found")
 	}
 
-	// Create jstring for CIDR.
 	cidrC := C.CString(cidr)
 	defer C.free(unsafe.Pointer(cidrC))
 	jcidr := C.jni_NewStringUTF(env, cidrC)

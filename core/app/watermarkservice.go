@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/kirklin/go-blind-watermark/bwm"
+	"golang.org/x/image/webp"
 
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
@@ -23,6 +24,12 @@ import (
 var embeddedImages embed.FS
 
 const embeddedPrefix = "embedded:"
+
+func init() {
+	// The standard library cannot decode WebP; register the golang.org/x/image
+	// decoder so image.Decode handles .webp sources transparently.
+	image.RegisterFormat("webp", "RIFF????WEBP", webp.Decode, webp.DecodeConfig)
+}
 
 // Fixed seeds — same seeds mean anyone with the app can decode room codes.
 const seedImg = 12345
@@ -38,7 +45,6 @@ type WatermarkResult struct {
 
 type WatermarkService struct{}
 
-// EncodeRoomCode embeds a room code into a source image using blind watermarking.
 // The resulting image looks identical to the original to the naked eye.
 func (w *WatermarkService) EncodeRoomCode(sourcePath string, roomCode string) (*WatermarkResult, error) {
 	slog.Info("EncodeRoomCode", "source", sourcePath, "roomCode", roomCode)
@@ -60,10 +66,8 @@ func (w *WatermarkService) EncodeRoomCode(sourcePath string, roomCode string) (*
 		return nil, fmt.Errorf("解码源图片失败: %w", err)
 	}
 
-	// 2. Prepare fixed-length payload (pad room code to 32 bytes)
 	payload := padPayload(roomCode)
 
-	// 3. Embed blind watermark
 	engine := bwm.New(seedImg, seedWm)
 	engine.D1 = 45.0 // higher = more robust against compression
 
@@ -73,14 +77,10 @@ func (w *WatermarkService) EncodeRoomCode(sourcePath string, roomCode string) (*
 		return nil, fmt.Errorf("嵌入房间信息失败: %w", err)
 	}
 
-	// 4. Encode result to PNG in memory
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, watermarkedImg); err != nil {
-		return nil, fmt.Errorf("编码输出图片失败: %w", err)
-	}
+	_ = png.Encode(&buf, watermarkedImg)
 	outputData := buf.Bytes()
 
-	// 5. Save to persistent location
 	baseName := sourcePath
 	if strings.HasPrefix(sourcePath, embeddedPrefix) {
 		baseName = strings.TrimPrefix(sourcePath, embeddedPrefix)
@@ -117,11 +117,10 @@ func (w *WatermarkService) DecodeRoomCode(imageBase64 string) (string, error) {
 
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return "", fmt.Errorf("图片解码失败，请确认拖入的是有效的PNG/JPEG图片")
+		return "", fmt.Errorf("图片解码失败，请确认拖入的是有效的PNG/JPEG/WebP图片")
 	}
 	slog.Info("image decoded", "bounds", img.Bounds())
 
-	// Extract blind watermark (32 bytes = 256 bits)
 	engine := bwm.New(seedImg, seedWm)
 	engine.D1 = 45.0
 
@@ -134,11 +133,9 @@ func (w *WatermarkService) DecodeRoomCode(imageBase64 string) (string, error) {
 	text := bwm.BitsToText(wmBits)
 	slog.Info("raw extracted text", "len", len(text), "text", text)
 
-	// Unpad: remove trailing spaces and null bytes
 	code := unpadPayload(text)
 	slog.Info("unpad result", "code", code)
 
-	// Validate the room code — try both U/ (Scaffolding) and P/ (PaperConnect) prefixes
 	if _, err := scaffolding.ParseRoomCode(code); err == nil {
 		slog.Info("valid Scaffolding room code", "code", code)
 	} else if _, err := paperconnect.ParsePaperConnectRoomCode(code); err == nil {
@@ -148,13 +145,11 @@ func (w *WatermarkService) DecodeRoomCode(imageBase64 string) (string, error) {
 		if strings.HasPrefix(strings.ToUpper(code), "U/") || strings.HasPrefix(strings.ToUpper(code), "P/") {
 			return "", fmt.Errorf("图片中的房间代码无效，可能图片未包含房间信息或被过度压缩")
 		}
-		// Try U/ prefix first (Scaffolding)
 		uCode := "U/" + code
 		if _, err := scaffolding.ParseRoomCode(uCode); err == nil {
 			code = uCode
 			slog.Info("added U/ prefix", "code", code)
 		} else {
-			// Try P/ prefix (PaperConnect)
 			pCode := "P/" + code
 			if _, err := paperconnect.ParsePaperConnectRoomCode(pCode); err == nil {
 				code = pCode
@@ -169,7 +164,6 @@ func (w *WatermarkService) DecodeRoomCode(imageBase64 string) (string, error) {
 	return code, nil
 }
 
-// ListDemoImages returns resource identifiers for embedded demo images.
 func (w *WatermarkService) ListDemoImages() ([]string, error) {
 	entries, err := embeddedImages.ReadDir("images")
 	if err != nil {
@@ -182,7 +176,7 @@ func (w *WatermarkService) ListDemoImages() ([]string, error) {
 			continue
 		}
 		name := strings.ToLower(entry.Name())
-		if strings.HasSuffix(name, ".png") || strings.HasSuffix(name, ".jpg") || strings.HasSuffix(name, ".jpeg") {
+		if strings.HasSuffix(name, ".png") || strings.HasSuffix(name, ".jpg") || strings.HasSuffix(name, ".jpeg") || strings.HasSuffix(name, ".webp") {
 			images = append(images, embeddedPrefix+entry.Name())
 		}
 	}

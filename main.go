@@ -1,13 +1,14 @@
-//go:build !cli
+//go:build !cli && !et_ffi
 
 package main
 
 import (
 	"embed"
 	"gravitycone/core/app"
-	"gravitycone/core/app/account"
+	"gravitycone/core/app/account/microsoft"
+	"gravitycone/core/app/account/naids"
 	"gravitycone/core/easytier"
-	"gravitycone/core/minecraft"
+	lansca "gravitycone/core/lan/scaffolding"
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
 	"gravitycone/core/utils"
@@ -45,8 +46,8 @@ func init() {
 	application.RegisterEvent[map[string]string]("room.closed")
 	application.RegisterEvent[map[string]string]("room.disconnected")
 	application.RegisterEvent[[]scaffolding.PlayerInfo]("room.guest_player_list_updated")
-	application.RegisterEvent[minecraft.LanServer]("lan.server_found")
-	application.RegisterEvent[map[string]interface{}]("lan.server_lost")
+	application.RegisterEvent[lansca.LanServer]("lan.server_found")
+	application.RegisterEvent[map[string]any]("lan.server_lost")
 	application.RegisterEvent[map[string]string]("paperconnect.connection.port_busy")
 	application.RegisterEvent[map[string]string]("paperconnect.connection.ready")
 	application.RegisterEvent[map[string]string]("paperconnect.connection.error")
@@ -97,9 +98,9 @@ func main() {
 		easytier.SetEasyTierLogOutput(filepath.Join(logDir, "easytier.log"))
 	}
 
-	natayarkSvc := account.NewNatayarkService(naidsID, naidsSecret)
-	minecraftSvc := account.NewMinecraftService(clientID, clientSecret)
-	lanSvc := minecraft.NewLanService(nil)
+	natayarkSvc := naids.NewNatayarkService(naidsID, naidsSecret)
+	minecraftSvc := microsoft.NewMinecraftService(clientID, clientSecret)
+	lanSvc := lansca.NewLanService(nil)
 	scaffoldingSvc := scaffolding.NewScaffoldingService(nil)
 	paperConnectSvc := paperconnect.NewPaperConnectService(nil)
 	settingsSvc := &easytier.SettingsService{}
@@ -163,9 +164,7 @@ func main() {
 		URL:              "/",
 	})
 
-	if err := minecraftSvc.RestoreSession(); err != nil {
-		slog.Warn("failed to restore Minecraft session", "error", err)
-	}
+	minecraftSvc.RestoreSession()
 
 	app.OnShutdown(func() {
 		scaffoldingSvc.Cleanup()
@@ -184,6 +183,6 @@ type wailsEventEmitter struct {
 	app *application.App
 }
 
-func (e *wailsEventEmitter) Emit(event string, data interface{}) {
+func (e *wailsEventEmitter) Emit(event string, data any) {
 	e.app.Event.Emit(event, data)
 }

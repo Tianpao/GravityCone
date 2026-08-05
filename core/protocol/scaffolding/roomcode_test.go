@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"gravitycone/core/easytier"
-	"gravitycone/core/utils"
+	"gravitycone/core/protocol/common"
 )
 
 // TestNodeIDRoundTrip 验证 nodeID 编码/解码往返（解析通过即校验满足，无需再单独断言）。
@@ -26,7 +26,6 @@ func TestNodeIDRoundTrip(t *testing.T) {
 	}
 }
 
-// TestNodeIDSpecialEncodings 验证特殊 ID 的字符组合。
 func TestNodeIDSpecialEncodings(t *testing.T) {
 	rc, err := GenerateRoomCodeWithNodeID(easytier.NodeIDReservedSelfRelay)
 	if err != nil {
@@ -45,7 +44,6 @@ func TestNodeIDSpecialEncodings(t *testing.T) {
 	}
 }
 
-// TestNodeIDRange 验证越界拒绝。
 func TestNodeIDRange(t *testing.T) {
 	if _, err := GenerateRoomCodeWithNodeID(easytier.NodeIDMax + 1); err == nil {
 		t.Fatal("expected error for nodeID > NodeIDMax")
@@ -72,14 +70,13 @@ func TestLegacyRoomCodeCompatibility(t *testing.T) {
 	}
 }
 
-// TestNodeIDCharset 验证编码字符均在 34 字符集内。
 func TestNodeIDCharset(t *testing.T) {
 	for id := 0; id <= easytier.NodeIDMax; id++ {
 		lo, hi := easytier.NodeIDChars(id)
-		if _, ok := utils.Value(utils.Charset[lo]); !ok {
+		if _, ok := common.Value(common.Charset[lo]); !ok {
 			t.Fatalf("low char not in charset for id %d", id)
 		}
-		if _, ok := utils.Value(utils.Charset[hi]); !ok {
+		if _, ok := common.Value(common.Charset[hi]); !ok {
 			t.Fatalf("high char not in charset for id %d", id)
 		}
 	}

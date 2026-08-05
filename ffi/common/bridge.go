@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"gravitycone/core/easytier"
+	"gravitycone/core/protocol/common"
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
 )
@@ -57,7 +58,7 @@ type ffiEventEmitter struct {
 	guest *guestContext
 }
 
-func (e ffiEventEmitter) Emit(event string, data interface{}) {
+func (e ffiEventEmitter) Emit(event string, data any) {
 	if e.guest == nil {
 		return
 	}
@@ -87,8 +88,6 @@ func (e ffiEventEmitter) Emit(event string, data interface{}) {
 	}
 	globalState.index++
 }
-
-// --- Public API called from export.go ---
 
 // setWaiting transitions to idle state, cleaning up any active room.
 func setWaiting() {
@@ -139,8 +138,7 @@ func setGuesting(roomCode, player string) bool {
 		player = "Player"
 	}
 
-	// Route based on room code prefix.
-	if isPaperConnectCode(roomCode) {
+	if common.IsPaperConnectCode(roomCode) {
 		ctx := &guestContext{protocol: ProtocolPaperConnect, roomCode: roomCode}
 		if !beginTransition(StateGuestConnecting, ctx) {
 			return false
@@ -161,14 +159,13 @@ func setGuesting(roomCode, player string) bool {
 // verifyRoomCode checks the room code type.
 // Returns RoomCodeScaffolding (3), RoomCodePaperConnect (4), or RoomCodeInvalid (-1).
 func verifyRoomCode(code string) int {
-	if isPaperConnectCode(code) {
+	if common.IsPaperConnectCode(code) {
 		if _, err := paperconnect.ParsePaperConnectRoomCode(code); err == nil {
 			return RoomCodePaperConnect
 		}
 		return RoomCodeInvalid
 	}
 
-	// Scaffolding room code (U/ prefix)
 	if _, err := scaffolding.ParseRoomCode(code); err == nil {
 		return RoomCodeScaffolding
 	}
@@ -176,16 +173,7 @@ func verifyRoomCode(code string) int {
 	return RoomCodeInvalid
 }
 
-func isPaperConnectCode(code string) bool {
-	return len(code) >= 2 && (code[0] == 'P' || code[0] == 'p') && code[1] == '/'
-}
-
-// --- ScaffoldingMC (Java Edition) host ---
-
 func startScaffoldingHost(playerName string, ctx *hostContext) {
-	// 状态已在 setScanning 的 beginTransition 中转移到 HostScanning。
-
-	// Create scaffolding service.
 	svc := scaffolding.NewScaffoldingService(ffiEventEmitter{})
 	applyRelayToScaffolding(svc)
 
@@ -219,11 +207,7 @@ func startScaffoldingHost(playerName string, ctx *hostContext) {
 	}
 }
 
-// --- PaperConnect (Bedrock Edition) host ---
-
 func startPaperConnectHost(playerName string, ctx *hostContext) {
-	// 状态已在 setScanning 的 beginTransition 中转移到 HostScanning。
-
 	svc := paperconnect.NewPaperConnectService(ffiEventEmitter{})
 	applyRelayToPaperConnect(svc)
 
@@ -252,12 +236,7 @@ func startPaperConnectHost(playerName string, ctx *hostContext) {
 	}
 }
 
-// --- ScaffoldingMC (Java Edition) guest ---
-
 func joinScaffoldingRoom(roomCode, playerName string, ctx *guestContext) {
-	// 状态已在 setGuesting 的 beginTransition 中转移到 GuestConnecting。
-
-	// Set up progress callback.
 	progress := func(step string) {
 		ctx.roomCode = roomCode
 		updateExtra(ctx)
@@ -292,11 +271,7 @@ func joinScaffoldingRoom(roomCode, playerName string, ctx *guestContext) {
 	}
 }
 
-// --- PaperConnect (Bedrock Edition) guest ---
-
 func joinPaperConnectRoom(roomCode, playerName string, ctx *guestContext) {
-	// 状态已在 setGuesting 的 beginTransition 中转移到 GuestConnecting。
-
 	svc := paperconnect.NewPaperConnectService(ffiEventEmitter{guest: ctx})
 	applyRelayToPaperConnect(svc)
 
@@ -320,8 +295,6 @@ func joinPaperConnectRoom(roomCode, playerName string, ctx *guestContext) {
 		return
 	}
 }
-
-// --- STUN (NAT Probing) ---
 
 // stunProbe runs a STUN NAT type probe and returns the result as JSON.
 // This is a blocking call that takes 3-10 seconds.

@@ -26,7 +26,7 @@ type stateHolder struct {
 	mu        sync.Mutex
 	index     uint32 // incremented on each state change
 	state     AppState
-	extra     interface{} // protocol-specific state data
+	extra     any // protocol-specific state data
 	lastError string
 }
 
@@ -43,7 +43,7 @@ func getStateJSON() string {
 	return buildStateJSON(globalState.state, globalState.index, globalState.extra, globalState.lastError)
 }
 
-func buildStateJSON(state AppState, index uint32, extra interface{}, lastError string) string {
+func buildStateJSON(state AppState, index uint32, extra any, lastError string) string {
 	switch state {
 	case StateIdle:
 		return mustJSON(WaitingState{State: StateNameWaiting, Index: index})
@@ -119,14 +119,12 @@ type guestContext struct {
 	leaveFn          func()
 }
 
-// --- State transition helpers ---
-
 // beginTransition atomically checks that the engine is Idle and transitions
 // to newState in one step, eliminating the TOCTOU between a separate
 // "can transition" check and the transition itself. Two concurrent
 // setScanning/setGuesting calls therefore cannot both start a room.
 // Returns false if a room is already active.
-func beginTransition(newState AppState, extra interface{}) bool {
+func beginTransition(newState AppState, extra any) bool {
 	globalState.mu.Lock()
 	defer globalState.mu.Unlock()
 	if globalState.state != StateIdle {
@@ -143,7 +141,7 @@ func beginTransition(newState AppState, extra interface{}) bool {
 // owns it (globalState.extra == ctx). After goBackToIdle or a new session
 // replaces the extra, stale async room goroutines fail here instead of
 // resurrecting the cancelled room's state.
-func transitionToIfOwner(ctx interface{}, newState AppState, extra interface{}) bool {
+func transitionToIfOwner(ctx any, newState AppState, extra any) bool {
 	globalState.mu.Lock()
 	defer globalState.mu.Unlock()
 	if globalState.extra != ctx {
@@ -159,7 +157,7 @@ func transitionToIfOwner(ctx interface{}, newState AppState, extra interface{}) 
 // transitionToErrorIfOwner transitions to the error state only if the
 // caller still owns it; stale failures from cancelled operations are
 // dropped.
-func transitionToErrorIfOwner(ctx interface{}, errMsg string) bool {
+func transitionToErrorIfOwner(ctx any, errMsg string) bool {
 	log.Printf("[状态错误] %s", errMsg)
 	globalState.mu.Lock()
 	defer globalState.mu.Unlock()
@@ -200,7 +198,7 @@ func goBackToIdle() {
 // Only applies while the caller still owns the state (extra == ctx);
 // stale progress updates from cancelled async operations are dropped.
 // Used by async operations to update progress.
-func updateExtra(extra interface{}) {
+func updateExtra(extra any) {
 	globalState.mu.Lock()
 	defer globalState.mu.Unlock()
 	if globalState.extra != extra {
@@ -211,7 +209,7 @@ func updateExtra(extra interface{}) {
 }
 
 // mustJSON marshals a value to JSON string, panicking on error.
-func mustJSON(v interface{}) string {
+func mustJSON(v any) string {
 	data, err := json.Marshal(v)
 	if err != nil {
 		// Should never happen with our simple structs.

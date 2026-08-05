@@ -52,7 +52,7 @@ var (
 // registerFFIFunc resolves one symbol and registers it with purego.
 // Returns an error (instead of panicking inside purego) when the symbol
 // does not exist in the loaded library.
-func registerFFIFunc(fptr interface{}, handle unsafe.Pointer, name string) error {
+func registerFFIFunc(fptr any, handle unsafe.Pointer, name string) error {
 	cfn := dlsymLib(handle, name)
 	if cfn == 0 {
 		return fmt.Errorf("dlsym %s: symbol not found in libeasytier_ffi.so", name)
