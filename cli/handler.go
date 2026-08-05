@@ -73,7 +73,7 @@ func (h *Handler) handleStun(req Request, action string) {
 	case "probe":
 		result, err := h.stunSvc.TestStun()
 		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, mapStunError(err), err.Error()))
+			h.failStun(req, err)
 			return
 		}
 		h.writer.WriteResponse(successResponse(req.ID, result))
@@ -97,14 +97,14 @@ func (h *Handler) handleRoom(req Request, action string) {
 		// Cancel both — whichever is active will respond
 		h.scaffoldingSvc.CancelJoin()
 		h.paperConnectSvc.CancelJoin()
-		h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
+		h.ok(req)
 
 	case "confirm_minecraft_ended":
 		if err := h.paperConnectSvc.ConfirmMinecraftEnded(); err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, ErrInternalError, err.Error()))
+			h.fail(req, ErrInternalError, err)
 			return
 		}
-		h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
+		h.ok(req)
 
 	case "leave":
 		h.handleRoomLeave(req)
@@ -164,14 +164,14 @@ func (h *Handler) handleLan(req Request, action string) {
 	case "start_discovery":
 		err := h.lanSvc.StartDiscovery()
 		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, ErrInternalError, err.Error()))
+			h.fail(req, ErrInternalError, err)
 			return
 		}
-		h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
+		h.ok(req)
 
 	case "stop_discovery":
 		h.lanSvc.StopDiscovery()
-		h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
+		h.ok(req)
 
 	case "list_servers":
 		servers := h.lanSvc.GetDiscoveredServers()
@@ -182,17 +182,17 @@ func (h *Handler) handleLan(req Request, action string) {
 	case "verify_server":
 		ip, err := req.getString("ip")
 		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
+			h.fail(req, ErrInvalidParams, err)
 			return
 		}
 		port, err := req.getInt("port")
 		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
+			h.fail(req, ErrInvalidParams, err)
 			return
 		}
 		version, err := h.lanSvc.VerifyServer(ip, port)
 		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, ErrInternalError, err.Error()))
+			h.fail(req, ErrInternalError, err)
 			return
 		}
 		h.writer.WriteResponse(successResponse(req.ID, map[string]any{
@@ -210,7 +210,7 @@ func (h *Handler) handleSystem(req Request, action string) {
 	case "ping":
 		h.writer.WriteResponse(successResponse(req.ID, map[string]bool{"pong": true}))
 	case "shutdown":
-		h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
+		h.ok(req)
 		h.shutdownOnce.Do(func() {
 			close(h.shutdownCh)
 		})
@@ -219,4 +219,20 @@ func (h *Handler) handleSystem(req Request, action string) {
 	default:
 		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidMethod, req.Method))
 	}
+}
+
+// fail 写出 error 响应（所有调用点均已保证 err 非空）。
+func (h *Handler) fail(req Request, code string, err error) {
+	h.writer.WriteResponse(errorResponse(req.ID, code, err.Error()))
+}
+
+// failStun 以 mapStunError 映射错误码后写出响应。
+func (h *Handler) failStun(req Request, err error) { h.fail(req, mapStunError(err), err) }
+
+// failRoom 以 mapRoomError 映射错误码后写出响应。
+func (h *Handler) failRoom(req Request, err error) { h.fail(req, mapRoomError(err), err) }
+
+// ok 写出空数据 success 响应。
+func (h *Handler) ok(req Request) {
+	h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
 }

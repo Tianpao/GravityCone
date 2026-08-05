@@ -157,10 +157,7 @@ func (s *NatayarkService) exchangeCode(code string, redirectURI string) (string,
 	data.Set("client_secret", hashed)
 	data.Set("redirect_uri", redirectURI)
 
-	req, err := http.NewRequest("POST", natayarkTokenURL, strings.NewReader(data.Encode()))
-	if err != nil {
-		return "", err
-	}
+	req, _ := http.NewRequest("POST", natayarkTokenURL, strings.NewReader(data.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
@@ -191,10 +188,7 @@ func (s *NatayarkService) exchangeCode(code string, redirectURI string) (string,
 }
 
 func (s *NatayarkService) fetchUserData(token string) (*NatayarkUser, error) {
-	req, err := http.NewRequest("GET", natayarkUserDataURL, nil)
-	if err != nil {
-		return nil, err
-	}
+	req, _ := http.NewRequest("GET", natayarkUserDataURL, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)

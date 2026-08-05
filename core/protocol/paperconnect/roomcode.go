@@ -73,12 +73,8 @@ func generatePaperConnectRoomCode(nodeID int) (*PaperConnectRoomCode, error) {
 	withNodeID := nodeID >= 0
 
 	var nPart, sPart [8]byte
-	if err := common.RandomChars(nPart[:]); err != nil {
-		return nil, fmt.Errorf("failed to generate random char: %w", err)
-	}
-	if err := common.RandomChars(sPart[:]); err != nil {
-		return nil, fmt.Errorf("failed to generate random char: %w", err)
-	}
+	common.RandomChars(nPart[:])
+	common.RandomChars(sPart[:])
 
 	if withNodeID {
 		lo, hi := easytier.NodeIDChars(nodeID)

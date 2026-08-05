@@ -2,6 +2,7 @@ package microsoft
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 )
@@ -53,31 +54,33 @@ func (s *MinecraftService) clearState() {
 	_ = os.Remove(s.sessionFilePath())
 }
 
-func (s *MinecraftService) RestoreSession() error {
+func (s *MinecraftService) RestoreSession() {
 	s.loadSession()
 	if s.msAccessToken == "" || s.User == nil {
-		return nil
+		return
 	}
 	if _, err := s.fetchMcProfile(s.User.AccessToken); err == nil {
 		s.saveSession()
-		return nil
+		return
 	}
 	if err := s.refreshMsToken(); err != nil {
+		slog.Warn("Minecraft 会话恢复失败：刷新令牌失败", "error", err)
 		s.clearState()
-		return nil
+		return
 	}
 	mcToken, err := s.runTokenChain()
 	if err != nil {
+		slog.Warn("Minecraft 会话恢复失败：令牌链失败", "error", err)
 		s.clearState()
-		return nil
+		return
 	}
 	user, err := s.fetchMcProfile(mcToken)
 	if err != nil {
+		slog.Warn("Minecraft 会话恢复失败：获取档案失败", "error", err)
 		s.clearState()
-		return nil
+		return
 	}
 	user.AccessToken = mcToken
 	s.User = user
 	s.saveSession()
-	return nil
 }

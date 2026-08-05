@@ -3,19 +3,21 @@
 package cli
 
 import (
+	"log/slog"
+
 	"gravitycone/core/protocol/common"
 	"gravitycone/core/protocol/scaffolding"
 )
 
 func (h *Handler) handleRoomCreate(req Request) {
 	if err := h.applyRelayParams(req); err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
+		h.fail(req, ErrInvalidParams, err)
 		return
 	}
 
 	playerName, err := req.getString("player_name")
 	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
+		h.fail(req, ErrInvalidParams, err)
 		return
 	}
 
@@ -24,7 +26,7 @@ func (h *Handler) handleRoomCreate(req Request) {
 	if protocol == "paperconnect" {
 		result, err := h.paperConnectSvc.CreateRoom(playerName, h.vendorPrefix)
 		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
+			h.failRoom(req, err)
 			return
 		}
 		h.writer.WriteResponse(successResponse(req.ID, map[string]any{
@@ -42,13 +44,13 @@ func (h *Handler) handleRoomCreate(req Request) {
 	// Default: Scaffolding (Java Edition)
 	mcPort, err := req.getInt("mc_port")
 	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
+		h.fail(req, ErrInvalidParams, err)
 		return
 	}
 
 	result, err := h.scaffoldingSvc.CreateRoom(uint16(mcPort), playerName, h.vendorPrefix, h.motd)
 	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
+		h.failRoom(req, err)
 		return
 	}
 	h.writer.WriteResponse(successResponse(req.ID, result))
@@ -57,38 +59,37 @@ func (h *Handler) handleRoomCreate(req Request) {
 func (h *Handler) handleRoomStop(req Request) {
 	// Try PaperConnect first, then Scaffolding
 	if err := h.paperConnectSvc.StopRoom(); err == nil {
-		h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
+		h.ok(req)
 		return
 	}
-	err := h.scaffoldingSvc.StopRoom()
-	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
+	if err := h.scaffoldingSvc.StopRoom(); err != nil {
+		h.failRoom(req, err)
 		return
 	}
-	h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
+	h.ok(req)
 }
 
 func (h *Handler) handleRoomJoin(req Request) {
 	if err := h.applyRelayParams(req); err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
+		h.fail(req, ErrInvalidParams, err)
 		return
 	}
 
 	code, err := req.getString("code")
 	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
+		h.fail(req, ErrInvalidParams, err)
 		return
 	}
 	playerName, err := req.getString("player_name")
 	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, err.Error()))
+		h.fail(req, ErrInvalidParams, err)
 		return
 	}
 
 	if common.IsPaperConnectCode(code) {
 		result, err := h.paperConnectSvc.JoinRoom(code, playerName, h.vendorPrefix, h.motd)
 		if err != nil {
-			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
+			h.failRoom(req, err)
 			return
 		}
 		h.writer.WriteResponse(successResponse(req.ID, map[string]any{
@@ -117,7 +118,7 @@ func (h *Handler) handleRoomJoin(req Request) {
 
 	result, err := h.scaffoldingSvc.JoinRoom(code, playerName, h.vendorPrefix, h.motd)
 	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
+		h.failRoom(req, err)
 		return
 	}
 	h.writer.WriteResponse(successResponse(req.ID, result))
@@ -126,15 +127,14 @@ func (h *Handler) handleRoomJoin(req Request) {
 func (h *Handler) handleRoomLeave(req Request) {
 	// Try PaperConnect first, then Scaffolding
 	if err := h.paperConnectSvc.LeaveRoom(); err == nil {
-		h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
+		h.ok(req)
 		return
 	}
-	err := h.scaffoldingSvc.LeaveRoom()
-	if err != nil {
-		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
+	if err := h.scaffoldingSvc.LeaveRoom(); err != nil {
+		h.failRoom(req, err)
 		return
 	}
-	h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
+	h.ok(req)
 }
 
 func (h *Handler) handleRoomStatus(req Request) {
@@ -148,6 +148,7 @@ func (h *Handler) handleRoomStatus(req Request) {
 		h.writer.WriteResponse(successResponse(req.ID, result))
 		return
 	}
+	slog.Debug("paperconnect host status unavailable", "error", pcHostErr)
 
 	// Try Scaffolding host status
 	hostStatus, hostErr := h.scaffoldingSvc.GetRoomStatus()
@@ -158,6 +159,7 @@ func (h *Handler) handleRoomStatus(req Request) {
 		h.writer.WriteResponse(successResponse(req.ID, result))
 		return
 	}
+	slog.Debug("scaffolding host status unavailable", "error", hostErr)
 
 	// Try PaperConnect guest status
 	pcGuestStatus, pcGuestErr := h.paperConnectSvc.GetConnectionStatus()
@@ -169,6 +171,7 @@ func (h *Handler) handleRoomStatus(req Request) {
 		h.writer.WriteResponse(successResponse(req.ID, result))
 		return
 	}
+	slog.Debug("paperconnect guest status unavailable", "error", pcGuestErr)
 
 	// Try Scaffolding guest status
 	guestStatus, guestErr := h.scaffoldingSvc.GetConnectionStatus()
@@ -179,6 +182,7 @@ func (h *Handler) handleRoomStatus(req Request) {
 		h.writer.WriteResponse(successResponse(req.ID, result))
 		return
 	}
+	slog.Debug("scaffolding guest status unavailable", "error", guestErr)
 
 	h.writer.WriteResponse(successResponse(req.ID, map[string]string{"role": "none"}))
 }

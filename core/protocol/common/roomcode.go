@@ -27,23 +27,11 @@ func IsPaperConnectCode(code string) bool {
 	return len(code) >= 2 && (code[0] == 'P' || code[0] == 'p') && code[1] == '/'
 }
 
-// RandomChar 从字符集随机取一个字符。
-func RandomChar() (byte, error) {
-	var buf [1]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return 0, err
-	}
-	return Charset[buf[0]%byte(len(Charset))], nil
-}
-
 // RandomChars 用随机字符填满 dst 的所有位置。
-func RandomChars(dst []byte) error {
+func RandomChars(dst []byte) {
 	buf := make([]byte, len(dst))
-	if _, err := rand.Read(buf); err != nil {
-		return err
-	}
+	rand.Read(buf)
 	for i, b := range buf {
 		dst[i] = Charset[b%byte(len(Charset))]
 	}
-	return nil
 }

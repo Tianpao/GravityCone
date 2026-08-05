@@ -274,8 +274,12 @@ func (s *ScaffoldingService) joinHandshake(conn net.Conn, manager *easytier.Easy
 		return false, 0, handshakeErr
 	}
 	status, respBody, err := ReadProtocolResponse(conn)
-	if err != nil || status != StatusOK {
-		handshakeErr = fmt.Errorf("协议协商失败")
+	if err != nil {
+		handshakeErr = fmt.Errorf("协议协商失败: %w", err)
+		return false, 0, handshakeErr
+	}
+	if status != StatusOK {
+		handshakeErr = fmt.Errorf("协议协商失败: 状态=%d", status)
 		return false, 0, handshakeErr
 	}
 	negotiatedEasyTierID := slices.Contains(strings.Split(string(respBody), "\x00"), ProtocolPlayerEasyTierID)
@@ -490,7 +494,9 @@ func (s *ScaffoldingService) setupMCPortForward(hostIP string, mcPort uint16) {
 		return
 	}
 	// UDP port-forward (for voice chat etc.)
-	manager.AddPortForward("udp", localAddr, remoteAddr)
+	if err := manager.AddPortForward("udp", localAddr, remoteAddr); err != nil {
+		slog.Warn("UDP端口转发失败", "error", err)
+	}
 
 	slog.Info("端口转发已建立", "local", fmt.Sprintf("0.0.0.0:%d", mcLocalPort), "remote", remoteAddr, "mc_port", mcPort)
 

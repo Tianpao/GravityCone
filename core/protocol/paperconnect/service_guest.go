@@ -188,7 +188,6 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 			continue
 		}
 		pingOk = true
-		_ = pingResp
 		break
 	}
 	if !pingOk {

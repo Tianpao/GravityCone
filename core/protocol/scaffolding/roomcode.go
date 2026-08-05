@@ -49,9 +49,7 @@ func generateRoomCode(nodeID int) (*RoomCode, error) {
 	withNodeID := nodeID >= 0
 
 	var chars [16]byte
-	if err := common.RandomChars(chars[:]); err != nil {
-		return nil, fmt.Errorf("failed to generate random char: %w", err)
-	}
+	common.RandomChars(chars[:])
 
 	if withNodeID {
 		lo, hi := easytier.NodeIDChars(nodeID)

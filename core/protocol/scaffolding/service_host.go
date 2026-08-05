@@ -207,10 +207,6 @@ func (s *ScaffoldingService) handlePlayerPing(conn net.Conn, body []byte) {
 func (s *ScaffoldingService) handlePlayerProfilesList(conn net.Conn) {
 	players := s.copyPlayers()
 
-	data, err := json.Marshal(players)
-	if err != nil {
-		WriteProtocolResponse(conn, StatusUnknownError, []byte(err.Error()))
-		return
-	}
+	data, _ := json.Marshal(players)
 	WriteProtocolResponse(conn, StatusOK, data)
 }

@@ -53,10 +53,7 @@ type PCErrorResponse struct {
 func WritePCRequest(conn net.Conn, namespace string, body any) error {
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 
-	jsonBytes, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request body: %w", err)
-	}
+	jsonBytes, _ := json.Marshal(body)
 
 	// Build payload: namespace + 0x00 + JSON
 	payload := make([]byte, 0, len(namespace)+1+len(jsonBytes))
@@ -64,7 +61,7 @@ func WritePCRequest(conn net.Conn, namespace string, body any) error {
 	payload = append(payload, 0)
 	payload = append(payload, jsonBytes...)
 
-	_, err = conn.Write(payload)
+	_, err := conn.Write(payload)
 	return err
 }
 
@@ -72,12 +69,9 @@ func WritePCRequest(conn net.Conn, namespace string, body any) error {
 func WritePCResponse(conn net.Conn, response any) error {
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 
-	jsonBytes, err := json.Marshal(response)
-	if err != nil {
-		return fmt.Errorf("failed to marshal response: %w", err)
-	}
+	jsonBytes, _ := json.Marshal(response)
 
-	_, err = conn.Write(jsonBytes)
+	_, err := conn.Write(jsonBytes)
 	return err
 }
 

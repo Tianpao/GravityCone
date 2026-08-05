@@ -164,9 +164,7 @@ func main() {
 		URL:              "/",
 	})
 
-	if err := minecraftSvc.RestoreSession(); err != nil {
-		slog.Warn("failed to restore Minecraft session", "error", err)
-	}
+	minecraftSvc.RestoreSession()
 
 	app.OnShutdown(func() {
 		scaffoldingSvc.Cleanup()

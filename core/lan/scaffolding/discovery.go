@@ -267,17 +267,17 @@ func (s *LanService) GetDiscoveredServers() []LanServer {
 func (s *LanService) VerifyServer(ip string, port int) (string, error) {
 	server, err := mcstatus.NewJavaServer(fmt.Sprintf("%s:%d", ip, port))
 	if err != nil {
-		return "", fmt.Errorf("无法连接到服务器")
+		return "", fmt.Errorf("无法连接到服务器: %w", err)
 	}
 
 	status, err := server.Status()
 	if err != nil {
-		return "", fmt.Errorf("此端口非 Minecraft 房间")
+		return "", fmt.Errorf("此端口非 Minecraft 房间: %w", err)
 	}
 
 	resp, ok := status.(*mcstatus.JavaStatusResponse)
 	if !ok {
-		return "", fmt.Errorf("此端口非 Minecraft 房间")
+		return "", fmt.Errorf("此端口非 Minecraft 房间（服务器响应无法识别）")
 	}
 
 	return resp.Version.Name, nil

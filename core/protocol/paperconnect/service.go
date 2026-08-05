@@ -2,6 +2,7 @@ package paperconnect
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -343,7 +344,7 @@ func (s *PaperConnectService) GetRoomStatus() (*PaperConnectRoomStatus, error) {
 		reason := s.hostStopReason
 		s.hostMu.Unlock()
 		if reason != "" {
-			return nil, fmt.Errorf("%s", reason)
+			return nil, errors.New(reason)
 		}
 		return nil, fmt.Errorf("没有正在运行的房间")
 	}

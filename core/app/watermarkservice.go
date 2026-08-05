@@ -71,9 +71,7 @@ func (w *WatermarkService) EncodeRoomCode(sourcePath string, roomCode string) (*
 	}
 
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, watermarkedImg); err != nil {
-		return nil, fmt.Errorf("编码输出图片失败: %w", err)
-	}
+	_ = png.Encode(&buf, watermarkedImg)
 	outputData := buf.Bytes()
 
 	baseName := sourcePath

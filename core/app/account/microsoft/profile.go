@@ -125,8 +125,6 @@ func cropAvatarFromSkin(skinURL string) string {
 	}
 
 	var buf bytes.Buffer
-	if png.Encode(&buf, out) != nil {
-		return ""
-	}
+	_ = png.Encode(&buf, out)
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 }
