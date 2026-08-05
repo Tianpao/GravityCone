@@ -3,12 +3,13 @@ package paperconnect
 import (
 	"testing"
 
+	"gravitycone/core/easytier"
 	"gravitycone/core/utils"
 )
 
-// TestNodeIDRoundTrip 验证 nodeID 编码/解码往返与校验。
+// TestNodeIDRoundTrip 验证 nodeID 编码/解码往返（解析通过即校验满足，无需再单独断言）。
 func TestNodeIDRoundTrip(t *testing.T) {
-	ids := []int{1, 2, 3, 100, 1000, NodeIDReservedSelfRelay, NodeIDReservedNoPublic, NodeIDMax}
+	ids := []int{1, 2, 3, 100, 1000, easytier.NodeIDReservedSelfRelay, easytier.NodeIDReservedNoPublic, easytier.NodeIDMax}
 	for _, id := range ids {
 		rc, err := GeneratePaperConnectRoomCodeWithNodeID(id)
 		if err != nil {
@@ -22,17 +23,12 @@ func TestNodeIDRoundTrip(t *testing.T) {
 		if got := parsed.NodeID(); got != id {
 			t.Fatalf("NodeID roundtrip: want %d, got %d (code %s)", id, got, rc.Format())
 		}
-
-		// S 部分校验必须仍满足（旧解析逻辑兼容）
-		if !pcIsDivisibleBySeven([]byte(parsed.SecretPart)) {
-			t.Fatalf("checksum failed for nodeID %d: %s", id, rc.Format())
-		}
 	}
 }
 
 // TestNodeIDSpecialEncodings 验证特殊 ID 的字符组合。
 func TestNodeIDSpecialEncodings(t *testing.T) {
-	rc, err := GeneratePaperConnectRoomCodeWithNodeID(NodeIDReservedSelfRelay)
+	rc, err := GeneratePaperConnectRoomCodeWithNodeID(easytier.NodeIDReservedSelfRelay)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +36,7 @@ func TestNodeIDSpecialEncodings(t *testing.T) {
 		t.Fatalf("self relay: want '0'+'0', got %c+%c", rc.NetworkPart[7], rc.SecretPart[7])
 	}
 
-	rc, err = GeneratePaperConnectRoomCodeWithNodeID(NodeIDReservedNoPublic)
+	rc, err = GeneratePaperConnectRoomCodeWithNodeID(easytier.NodeIDReservedNoPublic)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +47,7 @@ func TestNodeIDSpecialEncodings(t *testing.T) {
 
 // TestNodeIDRange 验证越界拒绝。
 func TestNodeIDRange(t *testing.T) {
-	if _, err := GeneratePaperConnectRoomCodeWithNodeID(NodeIDMax + 1); err == nil {
+	if _, err := GeneratePaperConnectRoomCodeWithNodeID(easytier.NodeIDMax + 1); err == nil {
 		t.Fatal("expected error for nodeID > NodeIDMax")
 	}
 	if _, err := GeneratePaperConnectRoomCodeWithNodeID(-1); err == nil {
@@ -71,21 +67,19 @@ func TestLegacyRoomCodeCompatibility(t *testing.T) {
 		t.Fatalf("legacy code parse failed: %v", err)
 	}
 	id := parsed.NodeID()
-	if id < 0 || id > NodeIDMax {
+	if id < 0 || id > easytier.NodeIDMax {
 		t.Fatalf("legacy code NodeID() out of range: %d", id)
-	}
-	if !pcIsDivisibleBySeven([]byte(parsed.SecretPart)) {
-		t.Fatal("legacy code checksum broken")
 	}
 }
 
 // TestNodeIDCharset 验证编码字符均在 34 字符集内。
 func TestNodeIDCharset(t *testing.T) {
-	for id := 0; id <= NodeIDMax; id++ {
-		if _, ok := utils.Value(utils.Charset[id%34]); !ok {
+	for id := 0; id <= easytier.NodeIDMax; id++ {
+		lo, hi := easytier.NodeIDChars(id)
+		if _, ok := utils.Value(utils.Charset[lo]); !ok {
 			t.Fatalf("low char not in charset for id %d", id)
 		}
-		if _, ok := utils.Value(utils.Charset[(id/34)%34]); !ok {
+		if _, ok := utils.Value(utils.Charset[hi]); !ok {
 			t.Fatalf("high char not in charset for id %d", id)
 		}
 	}

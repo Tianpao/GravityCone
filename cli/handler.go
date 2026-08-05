@@ -135,40 +135,30 @@ func isPaperConnectCode(code string) bool {
 // is empty the external relay is cleared, reverting to built-in peers only
 // (pure P2P).
 func (h *Handler) applyRelayParams(req Request) error {
-	relayID := 0
-	relayURL := ""
+	relayID, relayURL := 0, ""
 
-	raw, ok := req.Params["relay"]
-	if !ok {
-		scaffolding.ConfigureExternalRelay(h.scaffoldingSvc, relayID, relayURL)
-		paperconnect.ConfigureExternalRelay(h.paperConnectSvc, relayID, relayURL)
-		return nil
-	}
-	relayObj, ok := raw.(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("parameter relay must be an object with node_id and url")
-	}
-
-	if v, ok := relayObj["url"]; ok {
-		s, ok := v.(string)
+	if raw, ok := req.Params["relay"]; ok {
+		relayObj, ok := raw.(map[string]interface{})
 		if !ok {
-			return fmt.Errorf("relay.url must be a string")
+			return fmt.Errorf("parameter relay must be an object with node_id and url")
 		}
-		relayURL = s
-	}
-	if relayURL == "" {
-		// url 为空视为未设置中继（纯 P2P）
-		scaffolding.ConfigureExternalRelay(h.scaffoldingSvc, relayID, relayURL)
-		paperconnect.ConfigureExternalRelay(h.paperConnectSvc, relayID, relayURL)
-		return nil
-	}
-
-	if v, ok := relayObj["node_id"]; ok {
-		n, ok := toInt(v)
-		if !ok {
-			return fmt.Errorf("relay.node_id must be a number")
+		if v, ok := relayObj["url"]; ok {
+			s, ok := v.(string)
+			if !ok {
+				return fmt.Errorf("relay.url must be a string")
+			}
+			relayURL = s
 		}
-		relayID = n
+		// url 为空视为未设置中继（纯 P2P），node_id 无需校验
+		if relayURL != "" {
+			if v, ok := relayObj["node_id"]; ok {
+				n, ok := toInt(v)
+				if !ok {
+					return fmt.Errorf("relay.node_id must be a number")
+				}
+				relayID = n
+			}
+		}
 	}
 
 	scaffolding.ConfigureExternalRelay(h.scaffoldingSvc, relayID, relayURL)

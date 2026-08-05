@@ -73,7 +73,7 @@ type StartOptions struct {
 	PortForwards       []string
 	Peers              []string
 	UpstreamCompatible bool
-	DisableP2P         bool // Force relay-only mode (--disable-p2p true). PaperConnect profile only.
+	DisableP2P         bool                                                              // Force relay-only mode (--disable-p2p true). Applies to both profiles.
 	TunFdProvider      func(instName string, virtualIP string, cidr string) (int, error) // optional TUN fd injection (Android)
 }
 

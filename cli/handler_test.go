@@ -54,62 +54,28 @@ func relayParams(nodeID interface{}, url string) Request {
 	return Request{Params: map[string]interface{}{"relay": relay}}
 }
 
-// 字符串形式的 node_id（"3"）必须与数字形式等效。
-func TestApplyRelayParamsStringNodeID(t *testing.T) {
-	h := testHandler()
-	if err := h.applyRelayParams(relayParams("3", "tcp://1.2.3.4:5678")); err != nil {
-		t.Fatalf("applyRelayParams failed: %v", err)
+// 中继参数解析：合法输入不报错（字符串/数字 node_id 等效、缺省 node_id、
+// 不携带 relay），非法输入报错（非对象、node_id 非数字、url 非字符串）。
+func TestApplyRelayParams(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     Request
+		wantErr bool
+	}{
+		{"string node_id", relayParams("3", "tcp://1.2.3.4:5678"), false},
+		{"numeric node_id", relayParams(float64(3), "tcp://1.2.3.4:5678"), false},
+		{"url only", relayParams(nil, "tcp://1.2.3.4:5678"), false},
+		{"no relay", Request{Params: map[string]interface{}{}}, false},
+		{"not object", Request{Params: map[string]interface{}{"relay": "tcp://1.2.3.4:5678"}}, true},
+		{"invalid node_id", relayParams("abc", "tcp://1.2.3.4:5678"), true},
+		{"invalid url", Request{Params: map[string]interface{}{
+			"relay": map[string]interface{}{"node_id": float64(3), "url": float64(123)},
+		}}, true},
 	}
-}
-
-// 数字形式的 node_id。
-func TestApplyRelayParamsNumericNodeID(t *testing.T) {
-	h := testHandler()
-	if err := h.applyRelayParams(relayParams(float64(3), "tcp://1.2.3.4:5678")); err != nil {
-		t.Fatalf("applyRelayParams failed: %v", err)
-	}
-}
-
-// relay 对象缺省 node_id：不报错（默认 0 自用中继）。
-func TestApplyRelayParamsURLOnly(t *testing.T) {
-	h := testHandler()
-	if err := h.applyRelayParams(relayParams(nil, "tcp://1.2.3.4:5678")); err != nil {
-		t.Fatalf("applyRelayParams failed: %v", err)
-	}
-}
-
-// 不携带 relay：不报错（房间可正常创建，仅走 P2P）。
-func TestApplyRelayParamsNone(t *testing.T) {
-	h := testHandler()
-	if err := h.applyRelayParams(Request{Params: map[string]interface{}{}}); err != nil {
-		t.Fatalf("applyRelayParams failed: %v", err)
-	}
-}
-
-// relay 传了但无法解析为对象：参数错误。
-func TestApplyRelayParamsNotObject(t *testing.T) {
-	h := testHandler()
-	req := Request{Params: map[string]interface{}{"relay": "tcp://1.2.3.4:5678"}}
-	if err := h.applyRelayParams(req); err == nil {
-		t.Fatal("applyRelayParams should fail for non-object relay")
-	}
-}
-
-// node_id 无法解析为数字：参数错误，而不是静默编码 0。
-func TestApplyRelayParamsInvalidNodeID(t *testing.T) {
-	h := testHandler()
-	if err := h.applyRelayParams(relayParams("abc", "tcp://1.2.3.4:5678")); err == nil {
-		t.Fatal("applyRelayParams should fail for non-numeric node_id")
-	}
-}
-
-// url 类型错误：参数错误。
-func TestApplyRelayParamsInvalidURL(t *testing.T) {
-	h := testHandler()
-	req := Request{Params: map[string]interface{}{
-		"relay": map[string]interface{}{"node_id": float64(3), "url": float64(123)},
-	}}
-	if err := h.applyRelayParams(req); err == nil {
-		t.Fatal("applyRelayParams should fail for non-string url")
+	for _, tt := range tests {
+		err := testHandler().applyRelayParams(tt.req)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("%s: applyRelayParams err = %v, wantErr = %v", tt.name, err, tt.wantErr)
+		}
 	}
 }

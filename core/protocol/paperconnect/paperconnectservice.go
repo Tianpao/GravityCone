@@ -55,19 +55,7 @@ type PaperConnectConnectionStatus struct {
 type PaperConnectService struct {
 	eventEmitter utils.EventEmitter
 	peerConfig   easytier.PeerConfig
-	uptimeClient *easytier.UptimeClient
-	settingsSvc  *easytier.SettingsService
-
-	// 启动器指定的中继节点（CLI/FFI 模式）：nodeID 编码进房间码，
-	// url 直接作为 EasyTier peer。未设置时使用内置节点。
-	externalRelayMu  sync.Mutex
-	externalRelaySet bool
-	externalRelayID  int
-	externalRelayURL string
-
-	// Uptime 自动分发仅 GUI 启用（main.go 调用 EnableUptime）；CLI/FFI 不启用，
-	// 中继由启动器传入，不传时使用内置节点，绝不拉取 uptime。
-	uptimeEnabled bool
+	relay        *easytier.RelayManager
 
 	// HOST state
 	hostManager    *easytier.EasyTierManager
@@ -121,7 +109,7 @@ func NewPaperConnectService(emitter utils.EventEmitter) *PaperConnectService {
 	}
 	return &PaperConnectService{
 		eventEmitter: emitter,
-		uptimeClient: easytier.NewUptimeClient(),
+		relay:        easytier.NewRelayManager(),
 	}
 }
 
@@ -193,7 +181,7 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	// If both found, prefer NetherNet (newer version)
 
 	// 拉取 uptime 节点并选定中继 nodeID（须在生成房间码之前，房客据此定向取同一个中继）
-	hostPeers, nodeID := s.hostPeersAndNodeID()
+	hostPeers, nodeID := s.relay.HostPeersAndNodeID(s.resolvePeers())
 
 	// Generate room code (embeds the relay node ID)
 	rc, err := GeneratePaperConnectRoomCodeWithNodeID(nodeID)
@@ -255,7 +243,7 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 		MCPort:             gamePort,
 		Peers:              hostPeers,
 		UpstreamCompatible: true,
-		DisableP2P:         s.p2pDisabled(),
+		DisableP2P:         s.relay.P2PDisabled(),
 	})
 	if err != nil {
 		if rakLn != nil {
@@ -636,6 +624,9 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		return nil, err
 	}
 
+	// 房客 peers 只计算一次（proxy 模式两阶段共用；uptime 地址换取只做一遍）
+	guestPeers := s.relay.GuestPeers(s.resolvePeers(), rc.NodeID())
+
 	// Phase 1: start EasyTier without port forwards to discover host.
 	manager, err := easytier.NewEasyTierManager()
 	if err != nil {
@@ -646,9 +637,9 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 		NetworkName:        rc.EasyTierNetworkName(),
 		NetworkSecret:      rc.EasyTierNetworkSecret(),
 		IsHost:             false,
-		Peers:              s.guestPeers(rc.NodeID()),
+		Peers:              guestPeers,
 		UpstreamCompatible: true,
-		DisableP2P:         s.p2pDisabled(),
+		DisableP2P:         s.relay.P2PDisabled(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
@@ -717,9 +708,9 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 			NetworkSecret:      rc.EasyTierNetworkSecret(),
 			IsHost:             false,
 			PortForwards:       pcGuestPortForwards(dialMode, protocol, hostIP, serverPort, gamePort, tcpLocalPort, rakLocalPort),
-			Peers:              s.guestPeers(rc.NodeID()),
+			Peers:              guestPeers,
 			UpstreamCompatible: true,
-			DisableP2P:         s.p2pDisabled(),
+			DisableP2P:         s.relay.P2PDisabled(),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("启动虚拟网络(端口转发)失败: %w", err)
@@ -1455,7 +1446,7 @@ func (s *PaperConnectService) Cleanup() {
 }
 
 func ConfigureSettingsPeers(s *PaperConnectService, settingsSvc *easytier.SettingsService) {
-	s.settingsSvc = settingsSvc
+	s.relay.SetSettingsService(settingsSvc)
 	s.peerConfig.SetSettingsService(settingsSvc)
 }
 
@@ -1466,7 +1457,7 @@ func ConfigureCLIPeers(s *PaperConnectService, peers []string) {
 // EnableUptime 启用 Uptime 节点自动分发。仅 GUI 调用；CLI/FFI 不启用，
 // 中继由启动器传入，不传时使用内置节点。
 func EnableUptime(s *PaperConnectService) {
-	s.uptimeEnabled = true
+	s.relay.EnableUptime()
 }
 
 // ConfigureExternalRelay sets the relay node provided by the caller
@@ -1475,141 +1466,11 @@ func EnableUptime(s *PaperConnectService) {
 // empty url or a negative nodeID clears the override, reverting to the
 // automatic uptime node fetch.
 func ConfigureExternalRelay(s *PaperConnectService, nodeID int, url string) {
-	s.externalRelayMu.Lock()
-	defer s.externalRelayMu.Unlock()
-	if url == "" || nodeID < 0 {
-		s.externalRelaySet = false
-		s.externalRelayID = 0
-		s.externalRelayURL = ""
-		return
-	}
-	s.externalRelaySet = true
-	s.externalRelayID = nodeID
-	s.externalRelayURL = url
-}
-
-// externalRelay returns the caller-provided relay (nodeID, url) and whether one is set.
-func (s *PaperConnectService) externalRelay() (nodeID int, url string, ok bool) {
-	s.externalRelayMu.Lock()
-	defer s.externalRelayMu.Unlock()
-	return s.externalRelayID, s.externalRelayURL, s.externalRelaySet
+	s.relay.SetExternal(nodeID, url)
 }
 
 func (s *PaperConnectService) resolvePeers() []string {
 	return s.peerConfig.Resolve(paperConnectBuiltinPeers)
-}
-
-// p2pDisabled 返回是否禁止 P2P 直连（强制走中继）。仅 GUI 设置（CLI 不注入
-// SettingsService，恒为 false）。
-func (s *PaperConnectService) p2pDisabled() bool {
-	if s.settingsSvc != nil {
-		return s.settingsSvc.GetP2PDisabled()
-	}
-	return false
-}
-
-// hostPeersAndNodeID 组装房主的 peers 并返回要编码进房间码的中继节点 ID。
-// 启动器指定了中继（CLI/FFI）时直接用其 nodeID 与地址；否则未启用 uptime
-// （CLI/FFI）时房间标记为"不使用公共节点"，仅用内置节点；仅 GUI 拉取
-// uptime 节点，拉取失败同样降级内置节点。
-func (s *PaperConnectService) hostPeersAndNodeID() ([]string, int) {
-	peers := s.resolvePeers()
-
-	if nodeID, url, ok := s.externalRelay(); ok {
-		slog.Info("使用启动器指定的中继节点", "nodeID", nodeID, "url", url)
-		return append(peers, url), nodeID
-	}
-
-	if !s.uptimeEnabled {
-		return peers, NodeIDReservedNoPublic
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	nodes, err := s.uptimeClient.FetchNodes(ctx)
-	if err != nil {
-		slog.Warn("拉取 Uptime 节点失败，房间标记为不使用公共节点", "err", err)
-		return peers, NodeIDReservedNoPublic
-	}
-
-	relayID := NodeIDReservedNoPublic
-	urls := make([]string, 0, len(nodes))
-	for _, n := range nodes {
-		urls = append(urls, n.URL)
-		if n.IsRelay && relayID == NodeIDReservedNoPublic {
-			relayID = n.ID
-		}
-	}
-	slog.Info("已从 Uptime 拉取节点", "count", len(urls), "relayNodeID", relayID)
-	return append(peers, urls...), relayID
-}
-
-// guestPeers 组装房客的 peers。启动器指定了中继时，节点地址已由其
-// 获取处理完毕，直接使用传入地址（不按房间码 nodeID 定向获取）；
-// 未启用 uptime（CLI/FFI）时仅用内置节点；GUI 按房间码内嵌 nodeID 分支：
-//   - 保留 ID 00（自用中继）：不追加 uptime 公共中继，仅保留列表 P2P 发现节点
-//   - 保留 ID PP（不使用公共节点）：纯 P2P，仅内置节点
-//   - 其他：向 /api/node/connect/:nodeID 定向获取房主的中继；失败（旧房间码
-//     随机值/节点失效）则降级为完整列表节点
-func (s *PaperConnectService) guestPeers(nodeID int) []string {
-	peers := s.resolvePeers()
-
-	if _, url, ok := s.externalRelay(); ok {
-		slog.Info("使用启动器指定的中继节点", "url", url)
-		return append(peers, url)
-	}
-
-	if !s.uptimeEnabled {
-		return peers
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	switch {
-	case nodeID == NodeIDReservedNoPublic:
-		return peers
-
-	case nodeID == NodeIDReservedSelfRelay:
-		return append(peers, s.uptimeP2PURLs(ctx)...)
-
-	default:
-		url, err := s.uptimeClient.FetchNodeByID(ctx, nodeID)
-		if err != nil {
-			slog.Warn("按房间码获取中继节点失败，降级为列表节点", "nodeID", nodeID, "err", err)
-			return append(peers, s.uptimeAllURLs(ctx)...)
-		}
-		slog.Info("已按房间码定向获取中继节点", "nodeID", nodeID, "url", url)
-		return append(append(peers, url), s.uptimeP2PURLs(ctx)...)
-	}
-}
-
-func (s *PaperConnectService) uptimeP2PURLs(ctx context.Context) []string {
-	nodes, err := s.uptimeClient.FetchNodes(ctx)
-	if err != nil {
-		slog.Warn("拉取 Uptime 节点失败", "err", err)
-		return nil
-	}
-	urls := make([]string, 0, len(nodes))
-	for _, n := range nodes {
-		if !n.IsRelay {
-			urls = append(urls, n.URL)
-		}
-	}
-	return urls
-}
-
-func (s *PaperConnectService) uptimeAllURLs(ctx context.Context) []string {
-	nodes, err := s.uptimeClient.FetchNodes(ctx)
-	if err != nil {
-		slog.Warn("拉取 Uptime 节点失败", "err", err)
-		return nil
-	}
-	urls := make([]string, 0, len(nodes))
-	for _, n := range nodes {
-		urls = append(urls, n.URL)
-	}
-	return urls
 }
 
 func (s *PaperConnectService) AddPeers(addrs []string) {

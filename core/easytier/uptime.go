@@ -56,13 +56,9 @@ type UptimeNodeResult struct {
 	URL     string // EasyTier -p 地址
 }
 
-// FetchNodes 拉取节点列表并换取连接地址，返回结构化结果。
+// FetchNodes 拉取节点列表并换取全部连接地址，返回结构化结果。
 // 单个节点换取失败会被跳过；所有节点都失败时返回错误。
 func (c *UptimeClient) FetchNodes(ctx context.Context) ([]UptimeNodeResult, error) {
-	if c.apiKey == "" {
-		return nil, fmt.Errorf("未配置环境变量 %s", UptimeAPIKeyEnv)
-	}
-
 	relay, p2p, err := c.fetchNodeList(ctx)
 	if err != nil {
 		return nil, err
@@ -103,32 +99,84 @@ func (c *UptimeClient) FetchNodes(ctx context.Context) ([]UptimeNodeResult, erro
 	return filtered, nil
 }
 
+// FetchNodesForJoin 一次列表拉取并换取房客所需节点地址。getKey 有效期仅数秒，
+// 列表与换取必须紧邻，故不分两次请求：
+//   - targetID > 0 且列表中存在该节点：targetURL 返回其地址，nodes 为 P2P 发现节点
+//   - targetID > 0 且列表中无该节点（旧房间码随机值/节点失效）：targetURL 为空，
+//     nodes 为全部节点（降级兜底）
+//   - targetID == 0（自用中继）：targetURL 为空，nodes 为 P2P 发现节点，不换取中继地址
+func (c *UptimeClient) FetchNodesForJoin(ctx context.Context, targetID int) (targetURL string, nodes []UptimeNodeResult, err error) {
+	relay, p2p, err := c.fetchNodeList(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	all := make([]uptimeNode, 0, len(relay)+len(p2p))
+	all = append(all, relay...)
+	all = append(all, p2p...)
+	if len(all) == 0 {
+		return "", nil, fmt.Errorf("Uptime 服务器未返回可用节点")
+	}
+
+	// 定向目标存在与否决定换取范围；目标缺失时降级为全部节点
+	exchangeAll := false
+	var target *uptimeNode
+	if targetID > 0 {
+		exchangeAll = true
+		for i := range all {
+			if all[i].ID == targetID {
+				target = &all[i]
+				exchangeAll = false
+				break
+			}
+		}
+	}
+
+	results := make([]UptimeNodeResult, len(all))
+	var wg sync.WaitGroup
+	for i := range all {
+		n := all[i]
+		isRelay := i < len(relay)
+		if isRelay && !exchangeAll && (target == nil || n.ID != target.ID) {
+			continue // 非降级：中继只换取定向目标一个
+		}
+		wg.Add(1)
+		go func(idx int, node uptimeNode, isRelay bool) {
+			defer wg.Done()
+			url, err := c.fetchNodeURL(ctx, node.GetKey)
+			if err != nil {
+				slog.Warn("换取 Uptime 节点地址失败，跳过", "name", node.Name, "id", node.ID, "err", err)
+				return
+			}
+			results[idx] = UptimeNodeResult{ID: node.ID, Name: node.Name, IsRelay: isRelay, URL: url}
+		}(i, n, isRelay)
+	}
+	wg.Wait()
+
+	// 过滤换取失败的节点；定向目标从 nodes 中分离，避免重复
+	targetURL = ""
+	filtered := results[:0]
+	for _, r := range results {
+		if r.URL == "" {
+			continue
+		}
+		if target != nil && r.ID == target.ID {
+			targetURL = r.URL
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+	return targetURL, filtered, nil
+}
+
 // fetchNodeList 请求 GET /api/node 获取 relay 与 P2P 节点列表。
 func (c *UptimeClient) fetchNodeList(ctx context.Context) (relay, p2p []uptimeNode, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.baseURL+"/api/node?relay=true&p2pnode=3", nil)
+	body, err := c.getBody(ctx, "/api/node?relay=true&p2pnode=3", "节点列表")
 	if err != nil {
 		return nil, nil, err
-	}
-	c.setAuthHeaders(req)
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, nil, fmt.Errorf("请求 Uptime 节点列表失败: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("Uptime 节点列表返回 %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var parsed struct {
-		Status  int  `json:"status"`
-		Success bool `json:"success"`
-		Data    struct {
+		Data struct {
 			Relay []uptimeNode `json:"relay"`
 			P2P   []uptimeNode `json:"p2p"`
 		} `json:"data"`
@@ -139,74 +187,13 @@ func (c *UptimeClient) fetchNodeList(ctx context.Context) (relay, p2p []uptimeNo
 	return parsed.Data.Relay, parsed.Data.P2P, nil
 }
 
-// FetchNodeByID 按节点 ID 定向获取节点连接地址（GET /api/node/connect/:nodeId），
-// 用于房客跟随房主编码在房间码里的中继节点。节点不存在或不可用时返回错误，
-// 调用方据此降级。
-func (c *UptimeClient) FetchNodeByID(ctx context.Context, nodeID int) (string, error) {
-	if c.apiKey == "" {
-		return "", fmt.Errorf("未配置环境变量 %s", UptimeAPIKeyEnv)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("%s/api/node/connect/%d", c.baseURL, nodeID), nil)
-	if err != nil {
-		return "", err
-	}
-	c.setAuthHeaders(req)
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("请求 Uptime 节点(%d)失败: %w", nodeID, err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Uptime 节点(%d)返回 %d: %s", nodeID, resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	var parsed struct {
-		Status  int  `json:"status"`
-		Success bool `json:"success"`
-		Data    struct {
-			GetKey string `json:"getKey"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return "", fmt.Errorf("解析 Uptime 节点(%d)响应失败: %w", nodeID, err)
-	}
-	if parsed.Data.GetKey == "" {
-		return "", fmt.Errorf("Uptime 节点(%d)未返回 getKey", nodeID)
-	}
-
-	// getKey 有效期仅数秒，立即换取连接地址。
-	return c.fetchNodeURL(ctx, parsed.Data.GetKey)
-}
-
 // fetchNodeURL 请求 GET /api/node/get/:getKey 换取节点连接地址。
 // 返回形式为 "txt://<connectUrl>"：若 connectUrl 本身就是 EasyTier 连接
 // 地址（tcp/udp/ws/wss），剥掉前缀直接使用；否则原样保留交由 EasyTier 解析。
 func (c *UptimeClient) fetchNodeURL(ctx context.Context, getKey string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.baseURL+"/api/node/get/"+getKey, nil)
+	body, err := c.getBody(ctx, "/api/node/get/"+getKey, "节点地址")
 	if err != nil {
 		return "", err
-	}
-	c.setAuthHeaders(req)
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("请求 Uptime 节点地址失败: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Uptime 节点地址返回 %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	raw := strings.TrimSpace(string(body))
@@ -216,6 +203,33 @@ func (c *UptimeClient) fetchNodeURL(ctx context.Context, getKey string) (string,
 		return url, nil
 	}
 	return raw, nil
+}
+
+// getBody 发起带鉴权的 GET 请求并返回响应体（限制 1MB），desc 用于错误文案。
+func (c *UptimeClient) getBody(ctx context.Context, path, desc string) ([]byte, error) {
+	if c.apiKey == "" {
+		return nil, fmt.Errorf("未配置环境变量 %s", UptimeAPIKeyEnv)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setAuthHeaders(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求 Uptime %s失败: %w", desc, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Uptime %s返回 %d: %s", desc, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return body, nil
 }
 
 func (c *UptimeClient) setAuthHeaders(req *http.Request) {

@@ -22,7 +22,7 @@ type StartOptions struct {
 	PortForwards       []string // "tcp://local_addr/remote_addr"
 	Peers              []string // Public peer addresses
 	UpstreamCompatible bool     // PaperConnect-style (no-tun, no p2p restrictions)
-	DisableP2P         bool     // Force relay-only mode (PaperConnect profile only)
+	DisableP2P         bool     // Force relay-only mode (--disable-p2p true). Applies to both profiles.
 	MachineID          string   // Optional machine identifier
 }
 
