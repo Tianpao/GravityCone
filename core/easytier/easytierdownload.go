@@ -1,4 +1,4 @@
-//go:build !et_ffi
+//go:build !cli && !et_ffi
 
 package easytier
 
@@ -18,6 +18,22 @@ import (
 	"gravitycone/core/utils"
 	"gravitycone/core/utils/process"
 )
+
+const (
+	EventDownloadProgress = "download.progress"
+	EventDownloadError    = "download.error"
+)
+
+type DownloadProgressData struct {
+	Step      string `json:"step"`
+	Percent   int    `json:"percent"`
+	TotalSize int64  `json:"total_size"`
+	Speed     int64  `json:"speed"`
+}
+
+type DownloadErrorData struct {
+	Error string `json:"error"`
+}
 
 var easyTierBaseURL = "https://github.com/EasyTier/EasyTier/releases/download"
 
@@ -96,10 +112,6 @@ func EnsureEasyTier() error {
 			slog.Info("EasyTier binaries found", "core", corePath, "cli", cliPath)
 			return nil
 		}
-	}
-
-	if skipEasyTierDownload {
-		return fmt.Errorf("EasyTier binaries not found and auto-download is disabled")
 	}
 
 	slog.Info("EasyTier binaries not found, starting auto-download")
@@ -292,4 +304,11 @@ func extractZipEntry(f *zip.File, dstPath string, mode os.FileMode) error {
 
 	_, err = io.Copy(dst, rc)
 	return err
+}
+
+// EasyTierDownloadService exposes the binary auto-download as a Wails service.
+type EasyTierDownloadService struct{}
+
+func (s *EasyTierDownloadService) Ensure() error {
+	return EnsureEasyTier()
 }

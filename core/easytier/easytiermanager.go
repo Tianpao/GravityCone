@@ -28,20 +28,13 @@ var (
 	easytierStdout io.Writer = os.Stdout
 	easytierStderr io.Writer = os.Stderr
 
-	customEasyTierDir    string
-	skipEasyTierDownload bool
+	customEasyTierDir string
 )
 
 // SetCustomEasyTierDir sets a custom directory for locating EasyTier binaries.
 // When set, resolveEasyTierBinary searches this directory instead of the default path.
 func SetCustomEasyTierDir(dir string) {
 	customEasyTierDir = dir
-}
-
-// SetSkipEasyTierDownload disables automatic EasyTier download.
-// Call this when the user provides their own EasyTier directory via CLI flag.
-func SetSkipEasyTierDownload(skip bool) {
-	skipEasyTierDownload = skip
 }
 
 // SetEasyTierLogOutput redirects easytier-core process output to the given file path.

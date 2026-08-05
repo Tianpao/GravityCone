@@ -1,3 +1,5 @@
+//go:build !et_ffi
+
 package cli
 
 // Request represents an incoming JSON request from stdin.

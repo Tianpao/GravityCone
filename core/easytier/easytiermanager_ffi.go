@@ -13,10 +13,6 @@ import (
 	ffi_et "gravitycone/ffi/easytier"
 )
 
-// EnsureEasyTier is a no-op on Android — EasyTier is statically linked.
-// It exists because EasyTierDownloadService (untagged) calls it in all builds.
-func EnsureEasyTier() error { return nil }
-
 // --- EasyTierManager (wraps ffi/easytier.FFIManager) ---
 
 type EasyTierManager struct {

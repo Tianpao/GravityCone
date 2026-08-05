@@ -1,3 +1,5 @@
+//go:build !et_ffi
+
 package cli
 
 import (
@@ -23,7 +25,8 @@ const version = "1.0.0"
 // peers overrides the default EasyTier public peer list.
 // vendorPrefix is prepended to the vendor string in room operations.
 // motd is the custom MOTD for LAN broadcast (empty uses the default).
-// easytierDir specifies a custom EasyTier binary directory; when set, auto-download is skipped.
+// easytierDir specifies a custom EasyTier binary directory.
+// Missing binaries fail at room create/join (no auto-download in CLI builds).
 func Run(peers []string, vendorPrefix string, motd string, easytierDir string) {
 	// Resolve logs directory next to the CLI executable
 	logsDir, stdioLogPath, etLogPath, gccoreLogPath, err := resolveLogPaths()
@@ -48,21 +51,14 @@ func Run(peers []string, vendorPrefix string, motd string, easytierDir string) {
 	// Redirect EasyTier logs to file
 	easytier.SetEasyTierLogOutput(etLogPath)
 
-	// Set up writer and emitter early so download progress can be reported
+	// Set up writer and emitter early so service events can be reported
 	writer := NewStdioWriter()
 	emitter := NewStdioEventEmitter(writer)
-	easytier.SetEnsureEasyTierEmitter(emitter)
 
 	// Configure custom EasyTier directory if provided
 	if easytierDir != "" {
 		easytier.SetCustomEasyTierDir(easytierDir)
-		easytier.SetSkipEasyTierDownload(true)
 		slog.Info("Using custom EasyTier directory", "path", easytierDir)
-	}
-
-	// Ensure EasyTier binaries are available (auto-download if missing and not skipped)
-	if err := easytier.EnsureEasyTier(); err != nil {
-		slog.Warn("EasyTier not available", "error", err)
 	}
 
 	// Set up services

@@ -10,22 +10,6 @@ const AppVersion = "v0.1.4-alpha"
 // EasyTierVersion 是 EasyTier 二进制/FFI 库的版本号，用于下载 URL 与房间广播。
 const EasyTierVersion = "v2.6.4"
 
-const (
-	EventDownloadProgress = "download.progress"
-	EventDownloadError    = "download.error"
-)
-
-type DownloadProgressData struct {
-	Step      string `json:"step"`
-	Percent   int    `json:"percent"`
-	TotalSize int64  `json:"total_size"`
-	Speed     int64  `json:"speed"`
-}
-
-type DownloadErrorData struct {
-	Error string `json:"error"`
-}
-
 // StartOptions 是启动 EasyTier 网络的统一参数。
 // MachineID 与 TunFdProvider 仅 Android FFI 使用，桌面端忽略。
 type StartOptions struct {
