@@ -17,16 +17,12 @@ export function DecodeRoomCode(imageBase64: string): $CancellablePromise<string>
 }
 
 /**
- * EncodeRoomCode embeds a room code into a source image using blind watermarking.
  * The resulting image looks identical to the original to the naked eye.
  */
 export function EncodeRoomCode(sourcePath: string, roomCode: string): $CancellablePromise<$models.WatermarkResult | null> {
     return $Call.ByID(239701887, sourcePath, roomCode);
 }
 
-/**
- * ListDemoImages returns resource identifiers for embedded demo images.
- */
 export function ListDemoImages(): $CancellablePromise<string[] | null> {
     return $Call.ByID(3334707414);
 }

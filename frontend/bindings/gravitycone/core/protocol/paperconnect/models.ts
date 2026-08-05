@@ -7,9 +7,6 @@ export interface PCPlayerEntry {
     "isRoomHost": boolean;
 }
 
-/**
- * PaperConnectConnectionStatus is the guest-side connection status.
- */
 export interface PaperConnectConnectionStatus {
     "room_code": string;
     "host_address": string;
@@ -22,9 +19,6 @@ export interface PaperConnectConnectionStatus {
     "disconnect_reason": string;
 }
 
-/**
- * PaperConnectRoomStatus is the host-side room status.
- */
 export interface PaperConnectRoomStatus {
     "code": string;
     "game_port": number;

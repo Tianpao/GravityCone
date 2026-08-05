@@ -14,21 +14,21 @@ import * as utils$0 from "../../utils/models.js";
 import * as $models from "./models.js";
 
 export function GetDiscoveredServers(): $CancellablePromise<$models.LanServer[] | null> {
-    return $Call.ByID(384771432);
+    return $Call.ByID(827233173);
 }
 
 export function SetEventEmitter(emitter: utils$0.EventEmitter): $CancellablePromise<void> {
-    return $Call.ByID(1309808372, emitter);
+    return $Call.ByID(3111642163, emitter);
 }
 
 export function StartDiscovery(): $CancellablePromise<void> {
-    return $Call.ByID(3810941764);
+    return $Call.ByID(4182834353);
 }
 
 export function StopDiscovery(): $CancellablePromise<void> {
-    return $Call.ByID(44299972);
+    return $Call.ByID(2059399531);
 }
 
 export function VerifyServer(ip: string, port: number): $CancellablePromise<string> {
-    return $Call.ByID(3900159792, ip, port);
+    return $Call.ByID(2287235857, ip, port);
 }

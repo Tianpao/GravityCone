@@ -12,8 +12,9 @@ require (
 	github.com/wailsapp/wails/v3 v3.0.0-alpha2.117
 	github.com/wlynxg/anet v0.0.5
 	golang.org/x/crypto v0.53.0
+	golang.org/x/image v0.44.0
 	golang.org/x/net v0.56.0
-	golang.org/x/text v0.38.0
+	golang.org/x/text v0.40.0
 )
 
 replace github.com/df-mc/go-nethernet => ./lib/go-nethernet

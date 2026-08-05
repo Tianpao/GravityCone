@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/kirklin/go-blind-watermark/bwm"
+	"golang.org/x/image/webp"
 
 	"gravitycone/core/protocol/paperconnect"
 	"gravitycone/core/protocol/scaffolding"
@@ -23,6 +24,12 @@ import (
 var embeddedImages embed.FS
 
 const embeddedPrefix = "embedded:"
+
+func init() {
+	// The standard library cannot decode WebP; register the golang.org/x/image
+	// decoder so image.Decode handles .webp sources transparently.
+	image.RegisterFormat("webp", "RIFF????WEBP", webp.Decode, webp.DecodeConfig)
+}
 
 // Fixed seeds — same seeds mean anyone with the app can decode room codes.
 const seedImg = 12345
@@ -110,7 +117,7 @@ func (w *WatermarkService) DecodeRoomCode(imageBase64 string) (string, error) {
 
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return "", fmt.Errorf("图片解码失败，请确认拖入的是有效的PNG/JPEG图片")
+		return "", fmt.Errorf("图片解码失败，请确认拖入的是有效的PNG/JPEG/WebP图片")
 	}
 	slog.Info("image decoded", "bounds", img.Bounds())
 
@@ -169,7 +176,7 @@ func (w *WatermarkService) ListDemoImages() ([]string, error) {
 			continue
 		}
 		name := strings.ToLower(entry.Name())
-		if strings.HasSuffix(name, ".png") || strings.HasSuffix(name, ".jpg") || strings.HasSuffix(name, ".jpeg") {
+		if strings.HasSuffix(name, ".png") || strings.HasSuffix(name, ".jpg") || strings.HasSuffix(name, ".jpeg") || strings.HasSuffix(name, ".webp") {
 			images = append(images, embeddedPrefix+entry.Name())
 		}
 	}

@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { Events } from '@wailsio/runtime'
-import { StartDiscovery, StopDiscovery, GetDiscoveredServers } from '@/../bindings/gravitycone/core/lan/scaffolding/discovery'
+import { StartDiscovery, StopDiscovery, GetDiscoveredServers } from '@/../bindings/gravitycone/core/lan/scaffolding/lanservice'
 import type { LanServer } from '@/../bindings/gravitycone/core/lan/scaffolding/models'
 
 type EventUnsubscriber = () => void
