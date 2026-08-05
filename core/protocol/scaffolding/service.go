@@ -139,15 +139,15 @@ type ScaffoldingService struct {
 	guestRoomCode             *RoomCode
 	guestPlayerName           string
 	guestNegotiatedEasyTierID bool
-	guestScaffoldingLocalPort uint16                // local port forwarded to host's scaffolding port
-	guestDisconnectReason     string                // set when connection is lost (e.g. host closed room)
-	guestDirectLocal          bool                  // true when guest and host are on the same machine
-	guestIOMu                 sync.Mutex            // serializes writes on guestConn
-	guestReadCh               chan readResult       // background reader delivers responses here
+	guestScaffoldingLocalPort uint16             // local port forwarded to host's scaffolding port
+	guestDisconnectReason     string             // set when connection is lost (e.g. host closed room)
+	guestDirectLocal          bool               // true when guest and host are on the same machine
+	guestIOMu                 sync.Mutex         // serializes writes on guestConn
+	guestReadCh               chan readResult    // background reader delivers responses here
 	guestFakeServer           *lansca.FakeServer // LAN broadcaster for Minecraft discovery
-	guestMCLocalPort          uint16                // local port forwarded to host's MC server via EasyTier
-	guestMCRemoteAddr         string                // remote addr for port-forward cleanup (host_virtual_ip:mc_port)
-	guestMotd                 string                // custom MOTD for LAN broadcast
+	guestMCLocalPort          uint16             // local port forwarded to host's MC server via EasyTier
+	guestMCRemoteAddr         string             // remote addr for port-forward cleanup (host_virtual_ip:mc_port)
+	guestMotd                 string             // custom MOTD for LAN broadcast
 
 	joinCancelled atomic.Bool // set to true to abort a running JoinRoom
 }

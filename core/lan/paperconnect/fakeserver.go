@@ -13,7 +13,6 @@ import (
 	"time"
 
 	mcstatus "github.com/andre-carbajal/go-mcstatus"
-
 )
 
 func buildUnconnectedPong(motd string, serverGUID int64) []byte {

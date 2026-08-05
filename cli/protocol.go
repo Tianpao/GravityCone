@@ -4,17 +4,17 @@ package cli
 
 // Request represents an incoming JSON request from stdin.
 type Request struct {
-	ID     int                    `json:"id"`
-	Method string                 `json:"method"`
+	ID     int            `json:"id"`
+	Method string         `json:"method"`
 	Params map[string]any `json:"params,omitempty"`
 }
 
 // Response represents an outgoing JSON response to stdout.
 type Response struct {
-	ID     int         `json:"id"`
-	Status string      `json:"status"` // "success", "error", "progress"
-	Data   any `json:"data,omitempty"`
-	Error  *ErrorInfo  `json:"error,omitempty"`
+	ID     int        `json:"id"`
+	Status string     `json:"status"` // "success", "error", "progress"
+	Data   any        `json:"data,omitempty"`
+	Error  *ErrorInfo `json:"error,omitempty"`
 }
 
 // ErrorInfo contains error details for failed requests.
@@ -25,8 +25,8 @@ type ErrorInfo struct {
 
 // Event represents an asynchronous event pushed to stdout.
 type Event struct {
-	Event string      `json:"event"`
-	Data  any `json:"data"`
+	Event string `json:"event"`
+	Data  any    `json:"data"`
 }
 
 // Error code constants matching the CLI specification.

@@ -17,14 +17,14 @@ type StartOptions struct {
 	NetworkSecret      string
 	Hostname           string // HOST only; GUEST leaves empty
 	IsHost             bool
-	TCPPort            uint16   // HOST only: scaffolding TCP port, used for whitelist
-	MCPort             uint16   // HOST only: MC server port, used for whitelist
-	ConfigPath         string   // Path to TOML ACL config file (adds -c flag)
-	PortForwards       []string // Port forward entries (e.g. "tcp://0.0.0.0:12345/10.144.144.1:12345")
-	Peers              []string // Public peer addresses passed as -p arguments.
-	UpstreamCompatible bool     // Use the original PaperConnect EasyTier argument profile.
-	DisableP2P         bool     // Force relay-only mode (--disable-p2p true). Applies to both profiles.
-	MachineID          string   // Optional machine identifier (Android TOML config).
+	TCPPort            uint16                                                            // HOST only: scaffolding TCP port, used for whitelist
+	MCPort             uint16                                                            // HOST only: MC server port, used for whitelist
+	ConfigPath         string                                                            // Path to TOML ACL config file (adds -c flag)
+	PortForwards       []string                                                          // Port forward entries (e.g. "tcp://0.0.0.0:12345/10.144.144.1:12345")
+	Peers              []string                                                          // Public peer addresses passed as -p arguments.
+	UpstreamCompatible bool                                                              // Use the original PaperConnect EasyTier argument profile.
+	DisableP2P         bool                                                              // Force relay-only mode (--disable-p2p true). Applies to both profiles.
+	MachineID          string                                                            // Optional machine identifier (Android TOML config).
 	TunFdProvider      func(instName string, virtualIP string, cidr string) (int, error) // optional TUN fd injection (Android)
 }
 

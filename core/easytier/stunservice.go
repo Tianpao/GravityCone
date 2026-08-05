@@ -5,7 +5,6 @@ package easytier
 import (
 	"encoding/json"
 	"fmt"
-
 )
 
 type StunService struct{}

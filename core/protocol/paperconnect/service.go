@@ -68,8 +68,8 @@ type PaperConnectService struct {
 	hostStopReason string
 	hostSessions   chan struct{}
 	hostCancelFunc context.CancelFunc
-	hostProtocol   string            // ProtocolNetherNet or ProtocolRakNet
-	hostGamePort   uint16            // RakNet listener port (NetherNet) or scanned MC port (RakNet)
+	hostProtocol   string                  // ProtocolNetherNet or ProtocolRakNet
+	hostGamePort   uint16                  // RakNet listener port (NetherNet) or scanned MC port (RakNet)
 	hostRakNetInfo *lanpc.RakNetServerInfo // Server info from RakNet scan (for guest broadcast)
 
 	guestManager          *easytier.EasyTierManager

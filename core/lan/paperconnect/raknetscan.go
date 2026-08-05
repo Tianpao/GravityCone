@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/wlynxg/anet"
-
 )
 
 const rakNetDiscoveryPort = 19132
