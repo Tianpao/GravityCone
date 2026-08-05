@@ -48,7 +48,6 @@ func SetEasyTierBaseURL(url string) {
 	}
 }
 
-// easyTierPlatform holds the OS and arch segments used in the download URL.
 type easyTierPlatform struct {
 	sys  string
 	arch string
@@ -305,7 +304,6 @@ func extractZipEntry(f *zip.File, dstPath string, mode os.FileMode) error {
 	return err
 }
 
-// EasyTierDownloadService exposes the binary auto-download as a Wails service.
 type EasyTierDownloadService struct{}
 
 func (s *EasyTierDownloadService) Ensure() error {

@@ -8,8 +8,6 @@ import (
 	"gravitycone/core/protocol/scaffolding"
 )
 
-// --- IsPaperConnectCode ---
-
 func TestIsPaperConnectCode(t *testing.T) {
 	tests := []struct {
 		code string
@@ -36,8 +34,6 @@ func TestIsPaperConnectCode(t *testing.T) {
 	}
 }
 
-// --- verifyRoomCode ---
-
 func TestVerifyRoomCodeInvalid(t *testing.T) {
 	tests := []struct {
 		name string
@@ -61,7 +57,6 @@ func TestVerifyRoomCodeInvalid(t *testing.T) {
 }
 
 func TestVerifyRoomCodeScaffolding(t *testing.T) {
-	// Generate a valid Scaffolding room code
 	rc, err := scaffolding.GenerateRoomCode()
 	if err != nil {
 		t.Fatalf("GenerateRoomCode failed: %v", err)
@@ -82,7 +77,6 @@ func TestVerifyRoomCodeScaffolding(t *testing.T) {
 }
 
 func TestVerifyRoomCodePaperConnect(t *testing.T) {
-	// Generate a valid PaperConnect room code
 	rc, err := paperconnect.GeneratePaperConnectRoomCode()
 	if err != nil {
 		t.Fatalf("GeneratePaperConnectRoomCode failed: %v", err)
@@ -96,7 +90,6 @@ func TestVerifyRoomCodePaperConnect(t *testing.T) {
 }
 
 func TestVerifyRoomCodePaperConnectInvalidChecksum(t *testing.T) {
-	// Generate a valid code and corrupt it
 	rc, err := paperconnect.GeneratePaperConnectRoomCode()
 	if err != nil {
 		t.Fatalf("GeneratePaperConnectRoomCode failed: %v", err)
@@ -115,12 +108,9 @@ func TestVerifyRoomCodePaperConnectInvalidChecksum(t *testing.T) {
 	}
 }
 
-// --- setWaiting ---
-
 func TestSetWaiting(t *testing.T) {
 	resetState()
 
-	// Transition to a non-Idle state first
 	transitionTo(StateHostScanning, &hostContext{protocol: ProtocolScaffolding})
 	if isInState(StateIdle) {
 		t.Fatal("precondition: should not be in Idle")
@@ -142,12 +132,9 @@ func TestSetWaitingFromIdle(t *testing.T) {
 	}
 }
 
-// --- setScanning guard ---
-
 func TestSetScanningGuard(t *testing.T) {
 	resetState()
 
-	// First call should succeed (state is Idle)
 	// We can't fully test setScanning without real services,
 	// but we can test the canTransition guard
 	transitionTo(StateHostScanning, nil)
@@ -160,8 +147,6 @@ func TestSetScanningGuard(t *testing.T) {
 		t.Error("setScanning should be no-op when not Idle")
 	}
 }
-
-// --- setGuesting guard ---
 
 func TestSetGuestingGuard(t *testing.T) {
 	resetState()

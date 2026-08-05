@@ -7,7 +7,6 @@ import (
 	"github.com/wlynxg/anet"
 )
 
-// GetLocalAddrs returns all local IPv4 unicast addresses including 127.0.0.1.
 // On Windows, broadcasts to 255.255.255.255 don't loopback, so local unicast pings
 // are needed to discover servers on the same machine.
 func GetLocalAddrs(port int) []*net.UDPAddr {

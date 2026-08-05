@@ -12,7 +12,6 @@ import (
 	"sync"
 )
 
-// Handler dispatches CLI requests to core service methods.
 type Handler struct {
 	stunSvc         *easytier.StunService
 	lanSvc          *lansca.LanService
@@ -25,7 +24,6 @@ type Handler struct {
 	motd            string
 }
 
-// NewHandler creates a Handler with the given services and writer.
 func NewHandler(
 	stunSvc *easytier.StunService,
 	lanSvc *lansca.LanService,
@@ -48,7 +46,6 @@ func NewHandler(
 	}
 }
 
-// Handle processes a single request and writes the response.
 func (h *Handler) Handle(req Request) {
 	parts := strings.SplitN(req.Method, ".", 2)
 	if len(parts) != 2 {

@@ -46,8 +46,6 @@ const (
 	RoomCodePaperConnect = 4 // GravityCone extension for Bedrock
 )
 
-// --- State JSON structures ---
-
 // WaitingState represents the idle/waiting state.
 type WaitingState struct {
 	State string `json:"state"`

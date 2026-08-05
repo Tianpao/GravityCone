@@ -13,8 +13,6 @@ import (
 	ffi_et "gravitycone/ffi/easytier"
 )
 
-// --- EasyTierManager (wraps ffi/easytier.FFIManager) ---
-
 type EasyTierManager struct {
 	ffi       *ffi_et.FFIManager
 	virtualIP string
@@ -88,8 +86,6 @@ func (m *EasyTierManager) RemovePortForward(proto, local, remote string) error {
 	return m.ffi.RemovePortForward(proto, local, remote)
 }
 
-// --- StunService (Android — reads NAT type from the running instance) ---
-//
 // easytier-ffi has no stun export and Android has no easytier-cli binary.
 // Instead, the running EasyTier instance collects STUN info internally
 // (stun.rs's StunInfoCollector) and publishes it via collect_network_infos

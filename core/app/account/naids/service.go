@@ -121,7 +121,6 @@ func (s *NatayarkService) GetCurrentUser() *NatayarkUser {
 	return s.User
 }
 
-// RestoreSession validates the given access token and restores the in-memory session.
 func (s *NatayarkService) RestoreSession(token string) (*NatayarkUser, error) {
 	if token == "" {
 		return nil, nil

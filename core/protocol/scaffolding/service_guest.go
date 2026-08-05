@@ -15,20 +15,16 @@ import (
 	"gravitycone/core/utils"
 )
 
-// --- GUEST methods ---
-
 // CancelJoin aborts a running JoinRoom call. Safe to call even if no join is in progress.
 func (s *ScaffoldingService) CancelJoin() {
 	s.joinCancelled.Store(true)
 }
 
-// setJoinProgressCallback sets an optional progress callback for JoinRoom.
 // Only needed by CLI mode; Wails mode ignores it.
 func (s *ScaffoldingService) setJoinProgressCallback(cb func(step string)) {
 	s.joinProgressCb = cb
 }
 
-// SetScaffoldingJoinProgress sets the progress callback on a ScaffoldingService.
 // Package-level helper so the CLI handler can call it without the method
 // appearing in Wails bindings.
 func SetScaffoldingJoinProgress(svc *ScaffoldingService, cb func(step string)) {
@@ -50,13 +46,11 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 	}
 	s.guestMu.Unlock()
 
-	// 1. Parse room code
 	rc, err := ParseRoomCode(code)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Start EasyTier
 	manager, err := easytier.NewEasyTierManager()
 	if err != nil {
 		return nil, err
@@ -74,8 +68,6 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 	}
 	s.reportJoinProgress("connecting")
 
-	// 3. Discover HOST and wait for P2P connection
-	// The hostname format is scaffolding-mc-server-{port}, scan peers for matching hostname.
 	// Retry until we can actually connect via TCP (P2P may take time to establish).
 	if s.joinCancelled.Load() {
 		manager.Stop()
@@ -99,7 +91,6 @@ func (s *ScaffoldingService) JoinRoom(code string, playerName string, vendorPref
 		return nil, err
 	}
 
-	// Store state and start heartbeat
 	s.guestMu.Lock()
 	s.guestManager = manager
 	s.guestConn = conn
@@ -260,7 +251,6 @@ func (s *ScaffoldingService) joinHandshake(conn net.Conn, manager *easytier.Easy
 		}
 	}()
 
-	// Send c:player_ping
 	pingData, _ := json.Marshal(newGuestPlayerInfo(machineID, playerName, easytierID, vendorPrefix))
 	if err := WriteProtocolRequest(conn, ProtocolPlayerPing, pingData); err != nil {
 		handshakeErr = fmt.Errorf("发送心跳失败: %w", err)
@@ -271,7 +261,6 @@ func (s *ScaffoldingService) joinHandshake(conn net.Conn, manager *easytier.Easy
 		return false, 0, handshakeErr
 	}
 
-	// Protocol negotiation
 	supportedProtocols := strings.Join([]string{
 		ProtocolPing,
 		ProtocolProtocols,
@@ -293,7 +282,6 @@ func (s *ScaffoldingService) joinHandshake(conn net.Conn, manager *easytier.Easy
 
 	s.reportJoinProgress("handshaking")
 
-	// Get MC server port
 	if err := WriteProtocolRequest(conn, ProtocolServerPort, nil); err != nil {
 		handshakeErr = fmt.Errorf("获取服务器端口失败: %w", err)
 		return false, 0, handshakeErr
@@ -389,7 +377,6 @@ func (s *ScaffoldingService) guestReadLoop(conn net.Conn) {
 		status, body, err := ReadProtocolResponse(conn)
 		if err != nil {
 			slog.Warn("ReadLoop read failed", "error", err)
-			// Drain any pending read result, then close the channel.
 			select {
 			case s.guestReadCh <- readResult{err: err}:
 			default:
@@ -401,9 +388,6 @@ func (s *ScaffoldingService) guestReadLoop(conn net.Conn) {
 	}
 }
 
-// writeAndWait writes a request then waits for the background reader to deliver
-// the response. Returns an error if the write fails, the reader fails, or a
-// timeout occurs.
 func (s *ScaffoldingService) writeAndWait(conn net.Conn, typeName string, body []byte) (uint8, []byte, error) {
 	s.guestIOMu.Lock()
 	if err := WriteProtocolRequest(conn, typeName, body); err != nil {
@@ -412,7 +396,6 @@ func (s *ScaffoldingService) writeAndWait(conn net.Conn, typeName string, body [
 	}
 	s.guestIOMu.Unlock()
 
-	// Wait for the background reader to deliver the response.
 	select {
 	case result, ok := <-s.guestReadCh:
 		if !ok {
@@ -499,11 +482,9 @@ func (s *ScaffoldingService) setupMCPortForward(hostIP string, mcPort uint16) {
 	mcLocalPort := uint16(localListener.Addr().(*net.TCPAddr).Port)
 	localListener.Close()
 
-	// Set up EasyTier port-forward: local -> HOST virtual IP:mcPort
 	remoteAddr := fmt.Sprintf("%s:%d", hostIP, mcPort)
 	localAddr := fmt.Sprintf("0.0.0.0:%d", mcLocalPort)
 
-	// TCP port-forward
 	if err := manager.AddPortForward("tcp", localAddr, remoteAddr); err != nil {
 		slog.Warn("TCP端口转发失败", "error", err)
 		return

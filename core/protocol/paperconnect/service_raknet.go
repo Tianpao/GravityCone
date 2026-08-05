@@ -16,7 +16,6 @@ import (
 	lanpc "gravitycone/core/lan/paperconnect"
 )
 
-// dialRakNet 建立到 addr 的 RakNet 连接（30 秒超时）。
 func dialRakNet(addr string) (*raknet.Conn, error) {
 	dialCtx, dialCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer dialCancel()
@@ -26,7 +25,6 @@ func dialRakNet(addr string) (*raknet.Conn, error) {
 	}).DialContext(dialCtx, addr)
 }
 
-// pcGuestSetupConnection sets up the NetherNet or RakNet game connection asynchronously.
 func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierManager, playerName string, protocol string, rakLocalPort uint16) {
 	if s.joinCancelled.Load() {
 		return
@@ -158,7 +156,6 @@ func (s *PaperConnectService) pcGuestSetupConnection(manager *easytier.EasyTierM
 		}
 	}
 
-	// ---- RakNet path ----
 	serverName := s.guestMotd
 	readyCh := make(chan error, 1)
 	fakeStop := make(chan struct{})
@@ -270,7 +267,6 @@ func relayRakNetPackets(parentCtx context.Context, log *slog.Logger, local, remo
 	<-ctx.Done()
 }
 
-// forwardOneWay 把 src 的 RakNet 包转发到 dst，直至任一侧出错或 ctx 结束。
 func forwardOneWay(ctx context.Context, log *slog.Logger, src, dst *raknet.Conn, forwarded *atomic.Int64, readLabel, writeLabel string) {
 	for {
 		pk, err := src.ReadPacket()

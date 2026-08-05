@@ -119,8 +119,6 @@ type guestContext struct {
 	leaveFn          func()
 }
 
-// --- State transition helpers ---
-
 // beginTransition atomically checks that the engine is Idle and transitions
 // to newState in one step, eliminating the TOCTOU between a separate
 // "can transition" check and the transition itself. Two concurrent

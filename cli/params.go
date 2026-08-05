@@ -8,8 +8,6 @@ import (
 	"strings"
 )
 
-// --- Request parameter helpers ---
-
 func (r *Request) getString(key string) (string, error) {
 	v, ok := r.Params[key]
 	if !ok {
@@ -22,9 +20,8 @@ func (r *Request) getString(key string) (string, error) {
 	return s, nil
 }
 
-// toInt converts a JSON parameter value to int. Accepts numbers and
-// numeric strings (e.g. "25565"), since launchers commonly emit integer
-// params as strings.
+// Accepts numbers and numeric strings (e.g. "25565"), since launchers
+// commonly emit integer params as strings.
 func toInt(v any) (int, bool) {
 	switch n := v.(type) {
 	case float64:

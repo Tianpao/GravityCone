@@ -5,7 +5,6 @@ import (
 	"runtime"
 )
 
-// OpenBrowser opens a URL in the system default browser.
 // 供 microsoft/naids 两个 OAuth 服务共用。
 func OpenBrowser(url string) error {
 	switch runtime.GOOS {

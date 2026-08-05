@@ -137,8 +137,6 @@ func BroadcastRakNetFakeServer(ctx context.Context, stopCh <-chan struct{}, fall
 	}
 }
 
-// queryBedrockMOTD queries a Bedrock server at the given address and returns
-// a properly formatted MCPE MOTD string with the specified proxyPort.
 func queryBedrockMOTD(address string, fallbackName string, serverGUID int64, proxyPort uint16) (string, bool) {
 	for attempt := 0; attempt < 15; attempt++ {
 		bs, err := mcstatus.NewBedrockServer(address)

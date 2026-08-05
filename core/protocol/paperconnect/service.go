@@ -27,7 +27,6 @@ var paperConnectBuiltinPeers = []string{
 	"wss://center.node.1tmc.top",
 }
 
-// PaperConnectRoomStatus is the host-side room status.
 type PaperConnectRoomStatus struct {
 	Code        string          `json:"code"`
 	GamePort    int             `json:"game_port"`
@@ -37,7 +36,6 @@ type PaperConnectRoomStatus struct {
 	Running     bool            `json:"running"`
 }
 
-// PaperConnectConnectionStatus is the guest-side connection status.
 type PaperConnectConnectionStatus struct {
 	RoomCode         string          `json:"room_code"`
 	HostAddress      string          `json:"host_address"`
@@ -55,7 +53,6 @@ type PaperConnectService struct {
 	peerConfig   easytier.PeerConfig
 	relay        *easytier.RelayManager
 
-	// HOST state
 	hostManager    *easytier.EasyTierManager
 	hostRakLn      *raknet.Listener
 	hostTcpLn      net.Listener
@@ -74,7 +71,6 @@ type PaperConnectService struct {
 	hostGamePort   uint16            // RakNet listener port (NetherNet) or scanned MC port (RakNet)
 	hostRakNetInfo *lanpc.RakNetServerInfo // Server info from RakNet scan (for guest broadcast)
 
-	// GUEST state
 	guestManager          *easytier.EasyTierManager
 	guestRakConn          *raknet.Conn
 	guestDisc             *discovery.Listener
@@ -93,7 +89,7 @@ type PaperConnectService struct {
 	guestCancelFunc       context.CancelFunc
 	guestProtocol         string // ProtocolNetherNet or ProtocolRakNet
 	guestGamePort         uint16
-	guestRakNetFakeStop   chan struct{} // Stop channel for fake RakNet broadcaster
+	guestRakNetFakeStop   chan struct{}
 	guestPortBusy         bool
 	guestPortBusyConfirm  chan struct{}
 	guestMotd             string // custom MOTD for LAN broadcast
@@ -120,8 +116,6 @@ func (s *PaperConnectService) setEventEmitter(emitter utils.EventEmitter) {
 func InitPaperConnectEmitter(svc *PaperConnectService, emitter utils.EventEmitter) {
 	svc.setEventEmitter(emitter)
 }
-
-// --- HOST lifecycle ---
 
 func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string) (*PaperConnectRoomStatus, error) {
 	s.hostMu.Lock()
@@ -152,7 +146,6 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 		nodeIDCh <- nodeID
 	}()
 
-	// Detect protocol: scan both NetherNet and RakNet LAN lists.
 	ctx, cancelScan := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancelScan()
 
@@ -192,14 +185,12 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 	hostPeers := <-hostPeersCh
 	nodeID := <-nodeIDCh
 
-	// Generate room code (embeds the relay node ID)
 	rc, err := GeneratePaperConnectRoomCodeWithNodeID(nodeID)
 	if err != nil {
 		setupFailed = true
 		return nil, fmt.Errorf("生成房间代码失败: %w", err)
 	}
 
-	// Allocate TCP port for PaperConnect control protocol
 	tcpLn, err := net.Listen("tcp", ":0")
 	if err != nil {
 		setupFailed = true
@@ -263,7 +254,6 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
 	}
 
-	// Store state
 	s.hostMu.Lock()
 	s.hostManager = manager
 	if rakLn != nil {
@@ -284,7 +274,6 @@ func (s *PaperConnectService) CreateRoom(playerName string, vendorPrefix string)
 
 	clientId := common.MakeVendor(vendorPrefix)
 
-	// Add HOST as a player
 	s.hostPlayerMu.Lock()
 	s.hostPlayers[playerName] = &PCPlayerEntry{
 		PlayerName:    playerName,
@@ -389,7 +378,6 @@ func (s *PaperConnectService) pcBuildRoomStatus(virtualIP string) *PaperConnectR
 	return status
 }
 
-// Cleanup stops any running room or connection (called on app shutdown)
 func (s *PaperConnectService) Cleanup() {
 	s.StopRoom()
 	s.LeaveRoom()

@@ -29,8 +29,6 @@ func checksumSum(chars [16]byte, skip int) int {
 	return sum
 }
 
-// isValidChecksum checks that the weighted sum of char values (position i
-// contributes value*6^(i%2)) is divisible by 7.
 func isValidChecksum(chars [16]byte) bool {
 	for i := 0; i < 16; i++ {
 		if _, ok := common.Value(chars[i]); !ok {
@@ -79,7 +77,6 @@ func generateRoomCode(nodeID int) (*RoomCode, error) {
 	}, nil
 }
 
-// GenerateRoomCodeWithNodeID 生成携带 uptime 节点 ID 的房间码。
 func GenerateRoomCodeWithNodeID(nodeID int) (*RoomCode, error) {
 	if nodeID < 0 {
 		return nil, fmt.Errorf("nodeID 超出可编码范围: %d", nodeID)

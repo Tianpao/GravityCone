@@ -9,7 +9,6 @@ import (
 	"gravitycone/core/protocol/scaffolding"
 )
 
-// testHandler returns a Handler with fresh protocol services.
 func testHandler() *Handler {
 	return NewHandler(
 		nil, nil,

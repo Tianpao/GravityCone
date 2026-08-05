@@ -97,7 +97,6 @@ func cropAvatarFromSkin(skinURL string) string {
 				if skipTransparent && c.A == 0 {
 					continue
 				}
-				// Fill the scale×scale block directly in Pix
 				baseY := (dy * scale) * out.Stride
 				baseX := (dstCol+dx)*scale*4 + baseY
 				for sy := 0; sy < scale; sy++ {

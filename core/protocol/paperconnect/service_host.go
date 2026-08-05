@@ -12,8 +12,6 @@ import (
 	raknet "github.com/sandertv/go-raknet"
 )
 
-// --- HOST session handling ---
-
 func (s *PaperConnectService) pcHostRakNetAcceptLoop(ctx context.Context) {
 	var sessionID atomic.Uint64
 	for {

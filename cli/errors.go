@@ -4,7 +4,6 @@ package cli
 
 import "strings"
 
-// mapStunError maps a STUN-related error to a CLI error code.
 func mapStunError(err error) string {
 	msg := err.Error()
 	if strings.Contains(msg, "easytier-cli") {
@@ -19,7 +18,6 @@ func mapStunError(err error) string {
 	return ErrInternalError
 }
 
-// mapRoomError maps a room-related error to a CLI error code.
 func mapRoomError(err error) string {
 	msg := err.Error()
 	if strings.Contains(msg, "已有房间在运行") {
@@ -37,7 +35,6 @@ func mapRoomError(err error) string {
 	return ErrInternalError
 }
 
-// progressMessage returns a human-readable message for a join progress step.
 func progressMessage(step string) string {
 	switch step {
 	case "resolving":

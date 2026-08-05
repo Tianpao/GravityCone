@@ -59,7 +59,6 @@ type playerEntry struct {
 	lastSeen time.Time
 }
 
-// copyPlayers returns a snapshot of all player infos from the host player map.
 // Caller must NOT hold hostPlayerMu.
 func (s *ScaffoldingService) copyPlayers() []PlayerInfo {
 	s.hostPlayerMu.Lock()
@@ -71,7 +70,6 @@ func (s *ScaffoldingService) copyPlayers() []PlayerInfo {
 	return players
 }
 
-// newGuestPlayerInfo constructs a PlayerInfo for a guest player.
 func newGuestPlayerInfo(machineID, playerName, easytierID, vendorPrefix string) PlayerInfo {
 	return PlayerInfo{
 		Name:       playerName,
@@ -101,7 +99,6 @@ func (s *ScaffoldingService) setEventEmitter(emitter utils.EventEmitter) {
 	}
 }
 
-// InitScaffoldingEmitter sets the event emitter on a ScaffoldingService.
 // This is a package-level helper so main.go can call it without the method
 // appearing in Wails bindings.
 func InitScaffoldingEmitter(svc *ScaffoldingService, emitter utils.EventEmitter) {
@@ -114,7 +111,6 @@ type ScaffoldingService struct {
 	peerConfig     easytier.PeerConfig
 	relay          *easytier.RelayManager
 
-	// HOST state
 	hostManager    *easytier.EasyTierManager
 	hostListener   net.Listener
 	hostTCPPort    uint16
@@ -130,7 +126,6 @@ type ScaffoldingService struct {
 	hostConns      map[net.Conn]struct{} // track active connections for shutdown
 	hostConnMu     sync.Mutex
 
-	// GUEST state
 	guestManager              *easytier.EasyTierManager
 	guestConn                 net.Conn
 	guestPlayers              []PlayerInfo
@@ -162,8 +157,6 @@ type readResult struct {
 	err    error
 }
 
-// --- HOST lifecycle ---
-
 func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendorPrefix string, motd string) (*RoomStatus, error) {
 	s.hostMu.Lock()
 	if s.hostRunning {
@@ -172,7 +165,6 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 	}
 	s.hostMu.Unlock()
 
-	// 0. Verify the port has a Minecraft server running
 	if mcPort <= 1024 || mcPort > 65535 {
 		return nil, fmt.Errorf("端口号必须在 1025~65535 之间")
 	}
@@ -184,26 +176,22 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 	// 1. 拉取 uptime 节点并选定发现节点 nodeID（须在生成房间码之前，房客据此定向取同一个节点）
 	hostPeers, nodeID := s.relay.HostPeersAndNodeID(s.resolvePeers())
 
-	// 1. Generate room code (embeds the discovery node ID)
 	rc, err := GenerateRoomCodeWithNodeID(nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("生成房间代码失败: %w", err)
 	}
 
-	// 2. Allocate TCP port for Scaffolding protocol
 	listener, err := net.Listen("tcp", ":0")
 	if err != nil {
 		return nil, fmt.Errorf("分配TCP端口失败: %w", err)
 	}
 	tcpPort := uint16(listener.Addr().(*net.TCPAddr).Port)
 
-	// Validate: port must be > 1024 and <= 65535
 	if tcpPort <= 1024 || tcpPort > 65535 {
 		listener.Close()
 		return nil, fmt.Errorf("分配的TCP端口 %d 不合法（需大于1024）", tcpPort)
 	}
 
-	// 3. Start EasyTier
 	manager, err := easytier.NewEasyTierManager()
 	if err != nil {
 		listener.Close()
@@ -226,7 +214,6 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 		return nil, fmt.Errorf("启动虚拟网络失败: %w", err)
 	}
 
-	// 4. Store state and start TCP server
 	s.hostMu.Lock()
 	s.hostManager = manager
 	s.hostListener = listener
@@ -242,7 +229,6 @@ func (s *ScaffoldingService) CreateRoom(mcPort uint16, playerName string, vendor
 	s.guestMotd = motd
 	s.hostMu.Unlock()
 
-	// Add HOST as a player
 	machineID, _ := utils.GetMachineID()
 	s.hostPlayerMu.Lock()
 	s.hostPlayers[machineID] = &playerEntry{
@@ -276,7 +262,6 @@ func (s *ScaffoldingService) StopRoom() error {
 	s.hostRunning = false
 	s.hostMu.Unlock()
 
-	// Emit room.closed event
 	reason := s.hostStopReason
 	if reason == "" {
 		reason = "room stopped by host"
@@ -341,7 +326,6 @@ func (s *ScaffoldingService) buildRoomStatus(virtualIP string) *RoomStatus {
 	}
 }
 
-// Cleanup stops any running room or connection (called on app shutdown)
 func (s *ScaffoldingService) Cleanup() {
 	s.StopRoom()
 	s.LeaveRoom()

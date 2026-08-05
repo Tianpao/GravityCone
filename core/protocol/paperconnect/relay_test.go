@@ -108,7 +108,6 @@ func TestRelayRakNetPackets(t *testing.T) {
 		t.Fatal("clientA did not receive relayed packet")
 	}
 
-	// Closing the relay context tears both connections down.
 	cancel()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {

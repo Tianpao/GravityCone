@@ -21,8 +21,6 @@ import (
 
 const hostVirtualIP = "10.144.144.1"
 
-// easytierLogOutput controls where easytier-core stdout/stderr is written.
-// Defaults to os.Stdout/os.Stderr. Override with SetEasyTierLogOutput.
 var (
 	easytierStdout io.Writer = os.Stdout
 	easytierStderr io.Writer = os.Stderr
@@ -332,7 +330,6 @@ func (m *EasyTierManager) DialMode() DialMode {
 	return DialModeProxy
 }
 
-// stripCIDR removes the CIDR suffix from an IP address (e.g. "10.144.0.1/24" -> "10.144.0.1").
 func stripCIDR(ip string) string {
 	if i := strings.IndexByte(ip, '/'); i >= 0 {
 		return ip[:i]
@@ -340,7 +337,6 @@ func stripCIDR(ip string) string {
 	return ip
 }
 
-// easyTierBaseDir returns the shared easytier binary directory, or empty string if unavailable.
 func easyTierBaseDir() string {
 	if configDir, err := os.UserConfigDir(); err == nil {
 		return filepath.Join(configDir, "GravityCone", "easytier")

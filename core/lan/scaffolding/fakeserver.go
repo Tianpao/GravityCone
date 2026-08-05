@@ -21,15 +21,12 @@ type FakeServer struct {
 	stopCh chan struct{}
 }
 
-// NewFakeServer creates and starts a FakeServer that broadcasts the given
-// port and MOTD on the local network. Call Stop to terminate the broadcast.
 func NewFakeServer(port uint16, motd string) *FakeServer {
 	fs := &FakeServer{stopCh: make(chan struct{})}
 	go fs.run(port, motd)
 	return fs
 }
 
-// Stop terminates the broadcast goroutine.
 func (fs *FakeServer) Stop() {
 	select {
 	case <-fs.stopCh:
@@ -69,7 +66,6 @@ func (fs *FakeServer) run(port uint16, motd string) {
 			}
 			ip := ipNet.IP.To4()
 
-			// Skip loopback and EasyTier virtual network addresses
 			if ip.IsLoopback() || isEasyTierIP(ip) {
 				continue
 			}
@@ -89,7 +85,6 @@ func (fs *FakeServer) run(port uint16, motd string) {
 		}
 	}
 
-	// Fallback: if no interface-bound sockets, bind to 0.0.0.0
 	if len(conns) == 0 {
 		conn, err := net.ListenPacket("udp4", "0.0.0.0:0")
 		if err != nil {
@@ -130,7 +125,6 @@ func (fs *FakeServer) run(port uint16, motd string) {
 	}
 }
 
-// isEasyTierIP checks if an IP belongs to the EasyTier virtual network range.
 func isEasyTierIP(ip net.IP) bool {
 	// EasyTier uses 10.144.144.0/24 by default
 	if ip[0] == 10 && ip[1] == 144 && ip[2] == 144 {

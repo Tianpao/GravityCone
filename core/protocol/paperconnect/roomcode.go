@@ -43,7 +43,6 @@ func pcConvertToLong(chars []byte) int64 {
 	return result
 }
 
-// pcIsDivisibleBySeven checks if the little-endian base-34 value of chars is divisible by 7.
 func pcIsDivisibleBySeven(chars []byte) bool {
 	return pcConvertToLong(chars)%7 == 0
 }
@@ -98,7 +97,6 @@ func generatePaperConnectRoomCode(nodeID int) (*PaperConnectRoomCode, error) {
 	}, nil
 }
 
-// GeneratePaperConnectRoomCodeWithNodeID 生成携带 uptime 节点 ID 的房间码。
 func GeneratePaperConnectRoomCodeWithNodeID(nodeID int) (*PaperConnectRoomCode, error) {
 	if nodeID < 0 {
 		return nil, fmt.Errorf("nodeID 超出可编码范围: %d", nodeID)
@@ -130,7 +128,6 @@ func ParsePaperConnectRoomCode(s string) (*PaperConnectRoomCode, error) {
 		chars[i] = c
 	}
 
-	// Validate S-part checksum (little-endian base-34 divisible by 7)
 	if !pcIsDivisibleBySeven(chars[8:]) {
 		return nil, fmt.Errorf("房间代码校验失败，请检查输入")
 	}

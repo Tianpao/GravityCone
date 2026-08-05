@@ -14,8 +14,6 @@ import (
 	"gravitycone/core/protocol/common"
 )
 
-// --- GUEST methods ---
-
 func (s *PaperConnectService) CancelJoin() {
 	s.joinCancelled.Store(true)
 
@@ -62,7 +60,6 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 	// 房客 peers 只计算一次（proxy 模式两阶段共用；uptime 地址换取只做一遍）
 	guestPeers := s.relay.GuestPeers(s.resolvePeers(), rc.NodeID())
 
-	// Phase 1: start EasyTier without port forwards to discover host.
 	manager, err := easytier.NewEasyTierManager()
 	if err != nil {
 		return nil, err
@@ -154,7 +151,6 @@ func (s *PaperConnectService) JoinRoom(code string, playerName string, vendorPre
 			"tcp_local_port", tcpLocalPort, "udp_local_port", rakLocalPort)
 	}
 
-	// Wait for TCP ping to succeed.
 	var pingOk bool
 	for attempt := 0; attempt < 30; attempt++ {
 		if s.joinCancelled.Load() {
@@ -478,8 +474,6 @@ func (s *PaperConnectService) pcBuildConnectionStatus() *PaperConnectConnectionS
 		DisconnectReason: s.guestDisconnectReason,
 	}
 }
-
-// --- Guest port conflict handling (UDP 7551) ---
 
 func isAddressInUse(err error) bool {
 	// Windows wraps WSAEADDRINUSE (10048), which is distinct from the

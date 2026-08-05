@@ -19,26 +19,22 @@ type StdioWriter struct {
 	tee io.Writer
 }
 
-// NewStdioWriter creates a StdioWriter that writes JSON lines to stdout.
 func NewStdioWriter() *StdioWriter {
 	return &StdioWriter{out: os.Stdout}
 }
 
-// SetTee sets an additional writer that receives a copy of all output.
 func (w *StdioWriter) SetTee(tee io.Writer) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.tee = tee
 }
 
-// WriteResponse writes a Response as a single JSON line to stdout.
 func (w *StdioWriter) WriteResponse(resp Response) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.writeLocked(resp)
 }
 
-// WriteEvent writes an Event as a single JSON line to stdout.
 func (w *StdioWriter) WriteEvent(evt Event) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -57,14 +53,12 @@ func (w *StdioWriter) writeLocked(v any) {
 	}
 }
 
-// StdioEventEmitter implements utils.EventEmitter by writing events to stdout.
 type StdioEventEmitter struct {
 	writer *StdioWriter
 }
 
 var _ utils.EventEmitter = (*StdioEventEmitter)(nil)
 
-// NewStdioEventEmitter creates an EventEmitter that pushes CLI events to stdout.
 func NewStdioEventEmitter(writer *StdioWriter) *StdioEventEmitter {
 	return &StdioEventEmitter{writer: writer}
 }

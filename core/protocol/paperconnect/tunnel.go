@@ -149,7 +149,6 @@ func (r *tunnelReader) ReadPacket() ([]byte, error) {
 					break
 				}
 			}
-			// Pre-allocate result buffer and copy parts into it.
 			totalSize := 0
 			for _, part := range parts {
 				totalSize += len(part)

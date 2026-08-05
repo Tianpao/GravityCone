@@ -26,7 +26,6 @@ func TestNodeIDRoundTrip(t *testing.T) {
 	}
 }
 
-// TestNodeIDSpecialEncodings 验证特殊 ID 的字符组合。
 func TestNodeIDSpecialEncodings(t *testing.T) {
 	rc, err := GeneratePaperConnectRoomCodeWithNodeID(easytier.NodeIDReservedSelfRelay)
 	if err != nil {
@@ -45,7 +44,6 @@ func TestNodeIDSpecialEncodings(t *testing.T) {
 	}
 }
 
-// TestNodeIDRange 验证越界拒绝。
 func TestNodeIDRange(t *testing.T) {
 	if _, err := GeneratePaperConnectRoomCodeWithNodeID(easytier.NodeIDMax + 1); err == nil {
 		t.Fatal("expected error for nodeID > NodeIDMax")
@@ -72,7 +70,6 @@ func TestLegacyRoomCodeCompatibility(t *testing.T) {
 	}
 }
 
-// TestNodeIDCharset 验证编码字符均在 34 字符集内。
 func TestNodeIDCharset(t *testing.T) {
 	for id := 0; id <= easytier.NodeIDMax; id++ {
 		lo, hi := easytier.NodeIDChars(id)

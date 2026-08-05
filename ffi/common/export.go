@@ -19,8 +19,6 @@ import (
 	"unsafe"
 )
 
-// --- Init / Shutdown ---
-
 // gc_init initializes the GravityCone engine.
 // baseDir: writable directory for logs, machine-id, and EasyTier binaries.
 // Returns 0 on success.
@@ -37,8 +35,6 @@ func gc_shutdown() {
 	goBackToIdle()
 }
 
-// --- State Polling ---
-
 // gc_get_state returns the current state as a JSON string.
 // The caller MUST free the returned string with gc_free_string().
 // Returns NULL if the engine has not been initialized.
@@ -48,8 +44,6 @@ func gc_get_state() *C.char {
 	jsonStr := getStateJSON()
 	return C.CString(jsonStr)
 }
-
-// --- State Transitions ---
 
 // gc_set_waiting transitions to the idle/waiting state, stopping any active room.
 //
@@ -121,8 +115,6 @@ func gc_set_relay(nodeID C.int, url *C.char) {
 	setRelay(int(nodeID), u)
 }
 
-// --- STUN (NAT Probing) ---
-
 // gc_stun_probe runs a STUN NAT type probe.
 // Returns a JSON string with NAT type info.
 // The caller MUST free the returned string with gc_free_string().
@@ -168,8 +160,6 @@ func gc_stun_probe() *C.char {
 	return C.CString(result)
 }
 
-// --- Utilities ---
-
 // gc_verify_room_code checks the room code type without connecting.
 // Returns:
 //
@@ -198,8 +188,6 @@ func gc_get_metadata() *C.char {
 func gc_free_string(s *C.char) {
 	C.free(unsafe.Pointer(s))
 }
-
-// --- Version ---
 
 // gc_version returns the FFI ABI version as a simple integer.
 // Increment this when the API changes incompatibly.

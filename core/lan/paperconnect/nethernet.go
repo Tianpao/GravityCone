@@ -11,8 +11,6 @@ import (
 
 var errNoNetherNet = fmt.Errorf("no NetherNet server found")
 
-// detectNetherNet discovers a local Minecraft Bedrock NetherNet server and
-// returns its network ID. The returned listener must be closed by the caller.
 func detectNetherNetWithID(ctx context.Context) (uint64, error) {
 	cfg := discovery.ListenConfig{
 		NetworkID: uint64(time.Now().UnixNano()),

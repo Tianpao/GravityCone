@@ -2,13 +2,11 @@ package scaffolding
 
 import "gravitycone/core/easytier"
 
-// ConfigureSettingsPeers provides GUI custom peers for future EasyTier starts.
 func ConfigureSettingsPeers(s *ScaffoldingService, settingsSvc *easytier.SettingsService) {
 	s.relay.SetSettingsService(settingsSvc)
 	s.peerConfig.SetSettingsService(settingsSvc)
 }
 
-// ConfigureCLIPeers replaces the built-in peers for CLI starts.
 func ConfigureCLIPeers(s *ScaffoldingService, peers []string) {
 	s.peerConfig.SetCLIOverride(peers)
 }
@@ -32,7 +30,6 @@ func (s *ScaffoldingService) resolvePeers() []string {
 	return s.peerConfig.Resolve(scaffoldingBuiltinPeers)
 }
 
-// AddPeers appends peer addresses for future EasyTier starts.
 func (s *ScaffoldingService) AddPeers(addrs []string) {
 	s.peerConfig.Add(addrs)
 }

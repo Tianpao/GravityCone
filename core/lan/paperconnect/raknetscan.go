@@ -48,7 +48,6 @@ func ScanRakNetLAN(ctx context.Context, timeout time.Duration) (*RakNetServerInf
 	resultCh := make(chan *RakNetServerInfo, 1)
 	errCh := make(chan error, 1)
 
-	// Background goroutine: periodically send broadcast + local unicast pings.
 	// On Windows, broadcasts don't loopback, so local unicast pings are essential.
 	stopPing := make(chan struct{})
 	defer close(stopPing)
@@ -72,7 +71,6 @@ func ScanRakNetLAN(ctx context.Context, timeout time.Duration) (*RakNetServerInf
 		}
 	}()
 
-	// Main loop: collect pong responses.
 	go func() {
 		buf := make([]byte, 1500)
 		for time.Now().Before(deadline) {
@@ -121,8 +119,6 @@ func ScanRakNetLAN(ctx context.Context, timeout time.Duration) (*RakNetServerInf
 	}
 }
 
-// getBroadcastAddrs computes subnet broadcast addresses for all active interfaces
-// plus the global broadcast address 255.255.255.255.
 func getBroadcastAddrs(port int) ([]*net.UDPAddr, error) {
 	interfaces, err := anet.Interfaces()
 	if err != nil {
@@ -192,7 +188,6 @@ func parseRakNetPong(data []byte) (*RakNetServerInfo, error) {
 	}, nil
 }
 
-// parseRakNetMOTD parses the Minecraft Bedrock MOTD string from a RakNet pong.
 // Format: MCPE;ServerName;ProtocolVersion;VersionString;CurrentPlayers;MaxPlayers;ServerGUID;LevelName;GameMode;GameModeNum;PortIPv4;PortIPv6;
 func parseRakNetMOTD(motd string) *RakNetServerInfo {
 	parts := strings.Split(motd, ";")
@@ -232,7 +227,6 @@ func isPhysicalNIC(iface net.Interface) bool {
 	if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagBroadcast == 0 {
 		return false
 	}
-	// Filter by interface name prefix (virtual / tunnel / container adapters).
 	for _, prefix := range []string{
 		"veth", "docker", "br-", "tun", "tap", "wg", "vmnet", "vboxnet",
 		"vEthernet", "Hyper-V", "VirtualBox", "VMware", "Loopback",
@@ -242,7 +236,6 @@ func isPhysicalNIC(iface net.Interface) bool {
 			return false
 		}
 	}
-	// Filter by known virtual MAC OUI prefixes.
 	if len(iface.HardwareAddr) >= 3 {
 		oui := [3]byte{iface.HardwareAddr[0], iface.HardwareAddr[1], iface.HardwareAddr[2]}
 		for _, prefix := range [][3]byte{

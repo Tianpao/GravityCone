@@ -68,7 +68,6 @@ func WritePCRequest(conn net.Conn, namespace string, body any) error {
 	return err
 }
 
-// WritePCResponse writes a JSON response to the connection.
 // In the PaperConnect protocol, responses are just raw JSON (no framing).
 func WritePCResponse(conn net.Conn, response any) error {
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -82,7 +81,6 @@ func WritePCResponse(conn net.Conn, response any) error {
 	return err
 }
 
-// WritePCError writes an error response to the connection.
 func WritePCError(conn net.Conn, message string) error {
 	return WritePCResponse(conn, PCErrorResponse{Error: message})
 }
@@ -105,7 +103,6 @@ func ReadPCRequest(conn net.Conn) (namespace string, rawJson []byte, err error) 
 
 	data := buf[:n]
 
-	// Find the null byte separator
 	nullIdx := -1
 	for i, b := range data {
 		if b == 0 {
@@ -123,7 +120,6 @@ func ReadPCRequest(conn net.Conn) (namespace string, rawJson []byte, err error) 
 	return namespace, rawJson, nil
 }
 
-// ReadPCResponse reads a JSON response from the connection.
 func ReadPCResponse(conn net.Conn) (rawJson []byte, err error) {
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
@@ -136,7 +132,6 @@ func ReadPCResponse(conn net.Conn) (rawJson []byte, err error) {
 	return buf[:n], nil
 }
 
-// Protocol constants.
 const (
 	ProtocolNetherNet = "nethernet"
 	ProtocolRakNet    = "raknet"
@@ -157,7 +152,6 @@ func buildHostnameRakNet(tcpPort uint16, gamePort uint16) string {
 	return fmt.Sprintf("%s%d%s%d", pcHostnamePrefix, tcpPort, hostnameRakNetMarker, gamePort)
 }
 
-// ParsedHostname holds values decoded from an EasyTier peer hostname.
 type ParsedHostname struct {
 	TCPPort  uint16
 	Protocol string // ProtocolNetherNet or ProtocolRakNet
