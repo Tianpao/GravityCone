@@ -217,7 +217,7 @@ func (s *LanService) cleanupLoop(stopCh chan struct{}) {
 			var kept []lanServerEntry
 			for _, e := range s.entries {
 				if now.Sub(e.lastSeen) > lanServerTimeout {
-					s.eventEmitter.Emit("lan.server_lost", map[string]interface{}{"ip": e.server.IP, "port": e.server.Port})
+					s.eventEmitter.Emit("lan.server_lost", map[string]any{"ip": e.server.IP, "port": e.server.Port})
 				} else {
 					kept = append(kept, e)
 				}

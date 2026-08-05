@@ -26,7 +26,7 @@ func testHandler() *Handler {
 func TestToInt(t *testing.T) {
 	tests := []struct {
 		name string
-		in   interface{}
+		in   any
 		want int
 		ok   bool
 	}{
@@ -48,12 +48,12 @@ func TestToInt(t *testing.T) {
 	}
 }
 
-func relayParams(nodeID interface{}, url string) Request {
-	relay := map[string]interface{}{"url": url}
+func relayParams(nodeID any, url string) Request {
+	relay := map[string]any{"url": url}
 	if nodeID != nil {
 		relay["node_id"] = nodeID
 	}
-	return Request{Params: map[string]interface{}{"relay": relay}}
+	return Request{Params: map[string]any{"relay": relay}}
 }
 
 // 中继参数解析：合法输入不报错（字符串/数字 node_id 等效、缺省 node_id、
@@ -67,11 +67,11 @@ func TestApplyRelayParams(t *testing.T) {
 		{"string node_id", relayParams("3", "tcp://1.2.3.4:5678"), false},
 		{"numeric node_id", relayParams(float64(3), "tcp://1.2.3.4:5678"), false},
 		{"url only", relayParams(nil, "tcp://1.2.3.4:5678"), false},
-		{"no relay", Request{Params: map[string]interface{}{}}, false},
-		{"not object", Request{Params: map[string]interface{}{"relay": "tcp://1.2.3.4:5678"}}, true},
+		{"no relay", Request{Params: map[string]any{}}, false},
+		{"not object", Request{Params: map[string]any{"relay": "tcp://1.2.3.4:5678"}}, true},
 		{"invalid node_id", relayParams("abc", "tcp://1.2.3.4:5678"), true},
-		{"invalid url", Request{Params: map[string]interface{}{
-			"relay": map[string]interface{}{"node_id": float64(3), "url": float64(123)},
+		{"invalid url", Request{Params: map[string]any{
+			"relay": map[string]any{"node_id": float64(3), "url": float64(123)},
 		}}, true},
 	}
 	for _, tt := range tests {

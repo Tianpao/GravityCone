@@ -100,14 +100,14 @@ func (h *Handler) handleRoom(req Request, action string) {
 		// Cancel both — whichever is active will respond
 		h.scaffoldingSvc.CancelJoin()
 		h.paperConnectSvc.CancelJoin()
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+		h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
 
 	case "confirm_minecraft_ended":
 		if err := h.paperConnectSvc.ConfirmMinecraftEnded(); err != nil {
 			h.writer.WriteResponse(errorResponse(req.ID, ErrInternalError, err.Error()))
 			return
 		}
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+		h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
 
 	case "leave":
 		h.handleRoomLeave(req)
@@ -134,7 +134,7 @@ func (h *Handler) applyRelayParams(req Request) error {
 	relayID, relayURL := 0, ""
 
 	if raw, ok := req.Params["relay"]; ok {
-		relayObj, ok := raw.(map[string]interface{})
+		relayObj, ok := raw.(map[string]any)
 		if !ok {
 			return fmt.Errorf("parameter relay must be an object with node_id and url")
 		}
@@ -170,15 +170,15 @@ func (h *Handler) handleLan(req Request, action string) {
 			h.writer.WriteResponse(errorResponse(req.ID, ErrInternalError, err.Error()))
 			return
 		}
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+		h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
 
 	case "stop_discovery":
 		h.lanSvc.StopDiscovery()
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+		h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
 
 	case "list_servers":
 		servers := h.lanSvc.GetDiscoveredServers()
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
+		h.writer.WriteResponse(successResponse(req.ID, map[string]any{
 			"servers": servers,
 		}))
 
@@ -198,7 +198,7 @@ func (h *Handler) handleLan(req Request, action string) {
 			h.writer.WriteResponse(errorResponse(req.ID, ErrInternalError, err.Error()))
 			return
 		}
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
+		h.writer.WriteResponse(successResponse(req.ID, map[string]any{
 			"online":  true,
 			"version": version,
 		}))
@@ -213,7 +213,7 @@ func (h *Handler) handleSystem(req Request, action string) {
 	case "ping":
 		h.writer.WriteResponse(successResponse(req.ID, map[string]bool{"pong": true}))
 	case "shutdown":
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+		h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
 		h.shutdownOnce.Do(func() {
 			close(h.shutdownCh)
 		})

@@ -25,7 +25,7 @@ func (r *Request) getString(key string) (string, error) {
 // toInt converts a JSON parameter value to int. Accepts numbers and
 // numeric strings (e.g. "25565"), since launchers commonly emit integer
 // params as strings.
-func toInt(v interface{}) (int, bool) {
+func toInt(v any) (int, bool) {
 	switch n := v.(type) {
 	case float64:
 		return int(n), true

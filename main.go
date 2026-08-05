@@ -47,7 +47,7 @@ func init() {
 	application.RegisterEvent[map[string]string]("room.disconnected")
 	application.RegisterEvent[[]scaffolding.PlayerInfo]("room.guest_player_list_updated")
 	application.RegisterEvent[lansca.LanServer]("lan.server_found")
-	application.RegisterEvent[map[string]interface{}]("lan.server_lost")
+	application.RegisterEvent[map[string]any]("lan.server_lost")
 	application.RegisterEvent[map[string]string]("paperconnect.connection.port_busy")
 	application.RegisterEvent[map[string]string]("paperconnect.connection.ready")
 	application.RegisterEvent[map[string]string]("paperconnect.connection.error")
@@ -185,6 +185,6 @@ type wailsEventEmitter struct {
 	app *application.App
 }
 
-func (e *wailsEventEmitter) Emit(event string, data interface{}) {
+func (e *wailsEventEmitter) Emit(event string, data any) {
 	e.app.Event.Emit(event, data)
 }

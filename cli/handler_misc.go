@@ -8,7 +8,7 @@ func (h *Handler) handleAddPeers(req Request) {
 		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, "missing required parameter: peers"))
 		return
 	}
-	peersArr, ok := rawPeers.([]interface{})
+	peersArr, ok := rawPeers.([]any)
 	if !ok {
 		h.writer.WriteResponse(errorResponse(req.ID, ErrInvalidParams, "parameter peers must be an array of strings"))
 		return
@@ -30,5 +30,5 @@ func (h *Handler) handleAddPeers(req Request) {
 	}
 	h.scaffoldingSvc.AddPeers(addrs)
 	h.paperConnectSvc.AddPeers(addrs)
-	h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+	h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
 }

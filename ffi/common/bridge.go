@@ -58,7 +58,7 @@ type ffiEventEmitter struct {
 	guest *guestContext
 }
 
-func (e ffiEventEmitter) Emit(event string, data interface{}) {
+func (e ffiEventEmitter) Emit(event string, data any) {
 	if e.guest == nil {
 		return
 	}

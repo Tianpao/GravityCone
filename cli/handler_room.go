@@ -27,7 +27,7 @@ func (h *Handler) handleRoomCreate(req Request) {
 			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
 			return
 		}
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
+		h.writer.WriteResponse(successResponse(req.ID, map[string]any{
 			"code":         result.Code,
 			"game_port":    result.GamePort,
 			"online_count": result.OnlineCount,
@@ -57,7 +57,7 @@ func (h *Handler) handleRoomCreate(req Request) {
 func (h *Handler) handleRoomStop(req Request) {
 	// Try PaperConnect first, then Scaffolding
 	if err := h.paperConnectSvc.StopRoom(); err == nil {
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+		h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
 		return
 	}
 	err := h.scaffoldingSvc.StopRoom()
@@ -65,7 +65,7 @@ func (h *Handler) handleRoomStop(req Request) {
 		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
 		return
 	}
-	h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+	h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
 }
 
 func (h *Handler) handleRoomJoin(req Request) {
@@ -91,7 +91,7 @@ func (h *Handler) handleRoomJoin(req Request) {
 			h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
 			return
 		}
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{
+		h.writer.WriteResponse(successResponse(req.ID, map[string]any{
 			"room_code":         result.RoomCode,
 			"host_address":      result.HostAddress,
 			"game_port":         result.GamePort,
@@ -126,7 +126,7 @@ func (h *Handler) handleRoomJoin(req Request) {
 func (h *Handler) handleRoomLeave(req Request) {
 	// Try PaperConnect first, then Scaffolding
 	if err := h.paperConnectSvc.LeaveRoom(); err == nil {
-		h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+		h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
 		return
 	}
 	err := h.scaffoldingSvc.LeaveRoom()
@@ -134,7 +134,7 @@ func (h *Handler) handleRoomLeave(req Request) {
 		h.writer.WriteResponse(errorResponse(req.ID, mapRoomError(err), err.Error()))
 		return
 	}
-	h.writer.WriteResponse(successResponse(req.ID, map[string]interface{}{}))
+	h.writer.WriteResponse(successResponse(req.ID, map[string]any{}))
 }
 
 func (h *Handler) handleRoomStatus(req Request) {
@@ -183,8 +183,8 @@ func (h *Handler) handleRoomStatus(req Request) {
 	h.writer.WriteResponse(successResponse(req.ID, map[string]string{"role": "none"}))
 }
 
-func hostStatusResult(code string, onlineCount int, players interface{}, running bool) map[string]interface{} {
-	return map[string]interface{}{
+func hostStatusResult(code string, onlineCount int, players any, running bool) map[string]any {
+	return map[string]any{
 		"role":         "host",
 		"code":         code,
 		"online_count": onlineCount,
@@ -193,8 +193,8 @@ func hostStatusResult(code string, onlineCount int, players interface{}, running
 	}
 }
 
-func guestStatusResult(roomCode, hostAddress string, connected bool, onlineCount int, players interface{}, heartbeating bool, disconnectReason string) map[string]interface{} {
-	return map[string]interface{}{
+func guestStatusResult(roomCode, hostAddress string, connected bool, onlineCount int, players any, heartbeating bool, disconnectReason string) map[string]any {
+	return map[string]any{
 		"role":              "guest",
 		"room_code":         roomCode,
 		"host_address":      hostAddress,

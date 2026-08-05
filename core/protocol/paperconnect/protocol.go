@@ -50,7 +50,7 @@ type PCErrorResponse struct {
 }
 
 // WritePCRequest writes a namespace\0JSON request to the connection.
-func WritePCRequest(conn net.Conn, namespace string, body interface{}) error {
+func WritePCRequest(conn net.Conn, namespace string, body any) error {
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 
 	jsonBytes, err := json.Marshal(body)
@@ -70,7 +70,7 @@ func WritePCRequest(conn net.Conn, namespace string, body interface{}) error {
 
 // WritePCResponse writes a JSON response to the connection.
 // In the PaperConnect protocol, responses are just raw JSON (no framing).
-func WritePCResponse(conn net.Conn, response interface{}) error {
+func WritePCResponse(conn net.Conn, response any) error {
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 
 	jsonBytes, err := json.Marshal(response)

@@ -6,14 +6,14 @@ package cli
 type Request struct {
 	ID     int                    `json:"id"`
 	Method string                 `json:"method"`
-	Params map[string]interface{} `json:"params,omitempty"`
+	Params map[string]any `json:"params,omitempty"`
 }
 
 // Response represents an outgoing JSON response to stdout.
 type Response struct {
 	ID     int         `json:"id"`
 	Status string      `json:"status"` // "success", "error", "progress"
-	Data   interface{} `json:"data,omitempty"`
+	Data   any `json:"data,omitempty"`
 	Error  *ErrorInfo  `json:"error,omitempty"`
 }
 
@@ -26,7 +26,7 @@ type ErrorInfo struct {
 // Event represents an asynchronous event pushed to stdout.
 type Event struct {
 	Event string      `json:"event"`
-	Data  interface{} `json:"data"`
+	Data  any `json:"data"`
 }
 
 // Error code constants matching the CLI specification.
@@ -42,7 +42,7 @@ const (
 	ErrInternalError    = "INTERNAL_ERROR"
 )
 
-func successResponse(id int, data interface{}) Response {
+func successResponse(id int, data any) Response {
 	return Response{ID: id, Status: "success", Data: data}
 }
 
@@ -50,6 +50,6 @@ func errorResponse(id int, code string, message string) Response {
 	return Response{ID: id, Status: "error", Error: &ErrorInfo{Code: code, Message: message}}
 }
 
-func progressResponse(id int, data interface{}) Response {
+func progressResponse(id int, data any) Response {
 	return Response{ID: id, Status: "progress", Data: data}
 }

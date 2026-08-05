@@ -46,7 +46,7 @@ func (w *StdioWriter) WriteEvent(evt Event) {
 }
 
 // writeLocked marshals and writes a message. Caller must hold w.mu.
-func (w *StdioWriter) writeLocked(v interface{}) {
+func (w *StdioWriter) writeLocked(v any) {
 	data, _ := json.Marshal(v)
 	w.out.Write(data)
 	w.out.Write([]byte{'\n'})
@@ -69,6 +69,6 @@ func NewStdioEventEmitter(writer *StdioWriter) *StdioEventEmitter {
 	return &StdioEventEmitter{writer: writer}
 }
 
-func (e *StdioEventEmitter) Emit(event string, data interface{}) {
+func (e *StdioEventEmitter) Emit(event string, data any) {
 	e.writer.WriteEvent(Event{Event: event, Data: data})
 }
