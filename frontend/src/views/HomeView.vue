@@ -23,7 +23,7 @@ onMounted(() => {
   <TooltipProvider :delay-duration="500">
     <div class="flex flex-1 flex-col items-center justify-center gap-8">
       <div class="flex flex-col items-center">
-        <img src="/appicon.png" alt="Logo" class="h-16 w-16" />
+        <img src="/appicon.webp" alt="Logo" class="h-16 w-16" />
         <h1 class="mt-3 text-2xl font-bold">GravityCone</h1>
       </div>
 

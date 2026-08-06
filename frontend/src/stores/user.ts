@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { StartLogin, Logout, RestoreSession } from '@/../bindings/gravitycone/core/app/account/natayarkservice'
+import { StartLogin, Logout, RestoreSession } from '@/../bindings/gravitycone/core/app/account/naids/natayarkservice'
 
 const COOKIE_KEY = 'gc_naids_token'
 const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 // 7 days

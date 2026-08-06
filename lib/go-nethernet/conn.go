@@ -473,6 +473,15 @@ func (conn *Conn) addRemoteCandidate(candidate webrtc.ICECandidate) error {
 // matching the 'a=max-message-size' value in the SDP sent by vanilla peer connections.
 const maxMessageSize = 262143
 
+// normalizeSDP 补齐缺失的结尾 CRLF：部分 Bedrock 客户端的 SDP 以截断行
+// 结尾，pion 的 SDP 解码器会将其误判为 EOF。
+func normalizeSDP(data string) string {
+	if !strings.HasSuffix(data, "\r\n") {
+		return data + "\r\n"
+	}
+	return data
+}
+
 // parseDescription parses a [sdp.SessionDescription] signaled from a remote connection.
 // It transforms the fields of the [sdp.SessionDescription] into a description, which can be
 // used to start ICE, DTLS, and SCTP transports for a Conn.
@@ -523,7 +532,9 @@ func parseDescription(d *sdp.SessionDescription) (*description, error) {
 
 	attr, ok = m.Attribute("setup")
 	if !ok {
-		return nil, errors.New("missing setup attribute")
+		// 部分 Bedrock 客户端省略 setup。RFC 4145 缺省为 active，按 actpass
+		// 处理会导致双方 DTLS 角色不兼容（ICE 连接后指纹不匹配）。
+		attr = sdp.ConnectionRoleActive.String()
 	}
 	var role webrtc.DTLSRole
 	switch attr {
@@ -539,7 +550,8 @@ func parseDescription(d *sdp.SessionDescription) (*description, error) {
 
 	attr, ok = m.Attribute("max-message-size")
 	if !ok {
-		return nil, errors.New("missing max-message-size attribute")
+		// 部分 Bedrock 客户端省略该可选 SCTP 能力，用 WebRTC 缺省值代替。
+		attr = strconv.FormatUint(maxMessageSize+1, 10)
 	}
 	maxMessageSize, err := strconv.ParseUint(attr, 10, 32)
 	if err != nil {

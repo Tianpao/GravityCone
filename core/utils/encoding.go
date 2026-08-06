@@ -32,7 +32,6 @@ func NewDecodedReader(r io.Reader) io.Reader {
 // detectEncoding examines initial bytes and returns the detected
 // encoding and the number of leading BOM bytes to skip.
 func detectEncoding(data []byte) (encoding.Encoding, int) {
-	// BOM-based detection
 	if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
 		return unicode.UTF8, 3
 	}
@@ -45,7 +44,6 @@ func detectEncoding(data []byte) (encoding.Encoding, int) {
 		}
 	}
 
-	// Heuristic: UTF-16 without BOM
 	if len(data) >= 2 {
 		if data[1] == 0 && data[0] != 0 {
 			return unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM), 0
@@ -55,7 +53,6 @@ func detectEncoding(data []byte) (encoding.Encoding, int) {
 		}
 	}
 
-	// Heuristic: GBK — has high bytes and is not valid UTF-8
 	if hasHighBytes(data) && !isValidUTF8Prefix(data) {
 		return simplifiedchinese.GBK, 0
 	}

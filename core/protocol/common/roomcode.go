@@ -1,0 +1,37 @@
+package common
+
+import "crypto/rand"
+
+// Charset 是房间码字符集（34 字符，无 I/O 混淆）。
+const Charset = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+
+var values = func() [256]int8 {
+	var table [256]int8
+	for i := range table {
+		table[i] = -1
+	}
+	for i := 0; i < len(Charset); i++ {
+		table[Charset[i]] = int8(i)
+	}
+	return table
+}()
+
+// Value 返回字符在字符集中的值；不在字符集中的字符返回 false。
+func Value(c byte) (int, bool) {
+	value := int(values[c])
+	return value, value >= 0
+}
+
+// IsPaperConnectCode 判断房间码是否为 PaperConnect 前缀（"P/" 或 "p/"）。
+func IsPaperConnectCode(code string) bool {
+	return len(code) >= 2 && (code[0] == 'P' || code[0] == 'p') && code[1] == '/'
+}
+
+// RandomChars 用随机字符填满 dst 的所有位置。
+func RandomChars(dst []byte) {
+	buf := make([]byte, len(dst))
+	rand.Read(buf)
+	for i, b := range buf {
+		dst[i] = Charset[b%byte(len(Charset))]
+	}
+}

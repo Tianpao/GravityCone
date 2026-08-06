@@ -339,8 +339,12 @@ func (l *Listener) listen() {
 // and transforms into remote description for later use in negotiation. An answer will be created from local parameters of
 // each transport and signaled back to the remote connection referenced in the offer.
 func (l *Listener) handleOffer(signal *Signal) error {
+	// Android Bedrock may send the SDP without the final CRLF. Pion's SDP
+	// decoder treats that truncated line as EOF, although the offer already
+	// contains a complete fingerprint and candidate set.
+	offer := normalizeSDP(signal.Data)
 	d := &sdp.SessionDescription{}
-	if err := d.UnmarshalString(signal.Data); err != nil {
+	if err := d.UnmarshalString(offer); err != nil {
 		return wrapSignalError(fmt.Errorf("decode offer: %w", err), ErrorCodeFailedToSetRemoteDescription)
 	}
 	desc, err := parseDescription(d)

@@ -1,3 +1,5 @@
+//go:build !cli && !et_ffi
+
 package easytier
 
 import (
@@ -14,15 +16,23 @@ import (
 	"time"
 
 	"gravitycone/core/utils"
-	"gravitycone/core/utils/process"
 )
-
-const EasyTierVersion = "v2.6.4"
 
 const (
 	EventDownloadProgress = "download.progress"
 	EventDownloadError    = "download.error"
 )
+
+type DownloadProgressData struct {
+	Step      string `json:"step"`
+	Percent   int    `json:"percent"`
+	TotalSize int64  `json:"total_size"`
+	Speed     int64  `json:"speed"`
+}
+
+type DownloadErrorData struct {
+	Error string `json:"error"`
+}
 
 var easyTierBaseURL = "https://github.com/EasyTier/EasyTier/releases/download"
 
@@ -38,18 +48,6 @@ func SetEasyTierBaseURL(url string) {
 	}
 }
 
-type DownloadProgressData struct {
-	Step      string `json:"step"`
-	Percent   int    `json:"percent"`
-	TotalSize int64  `json:"total_size"`
-	Speed     int64  `json:"speed"`
-}
-
-type DownloadErrorData struct {
-	Error string `json:"error"`
-}
-
-// easyTierPlatform holds the OS and arch segments used in the download URL.
 type easyTierPlatform struct {
 	sys  string
 	arch string
@@ -114,10 +112,6 @@ func EnsureEasyTier() error {
 		}
 	}
 
-	if skipEasyTierDownload {
-		return fmt.Errorf("EasyTier binaries not found and auto-download is disabled")
-	}
-
 	slog.Info("EasyTier binaries not found, starting auto-download")
 	if err := downloadAndExtractEasyTier(); err != nil {
 		return emitDownloadError(fmt.Errorf("auto-download failed: %w", err))
@@ -173,7 +167,7 @@ func downloadAndExtractEasyTier() error {
 	})
 
 	for _, name := range []string{"easytier-core", "easytier-cli"} {
-		exeName := process.PlatformExeName(name)
+		exeName := PlatformExeName(name)
 		if _, err := os.Stat(filepath.Join(targetDir, exeName)); err != nil {
 			return fmt.Errorf("%s not found in archive", exeName)
 		}
@@ -308,4 +302,10 @@ func extractZipEntry(f *zip.File, dstPath string, mode os.FileMode) error {
 
 	_, err = io.Copy(dst, rc)
 	return err
+}
+
+type EasyTierDownloadService struct{}
+
+func (s *EasyTierDownloadService) Ensure() error {
+	return EnsureEasyTier()
 }

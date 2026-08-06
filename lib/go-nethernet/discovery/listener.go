@@ -46,8 +46,13 @@ func (conf ListenConfig) Listen(addr string) (*Listener, error) {
 	if addr == "" {
 		addr = ":0"
 	}
-	// We hardcode network protocol for "udp" as it always expects UDP packets to be received.
-	conn, err := net.ListenPacket("udp", addr)
+	// Servers and the local Minecraft client both use UDP 7551. Set reuse
+	// before binding so Android/Linux can deliver the discovery traffic to both
+	// sockets when the client also permits shared binding.
+	lc := net.ListenConfig{
+		Control: reuseAddrControl,
+	}
+	conn, err := lc.ListenPacket(context.Background(), "udp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -284,6 +289,18 @@ func (l *Listener) handlePacket(data []byte, addr net.Addr) error {
 // It responds with both v4 (legacy) and v5 (1.21+) ResponsePackets for
 // compatibility with all Bedrock versions.
 func (l *Listener) handleRequest(addr net.Addr) error {
+	return l.sendResponses(addr)
+}
+
+// Advertise 主动向 addr 单播 v4+v5 ResponsePacket。广播不回环的平台
+// （Android/Windows）上，本机客户端的 Request 到不了 listener，需直接
+// 广告。从 listener 的 socket 发出，源端口与 discovery 端口一致。
+func (l *Listener) Advertise(addr net.Addr) error {
+	return l.sendResponses(addr)
+}
+
+// sendResponses writes both v4 (legacy) and v5 (1.21+) ResponsePackets to addr.
+func (l *Listener) sendResponses(addr net.Addr) error {
 	var sent bool
 	if data := l.pongData.Load(); data != nil {
 		if err := l.write(&ResponsePacket{ApplicationData: *data}, addr); err != nil {

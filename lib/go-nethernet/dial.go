@@ -71,6 +71,9 @@ type Dialer struct {
 	// as relayed candidates from TURN servers only.
 	ICEGatherPolicy webrtc.ICEGatherPolicy
 
+	// 允许 SDP 指纹与 DTLS 证书不匹配的旧式本地实现；仅限受信任的本地路径。
+	DisableCertificateFingerprintVerification bool
+
 	// DisableTrickleICE disables trickle ICE for connection negotiation.
 	//
 	// When set to true, the dialer waits for ICE gathering to complete and embeds
@@ -95,7 +98,13 @@ func (d Dialer) DialContext(ctx context.Context, networkID string, signaling Sig
 		d.ConnectionID = rand.Uint64()
 	}
 	if d.API == nil {
-		d.API = webrtc.NewAPI()
+		if d.DisableCertificateFingerprintVerification {
+			engine := webrtc.SettingEngine{}
+			engine.DisableCertificateFingerprintVerification(true)
+			d.API = webrtc.NewAPI(webrtc.WithSettingEngine(engine))
+		} else {
+			d.API = webrtc.NewAPI()
+		}
 	}
 	if d.Log == nil {
 		d.Log = slog.Default()
@@ -194,7 +203,7 @@ func (d Dialer) DialContext(ctx context.Context, networkID string, signaling Sig
 			switch signal.Type {
 			case SignalTypeAnswer:
 				s := &sdp.SessionDescription{}
-				if err := s.UnmarshalString(signal.Data); err != nil {
+				if err := s.UnmarshalString(normalizeSDP(signal.Data)); err != nil {
 					d.signalError(signaling, networkID, ErrorCodeFailedToSetRemoteDescription)
 					return nil, fmt.Errorf("decode answer: %w", err)
 				}
