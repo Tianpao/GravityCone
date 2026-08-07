@@ -59,6 +59,13 @@ type Conn struct {
 	seq, orderIndex, messageIndex uint24
 	splitID                       uint32
 
+	// tunnelSeq is a per-connection monotonic counter used by applications
+	// (e.g. the GravityCone tunnel protocol) to assign an ordering sequence to
+	// each logical message. It persists for the lifetime of the connection so
+	// that message ordering stays consistent even if the application layer
+	// re-creates its writer/reader objects over the same connection.
+	tunnelSeq atomic.Uint32
+
 	// mtu is the MTU size of the connection. Packets longer than this size
 	// must be split into fragments for them to arrive at the client without
 	// losing bytes.
@@ -242,6 +249,13 @@ func (conn *Conn) Write(b []byte) (n int, err error) {
 // reassembles and reorders content itself.
 func (conn *Conn) WriteUnordered(b []byte) (n int, err error) {
 	return conn.writeWithReliability(b, reliabilityReliable)
+}
+
+// NextTunnelSeq returns the next per-connection sequence number for
+// application-layer tunneling. It is monotonic over the connection's lifetime
+// and is safe for concurrent use.
+func (conn *Conn) NextTunnelSeq() uint32 {
+	return conn.tunnelSeq.Add(1)
 }
 
 // writeWithReliability writes a buffer b over the RakNet connection using the

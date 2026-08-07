@@ -221,6 +221,67 @@ func TestTunnelPreservesMessageOrder(t *testing.T) {
 	}
 }
 
+// TestTunnelWriterSurvivesReuse verifies that when a new tunnelWriter is
+// created over the same connection (as happens when a local Minecraft client
+// reconnects over an existing RakNet tunnel), the peer's reader still receives
+// messages. The per-connection sequence persists across writer re-creation, so
+// the reader's ordering pointer stays in sync.
+func TestTunnelWriterSurvivesReuse(t *testing.T) {
+	listener, err := (raknet.ListenConfig{
+		MaxMTU:   rakNetMTU,
+		ErrorLog: slog.Default(),
+	}).Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	accepted := make(chan *raknet.Conn, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			accepted <- conn.(*raknet.Conn)
+		}
+	}()
+
+	client, err := (raknet.Dialer{
+		MaxMTU:   rakNetMTU,
+		ErrorLog: slog.Default(),
+	}).Dial(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	var server *raknet.Conn
+	select {
+	case server = <-accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("listener did not accept client")
+	}
+	defer server.Close()
+
+	reader := newTunnelReader(server)
+
+	// First session on the connection.
+	first := []byte("first-session")
+	if err := newTunnelWriter(client).Write(first); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := reader.ReadPacket(); err != nil || !bytes.Equal(got, first) {
+		t.Fatalf("first session: got %v, err %v", got, err)
+	}
+
+	// Second session re-creates the writer over the same connection.
+	second := bytes.Repeat([]byte{0xEE}, tunnelBulkThreshold+tunnelChunkSize)
+	if err := newTunnelWriter(client).Write(second); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := reader.ReadPacket(); err != nil || !bytes.Equal(got, second) {
+		t.Fatalf("second session: got %d bytes, err %v", len(got), err)
+	}
+}
+
 func BenchmarkTunnelLargePacket(b *testing.B) {
 	listener, err := (raknet.ListenConfig{
 		MaxMTU:   rakNetMTU,

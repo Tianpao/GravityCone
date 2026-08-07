@@ -34,12 +34,14 @@ const (
 )
 
 // tunnelWriter sends logical packets over a single RakNet connection. It
-// assigns each message a per-connection sequence number that the peer's
-// tunnelReader uses to deliver messages in order, even when chunks are sent
-// with reliable-unordered reliability and arrive out of order.
+// assigns each message a per-connection sequence number (persisted on the
+// underlying connection) that the peer's tunnelReader uses to deliver messages
+// in order, even when chunks are sent with reliable-unordered reliability and
+// arrive out of order. The sequence is stored on the connection so it survives
+// the writer/reader objects being re-created over the same connection (e.g.
+// when a local Minecraft client reconnects).
 type tunnelWriter struct {
 	conn *raknet.Conn
-	seq  uint32
 }
 
 // tunnelReader reassembles tunnel messages and delivers them in the order they
@@ -79,8 +81,8 @@ func newTunnelWriter(conn *raknet.Conn) *tunnelWriter {
 }
 
 func newTunnelReader(conn *raknet.Conn) *tunnelReader {
-	// A fresh tunnelWriter assigns seq 1 to its first message, so the reader
-	// starts expecting seq 1.
+	// The connection's tunnel sequence starts at 0 and the first message gets
+	// seq 1, so the reader starts expecting seq 1.
 	return &tunnelReader{conn: conn, next: 1, pending: make(map[uint32]*pendingTunnelMsg)}
 }
 
@@ -93,8 +95,7 @@ func (w *tunnelWriter) Write(packet []byte) error {
 		return fmt.Errorf("packet is too large: %d bytes", len(packet))
 	}
 
-	w.seq++
-	seq := w.seq
+	seq := w.conn.NextTunnelSeq()
 
 	if len(packet) <= tunnelChunkSize {
 		frame := make([]byte, 1+4+4+len(packet))
