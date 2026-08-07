@@ -97,6 +97,7 @@ func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet
 
 	go func() {
 		defer cancel()
+		writer := newTunnelWriter(rkConn)
 		for {
 			pk, err := nnConn.ReadPacket()
 			if err != nil {
@@ -106,7 +107,7 @@ func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet
 				return
 			}
 			nnPkCount.Add(1)
-			if err := writeTunnelPacket(rkConn, pk); err != nil {
+			if err := writer.Write(pk); err != nil {
 				if !isClosedErr(err) && ctx.Err() == nil {
 					log.Error("raknet write error", "err", err, "nn_packets", nnPkCount.Load())
 				}

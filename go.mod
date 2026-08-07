@@ -19,6 +19,8 @@ require (
 
 replace github.com/df-mc/go-nethernet => ./lib/go-nethernet
 
+replace github.com/sandertv/go-raknet => ./lib/go-raknet
+
 replace github.com/wlynxg/anet => ./lib/anet
 
 require (
