@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"runtime/debug"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -119,6 +120,7 @@ func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet
 
 	go func() {
 		defer cancel()
+		defer proxyRecover(log, "tunnel writer")
 		writer := newTunnelWriter(rkConn)
 		for {
 			pk, err := nnConn.ReadPacket()
@@ -141,6 +143,7 @@ func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet
 
 	go func() {
 		defer cancel()
+		defer proxyRecover(log, "tunnel reader")
 		reader := newTunnelReader(rkConn)
 		for {
 			pk, err := reader.ReadPacket()
@@ -161,6 +164,16 @@ func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet
 	}()
 
 	<-ctx.Done()
+}
+
+// proxyRecover converts a panic in a tunnel goroutine into a logged error
+// (and lets the caller's cancel() tear down the proxy) instead of crashing the
+// whole GravityCone process. It should be deferred at the top of each tunnel
+// goroutine.
+func proxyRecover(log *slog.Logger, role string) {
+	if r := recover(); r != nil {
+		log.Error("tunnel goroutine panic", "role", role, "panic", r, "stack", string(debug.Stack()))
+	}
 }
 
 func writeTCPFrame(conn net.Conn, data []byte) error {

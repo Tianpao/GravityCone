@@ -70,6 +70,13 @@ type Conn struct {
 	// not acknowledged in time (loss or high RTT). Exposed for diagnostics.
 	resends atomic.Uint64
 
+	// congestionWindow caps the number of reliable datagrams that may be
+	// unacknowledged at once. Without it, a sender can blast an unbounded
+	// number of datagrams ahead of the receiver's ACK, overwhelming the
+	// receiver and triggering spurious retransmissions under high RTT. Zero
+	// disables the cap.
+	congestionWindow uint32
+
 	// mtu is the MTU size of the connection. Packets longer than this size
 	// must be split into fragments for them to arrive at the client without
 	// losing bytes.
@@ -121,6 +128,7 @@ func newConn(conn net.PacketConn, raddr net.Addr, mtu uint16, h connectionHandle
 		win:            newDatagramWindow(),
 		packetQueue:    newPacketQueue(),
 		retransmission: newRecoveryQueue(),
+		congestionWindow: 2048,
 		buf:            bytes.NewBuffer(make([]byte, 0, mtu-28)), // - headers.
 		ackBuf:         bytes.NewBuffer(make([]byte, 0, 128)),
 		nackBuf:        bytes.NewBuffer(make([]byte, 0, 64)),
@@ -280,11 +288,51 @@ func (conn *Conn) writeWithReliability(b []byte, rel reliability) (n int, err er
 	case <-conn.ctx.Done():
 		return 0, conn.error(net.ErrClosed, "write")
 	default:
-		conn.mu.Lock()
-		defer conn.mu.Unlock()
-		n, err = conn.write(b, rel)
-		return n, conn.error(err, "write")
 	}
+	if rel.reliable() && conn.congestionWindow > 0 {
+		// Wait (outside the lock) until the congestion window has room for this
+		// write's datagrams, so reliable sends are paced to the receiver's ACK
+		// rate instead of blasting ahead of it.
+		if err := conn.waitForWindow(conn.fragmentCount(b)); err != nil {
+			return 0, conn.error(err, "write")
+		}
+	}
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+	n, err = conn.write(b, rel)
+	return n, conn.error(err, "write")
+}
+
+// waitForWindow blocks until at most congestionWindow reliable datagrams are
+// unacknowledged, leaving room for extra more. It returns when the connection
+// is closed. It must NOT be called while holding conn.mu, since ACK processing
+// needs that lock to free window slots.
+func (conn *Conn) waitForWindow(extra int) error {
+	for {
+		conn.mu.Lock()
+		pending := len(conn.retransmission.unacknowledged)
+		conn.mu.Unlock()
+		if pending+extra <= int(conn.congestionWindow) {
+			return nil
+		}
+		select {
+		case <-conn.ctx.Done():
+			return net.ErrClosed
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
+// fragmentCount returns how many datagrams a write of b will be split into.
+func (conn *Conn) fragmentCount(b []byte) int {
+	maxSize := int(conn.effectiveMTU()) - packetAdditionalSize
+	if len(b) > maxSize {
+		maxSize -= splitAdditionalSize
+	}
+	if maxSize <= 0 {
+		return 1
+	}
+	return len(b)/maxSize + min(len(b)%maxSize, 1)
 }
 
 // write writes a buffer b over the RakNet connection. The amount of bytes
