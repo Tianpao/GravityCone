@@ -66,6 +66,10 @@ type Conn struct {
 	// re-creates its writer/reader objects over the same connection.
 	tunnelSeq atomic.Uint32
 
+	// resends counts how many datagrams were retransmitted because they were
+	// not acknowledged in time (loss or high RTT). Exposed for diagnostics.
+	resends atomic.Uint64
+
 	// mtu is the MTU size of the connection. Packets longer than this size
 	// must be split into fragments for them to arrive at the client without
 	// losing bytes.
@@ -256,6 +260,13 @@ func (conn *Conn) WriteUnordered(b []byte) (n int, err error) {
 // and is safe for concurrent use.
 func (conn *Conn) NextTunnelSeq() uint32 {
 	return conn.tunnelSeq.Add(1)
+}
+
+// ResentPackets returns how many datagrams have been retransmitted on this
+// connection because they were not acknowledged in time. It is a diagnostic
+// signal for loss or high round-trip time on the underlying path.
+func (conn *Conn) ResentPackets() uint64 {
+	return conn.resends.Load()
 }
 
 // writeWithReliability writes a buffer b over the RakNet connection using the
@@ -674,6 +685,7 @@ func (conn *Conn) resend(sequenceNumbers []uint24) (err error) {
 		if !ok {
 			continue
 		}
+		conn.resends.Add(1)
 		if err = conn.sendDatagram(pk); err != nil {
 			return err
 		}

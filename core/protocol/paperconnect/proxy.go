@@ -93,7 +93,29 @@ func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet
 		_ = rkConn.Close()
 	}()
 
-	var nnPkCount, rkPkCount atomic.Int64
+	var nnPkCount, rkPkCount, tunnelBytes atomic.Int64
+
+	// Diagnostic: report tunnel throughput and RakNet resend behaviour so the
+	// bandwidth amplification of bulk transfers (e.g. resource pack downloads)
+	// can be measured. Remove once the underlying cause is confirmed.
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				log.Info("tunnel stats",
+					"nn_packets", nnPkCount.Load(),
+					"rk_packets", rkPkCount.Load(),
+					"tunnel_bytes", tunnelBytes.Load(),
+					"raknet_resends", rkConn.ResentPackets(),
+					"latency_ms", rkConn.Latency().Milliseconds(),
+				)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	go func() {
 		defer cancel()
@@ -107,6 +129,7 @@ func proxyPackets(parentCtx context.Context, log *slog.Logger, nnConn *nethernet
 				return
 			}
 			nnPkCount.Add(1)
+			tunnelBytes.Add(int64(len(pk)))
 			if err := writer.Write(pk); err != nil {
 				if !isClosedErr(err) && ctx.Err() == nil {
 					log.Error("raknet write error", "err", err, "nn_packets", nnPkCount.Load())
