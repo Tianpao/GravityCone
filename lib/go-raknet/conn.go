@@ -113,21 +113,21 @@ type Conn struct {
 func newConn(conn net.PacketConn, raddr net.Addr, mtu uint16, h connectionHandler) *Conn {
 	mtu = clampMTU(mtu, minMTUSize)
 	c := &Conn{
-		raddr:          raddr,
-		conn:           conn,
-		mtu:            mtu,
-		handler:        h,
-		pk:             new(packet),
-		connected:      make(chan struct{}),
-		packets:        internal.Chan[[]byte](4, 4096),
-		splits:         make(map[uint16][][]byte),
-		win:            newDatagramWindow(),
-		packetQueue:    newPacketQueue(),
-		retransmission: newRecoveryQueue(),
+		raddr:            raddr,
+		conn:             conn,
+		mtu:              mtu,
+		handler:          h,
+		pk:               new(packet),
+		connected:        make(chan struct{}),
+		packets:          internal.Chan[[]byte](4, 4096),
+		splits:           make(map[uint16][][]byte),
+		win:              newDatagramWindow(),
+		packetQueue:      newPacketQueue(),
+		retransmission:   newRecoveryQueue(),
 		congestionWindow: 2048,
-		buf:            bytes.NewBuffer(make([]byte, 0, mtu-28)), // - headers.
-		ackBuf:         bytes.NewBuffer(make([]byte, 0, 128)),
-		nackBuf:        bytes.NewBuffer(make([]byte, 0, 64)),
+		buf:              bytes.NewBuffer(make([]byte, 0, mtu-28)), // - headers.
+		ackBuf:           bytes.NewBuffer(make([]byte, 0, 128)),
+		nackBuf:          bytes.NewBuffer(make([]byte, 0, 64)),
 	}
 	c.ctx, c.cancelFunc = context.WithCancel(context.Background())
 	t := time.Now()
