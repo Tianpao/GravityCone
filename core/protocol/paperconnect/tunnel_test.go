@@ -57,7 +57,7 @@ func TestTunnelForwardsLargePacket(t *testing.T) {
 			err    error
 		}{packet, err}
 	}()
-	if err := writeTunnelPacket(client, payload); err != nil {
+	if err := newTunnelWriter(client).Write(payload); err != nil {
 		t.Fatal(err)
 	}
 
@@ -71,6 +71,214 @@ func TestTunnelForwardsLargePacket(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("server did not receive tunnelled large packet")
+	}
+}
+
+// TestTunnelForwardsBulkPacketUnordered verifies that a packet larger than
+// tunnelBulkThreshold round-trips intact. Such packets take the reliable-
+// unordered path (WriteUnordered) and are reassembled by the reader from their
+// (seq, index) parts.
+func TestTunnelForwardsBulkPacketUnordered(t *testing.T) {
+	listener, err := (raknet.ListenConfig{
+		MaxMTU:   rakNetMTU,
+		ErrorLog: slog.Default(),
+	}).Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	accepted := make(chan *raknet.Conn, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			accepted <- conn.(*raknet.Conn)
+		}
+	}()
+
+	client, err := (raknet.Dialer{
+		MaxMTU:   rakNetMTU,
+		ErrorLog: slog.Default(),
+	}).Dial(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	var server *raknet.Conn
+	select {
+	case server = <-accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("listener did not accept client")
+	}
+	defer server.Close()
+
+	// Exceeds tunnelBulkThreshold (64KB) so chunks are sent unordered.
+	payload := bytes.Repeat([]byte{0x5A}, tunnelBulkThreshold+tunnelChunkSize+123)
+	result := make(chan struct {
+		packet []byte
+		err    error
+	}, 1)
+	go func() {
+		packet, err := newTunnelReader(server).ReadPacket()
+		result <- struct {
+			packet []byte
+			err    error
+		}{packet, err}
+	}()
+	if err := newTunnelWriter(client).Write(payload); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case received := <-result:
+		if received.err != nil {
+			t.Fatal(received.err)
+		}
+		if !bytes.Equal(received.packet, payload) {
+			t.Fatal("received bulk payload differs")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not receive tunnelled bulk packet")
+	}
+}
+
+// TestTunnelPreservesMessageOrder verifies that a mix of small and bulk
+// packets is delivered in send order, even though the bulk packets take the
+// unordered path and may complete out of order on arrival.
+func TestTunnelPreservesMessageOrder(t *testing.T) {
+	listener, err := (raknet.ListenConfig{
+		MaxMTU:   rakNetMTU,
+		ErrorLog: slog.Default(),
+	}).Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	accepted := make(chan *raknet.Conn, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			accepted <- conn.(*raknet.Conn)
+		}
+	}()
+
+	client, err := (raknet.Dialer{
+		MaxMTU:   rakNetMTU,
+		ErrorLog: slog.Default(),
+	}).Dial(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	var server *raknet.Conn
+	select {
+	case server = <-accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("listener did not accept client")
+	}
+	defer server.Close()
+
+	const n = 6
+	payloads := make([][]byte, n)
+	for i := range payloads {
+		if i%2 == 1 {
+			// Bulk packets (unordered path) with a per-message marker prefix.
+			payloads[i] = append(bytes.Repeat([]byte{byte(i)}, tunnelBulkThreshold), byte(i))
+		} else {
+			payloads[i] = []byte{byte(i), byte(i + 1)}
+		}
+	}
+
+	reader := newTunnelReader(server)
+	writer := newTunnelWriter(client)
+
+	// Send all packets, then read them all back and check order.
+	sendDone := make(chan error, 1)
+	go func() {
+		for _, p := range payloads {
+			if err := writer.Write(p); err != nil {
+				sendDone <- err
+				return
+			}
+		}
+		sendDone <- nil
+	}()
+	if err := <-sendDone; err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < n; i++ {
+		got, err := reader.ReadPacket()
+		if err != nil {
+			t.Fatalf("read packet %d: %v", i, err)
+		}
+		if !bytes.Equal(got, payloads[i]) {
+			t.Fatalf("packet %d out of order or corrupted: got %d bytes, want %d bytes", i, len(got), len(payloads[i]))
+		}
+	}
+}
+
+// TestTunnelWriterSurvivesReuse verifies that when a new tunnelWriter is
+// created over the same connection (as happens when a local Minecraft client
+// reconnects over an existing RakNet tunnel), the peer's reader still receives
+// messages. The per-connection sequence persists across writer re-creation, so
+// the reader's ordering pointer stays in sync.
+func TestTunnelWriterSurvivesReuse(t *testing.T) {
+	listener, err := (raknet.ListenConfig{
+		MaxMTU:   rakNetMTU,
+		ErrorLog: slog.Default(),
+	}).Listen("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	accepted := make(chan *raknet.Conn, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			accepted <- conn.(*raknet.Conn)
+		}
+	}()
+
+	client, err := (raknet.Dialer{
+		MaxMTU:   rakNetMTU,
+		ErrorLog: slog.Default(),
+	}).Dial(listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+
+	var server *raknet.Conn
+	select {
+	case server = <-accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("listener did not accept client")
+	}
+	defer server.Close()
+
+	reader := newTunnelReader(server)
+
+	// First session on the connection.
+	first := []byte("first-session")
+	if err := newTunnelWriter(client).Write(first); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := reader.ReadPacket(); err != nil || !bytes.Equal(got, first) {
+		t.Fatalf("first session: got %v, err %v", got, err)
+	}
+
+	// Second session re-creates the writer over the same connection.
+	second := bytes.Repeat([]byte{0xEE}, tunnelBulkThreshold+tunnelChunkSize)
+	if err := newTunnelWriter(client).Write(second); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := reader.ReadPacket(); err != nil || !bytes.Equal(got, second) {
+		t.Fatalf("second session: got %d bytes, err %v", len(got), err)
 	}
 }
 
@@ -112,7 +320,7 @@ func BenchmarkTunnelLargePacket(b *testing.B) {
 	payload := bytes.Repeat([]byte{0xA5}, 26_185)
 
 	// Pre-warm: let one packet through so MTU negotiation completes.
-	if err := writeTunnelPacket(client, payload); err != nil {
+	if err := newTunnelWriter(client).Write(payload); err != nil {
 		b.Fatal(err)
 	}
 	reader := newTunnelReader(server)
@@ -124,7 +332,7 @@ func BenchmarkTunnelLargePacket(b *testing.B) {
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		if err := writeTunnelPacket(client, payload); err != nil {
+		if err := newTunnelWriter(client).Write(payload); err != nil {
 			b.Fatal(err)
 		}
 		// Read back to apply backpressure and avoid RakNet flow-control overflow.
@@ -181,7 +389,7 @@ func TestTunnelSessionsRemainIsolated(t *testing.T) {
 
 	identities := [][]byte{{1}, {2}}
 	for i := range clients {
-		if err := writeTunnelPacket(clients[i], identities[i]); err != nil {
+		if err := newTunnelWriter(clients[i]).Write(identities[i]); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -215,7 +423,7 @@ func TestTunnelSessionsRemainIsolated(t *testing.T) {
 				return
 			}
 			payload := bytes.Repeat([]byte{identity[0]}, 26_185)
-			serverErrs <- writeTunnelPacket(conn, payload)
+			serverErrs <- newTunnelWriter(conn).Write(payload)
 		}(servers[i])
 	}
 
