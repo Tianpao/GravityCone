@@ -331,3 +331,8 @@ func (s *ScaffoldingService) Cleanup() {
 	s.StopRoom()
 	s.LeaveRoom()
 }
+
+func (s *ScaffoldingService) ServiceShutdown() error {
+	s.Cleanup()
+	return nil
+}

@@ -208,6 +208,10 @@ func (m *EasyTierManager) Start(opts StartOptions) (string, error) {
 		return "", fmt.Errorf("启动 easytier-core 失败: %w", err)
 	}
 
+	if err := AssignJobObject(cmd.Process); err != nil {
+		slog.Warn("将 easytier-core 挂到 Job Object 失败（不影响运行）", "error", err)
+	}
+
 	m.mu.Lock()
 	m.cmd = cmd
 	m.rpcPortal = rpcPortal

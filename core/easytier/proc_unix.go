@@ -10,4 +10,5 @@ var (
 	PlatformExeName  = proc.PlatformExeName
 	SetDetachedFlags = proc.SetDetachedFlags
 	KillProcessTree  = proc.KillProcessTree
+	AssignJobObject  = proc.AssignJobObject
 )

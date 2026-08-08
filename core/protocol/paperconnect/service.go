@@ -383,3 +383,8 @@ func (s *PaperConnectService) Cleanup() {
 	s.StopRoom()
 	s.LeaveRoom()
 }
+
+func (s *PaperConnectService) ServiceShutdown() error {
+	s.Cleanup()
+	return nil
+}

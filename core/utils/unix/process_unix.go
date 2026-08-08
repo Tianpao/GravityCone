@@ -25,3 +25,7 @@ func PlatformExeName(name string) string {
 func KillProcessTree(proc *os.Process) {
 	_ = proc.Signal(os.Interrupt)
 }
+
+func AssignJobObject(_ *os.Process) error {
+	return nil
+}
