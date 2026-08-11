@@ -4,6 +4,7 @@ package main
 
 import (
 	"gravitycone/cli"
+	"gravitycone/core/utils"
 	"os"
 	"strings"
 )
@@ -36,7 +37,9 @@ func parseArgs(args []string) (peers []string, vendorPrefix string, motd string,
 		} else if val, ok := matchFlag(args, &i, "--vendor", "-v"); ok {
 			vendorPrefix = val
 		} else if val, ok := matchFlag(args, &i, "--motd", "-m"); ok {
-			motd = val
+			// Windows 上部分启动器用 GBK 拼装命令行参数，导致中文 MOTD 变成方块乱码，
+			// 这里做一次反向还原（对正常 UTF-8 输入无副作用）。
+			motd = utils.FixCommandLineMojibake(val)
 		} else if val, ok := matchFlag(args, &i, "--easytier-dir", "-e"); ok {
 			easytierDir = val
 		}
